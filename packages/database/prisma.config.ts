@@ -1,12 +1,16 @@
 import { defineConfig } from 'prisma/config';
 
+import './src/load-env';
+
 /**
  * Prisma CLI configuration (Prisma 7).
  *
- * Environment loading is handled by `dotenv-cli` in the package scripts rather
- * than by importing `dotenv/config` here — one mechanism, and it keeps the
- * `.env` file location (`../../.env`, the repo root) declared in exactly one
- * place. `db:migrate:deploy` intentionally omits it: CI supplies real env vars.
+ * Environment loading happens in `./src/load-env`, imported for its side effect
+ * above. It used to be a `dotenv-cli` prefix on each `db:*` script, but that
+ * wrapper swallowed flags meant for Prisma — see the comment in that file. The
+ * `.env` location is still declared in exactly one place; it is just a module
+ * now instead of a repeated argument. CI needs no change: the loader leaves
+ * platform-provided variables alone and skips a missing file.
  *
  * `datasource.url` here is used by CLI commands only — migrate, db push, studio,
  * introspection. It deliberately prefers `DIRECT_URL`: schema migrations must

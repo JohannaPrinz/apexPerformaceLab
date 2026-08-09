@@ -328,10 +328,15 @@ pnpm --filter @apex/database exec prisma migrate diff \
 
 Exit code `0` means no drift, `2` means drift.
 
-> **Known trap:** the `db:*` scripts wrap Prisma in `dotenv-cli`, which swallows
-> flags meant for Prisma. `pnpm db:migrate --name init` loses `--name` and drops
-> Prisma into an interactive prompt. Pass env explicitly and call `prisma`
-> directly when a command needs flags.
+The `db:*` scripts call `prisma` directly and take flags normally
+(`pnpm db:migrate --name add_foo`). Environment loading happens in
+[`src/load-env.ts`](../packages/database/src/load-env.ts), imported by
+`prisma.config.ts` and by the seed.
+
+> The scripts were once wrapped in `dotenv -e ../../.env --`. That wrapper
+> swallowed flags meant for Prisma — `--name` vanished and dropped the CLI into
+> an interactive prompt — and the loss was invisible, because the command simply
+> behaved as if the flag had never been typed. Do not reintroduce it.
 
 ## 8. Local setup
 
