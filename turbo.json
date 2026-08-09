@@ -77,7 +77,10 @@
     },
     "test": {
       "dependsOn": ["^build"],
-      "outputs": ["coverage/**"]
+      // No outputs: the suites run without `--coverage`, so declaring
+      // `coverage/**` only produces a "no output files found" warning on every
+      // run. Re-add it if coverage reporting is switched on.
+      "outputs": []
     },
     "@apex/database#build": {
       "inputs": ["prisma/schema.prisma", "prisma.config.ts"],

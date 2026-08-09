@@ -4,3 +4,4 @@
 # it in CI. Both are Turborepo tasks, so unchanged packages hit the cache.
 pnpm run lint
 pnpm run typecheck
+pnpm run test
