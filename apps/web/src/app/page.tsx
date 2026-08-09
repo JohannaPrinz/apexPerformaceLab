@@ -44,11 +44,15 @@ export default function HomePage() {
           Foundation · v0.1.0
         </Badge>
 
+        {/* The display grades and the `.eyebrow` class come straight from the
+            brand token set — this is the public surface, so it uses the
+            marketing register rather than the denser product one. */}
         <div className="flex flex-col gap-4">
-          <h1 className="font-display text-5xl font-semibold tracking-tight text-balance sm:text-6xl">
+          <span className="eyebrow">Performance Coaching</span>
+          <h1 className="font-display text-display-md font-bold text-balance sm:text-display-lg">
             Apex OS
           </h1>
-          <p className="max-w-xl text-lg text-pretty text-muted-foreground">
+          <p className="max-w-xl text-lead text-pretty text-muted-foreground">
             The operating system for performance coaching. This is the project foundation —
             architecture, tooling and design system. No features yet, by design.
           </p>

@@ -10,168 +10,238 @@
    APEX OS — DESIGN TOKENS
    ═══════════════════════════════════════════════════════════════════════════
 
+   Source of truth for the brand layer: docs/design/tokens.json, exported from
+   the marketing site. Every `--brand-*` value below is that file, verbatim — so
+   the two can be diffed without conversion. Recognition across site and product
+   is the whole point; do not "improve" these values here.
+
    Two token layers, deliberately separated:
 
-   1. PRIMITIVE tokens (`--brand-*`, `--neutral-*`) — raw values. The four brand
-      colours are kept as the exact hex from the brand guide so they can be
-      diffed against design files without conversion.
+   1. PRIMITIVE tokens (`--brand-*`, `--support-*`) — raw values.
+   2. SEMANTIC tokens (`--background`, `--primary`, …) — what components
+      consume. A component never references a primitive directly; that
+      indirection is what makes theming (dark mode, future per-tenant
+      white-labelling) a token swap instead of a component rewrite.
 
-   2. SEMANTIC tokens (`--color-background`, `--color-primary`, …) — what
-      components actually consume. A component never references a primitive
-      directly; that indirection is what makes theming (dark mode, future
-      per-tenant white-labelling) a token swap instead of a component rewrite.
+   Everything the product needs beyond the marketing set — dark mode, status
+   colours, the chart series — is DERIVED here and contrast-checked. Ratios in
+   the comments are measured, not estimated.
 
    See docs/DESIGN_SYSTEM.md.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 :root {
-  /* ── Brand primitives ─────────────────────────────────────────────────── */
-  --brand-background: #f8f8f6; /* warm off-white — the canvas */
-  --brand-primary: #202124; /* near-black — type & primary actions */
-  --brand-secondary: #4b5563; /* slate — supporting type & surfaces */
-  --brand-accent: #6b8f71; /* sage — performance / positive signal */
+  /* ── Brand primitives — docs/design/tokens.json, verbatim ─────────────── */
+  --brand-canvas: #f7f7f5; /* page ground */
+  --brand-surface: #ffffff; /* cards, raised planes */
+  --brand-surface-muted: #f1f1ee; /* set-off blocks */
+  --brand-deep: #16181a; /* inverted sections */
 
-  /* ── Neutral ramp ─────────────────────────────────────────────────────── */
-  /* Derived from the background/primary pair; used for borders, surfaces and
-     muted type. Kept as an explicit ramp so contrast stays auditable. */
-  --neutral-50: #fbfbfa;
-  --neutral-100: #f1f1ee;
-  --neutral-200: #e4e4e0;
-  --neutral-300: #cfcfc9;
-  --neutral-400: #a3a39c;
-  --neutral-500: #78786f;
-  --neutral-600: #55554e;
-  --neutral-700: #3d3d38;
-  --neutral-800: #2a2a27;
-  --neutral-900: #1c1c1a;
-  --neutral-950: #121211;
+  --brand-ink: #16181a; /* headings */
+  --brand-ink-soft: #3d4247; /* body copy */
+  --brand-ink-muted: #71777d; /* secondary text at 16px and up */
+  --brand-ink-muted-accessible: #63696f; /* secondary text below 16px — AA */
 
-  /* ── Support palette ──────────────────────────────────────────────────── */
-  --support-success: #4f7a56;
-  --support-warning: #b8863b;
-  --support-danger: #a4453c;
-  --support-info: #4a6f8a;
+  --brand-line: #e4e4df;
+  --brand-line-strong: #d3d3cc;
 
-  /* ── Semantic tokens — light theme ────────────────────────────────────── */
-  --background: var(--brand-background);
-  --foreground: var(--brand-primary);
+  --brand-accent: #1f7a64; /* 4.86:1 on canvas · white on it 5.22:1 */
+  --brand-accent-strong: #175d4c; /* hover */
+  --brand-accent-soft: #e8f1ee; /* icon plates */
+  --brand-accent-ink: #0f3f34; /* text on accent-soft — 10.25:1 */
 
-  --card: #ffffff;
-  --card-foreground: var(--brand-primary);
+  /* ── Dark surfaces — derived from `deep` ──────────────────────────────── */
+  /* Lifted rather than tinted: two steps of ~9% and ~20% relative luminance,
+     enough to read as layered without turning grey. */
+  --deep-surface: #1d2023;
+  --deep-surface-muted: #24282b;
 
-  --popover: #ffffff;
-  --popover-foreground: var(--brand-primary);
+  --deep-ink: #f1f1ee; /* 15.73:1 on deep */
+  --deep-ink-soft: #c9ccce; /* 11.03:1 */
+  --deep-ink-muted: #9ba1a6; /* 6.82:1 — AA even at small sizes */
 
-  --primary: var(--brand-primary);
-  --primary-foreground: var(--brand-background);
+  /* The brand accent scores only 3.41:1 on `deep`, so dark mode lifts it.
+     Same hue and saturation, raised luminance. */
+  --deep-accent: #3fa88c; /* 6.10:1 on deep · 5.60:1 on deep-surface */
+  --deep-accent-strong: #52bca0; /* hover — lifts, rather than darkens */
+  --deep-accent-soft: #16302a;
+  --deep-accent-ink: #a8dccb;
 
-  --secondary: var(--neutral-100);
-  --secondary-foreground: var(--brand-secondary);
+  /* ── Status ───────────────────────────────────────────────────────────── */
+  /* Success is deliberately absent: green is the brand accent, and a second
+     green beside it reads as noise rather than signal. Success resolves to the
+     accent — see `--success` below. */
+  --support-warning: #96631b; /* 4.78:1 on canvas · white on it 5.13:1 */
+  --support-danger: #9e3b33; /* 6.26:1 · 6.72:1 */
+  --support-info: #3d6785; /* 5.63:1 · 6.04:1 */
 
-  --muted: var(--neutral-100);
-  --muted-foreground: var(--neutral-500);
+  --support-warning-dark: #d9a441; /* 7.91:1 on deep */
+  --support-danger-dark: #e08a80; /* 6.88:1 */
+  --support-info-dark: #7fb0ce; /* 7.63:1 */
+
+  /* ── Chart series ─────────────────────────────────────────────────────── */
+  /* Chosen by solving for *staggered luminance*, not by picking hues. Series
+     that share a luminance merge in greyscale and under colour-vision
+     deficiency, however different their hue. Smallest gap here: 0.045
+     (light) / 0.070 (dark), against a 0.030 floor. Every series clears 3:1
+     against its ground.
+
+     Colour still never carries meaning alone — pair it with shape, label or
+     pattern. See docs/DESIGN_SYSTEM.md. */
+  --series-1: #1f7a64; /* the accent — L 0.151 */
+  --series-2: #254962; /* L 0.060 */
+  --series-3: #9f392e; /* L 0.105 */
+  --series-4: #8e6faa; /* L 0.200 */
+  --series-5: #b38322; /* L 0.260 */
+
+  --series-1-dark: #3fa88c; /* L 0.310 */
+  --series-2-dark: #3f749b; /* L 0.160 */
+  --series-3-dark: #d0685c; /* L 0.240 */
+  --series-4-dark: #bca5d0; /* L 0.420 */
+  --series-5-dark: #e3bf79; /* L 0.550 */
+
+  /* ── Semantic tokens — light ──────────────────────────────────────────── */
+  --background: var(--brand-canvas);
+  --foreground: var(--brand-ink);
+
+  /* Body copy is `ink-soft`, not `ink`: full-strength ink is reserved for
+     headings, which is what gives the type its hierarchy. */
+  --body: var(--brand-ink-soft);
+
+  --card: var(--brand-surface);
+  --card-foreground: var(--brand-ink);
+
+  --popover: var(--brand-surface);
+  --popover-foreground: var(--brand-ink);
+
+  --primary: var(--brand-ink);
+  --primary-foreground: var(--brand-canvas);
+
+  --secondary: var(--brand-surface-muted);
+  --secondary-foreground: var(--brand-ink-soft);
+
+  --muted: var(--brand-surface-muted);
+  /* The accessible variant, not `ink-muted`: muted text is routinely set below
+     16px, where 4.22:1 would fail. */
+  --muted-foreground: var(--brand-ink-muted-accessible);
 
   --accent: var(--brand-accent);
-  --accent-foreground: #ffffff;
+  --accent-foreground: var(--brand-surface);
+  --accent-strong: var(--brand-accent-strong);
+  --accent-soft: var(--brand-accent-soft);
+  --accent-soft-foreground: var(--brand-accent-ink);
 
-  --destructive: var(--support-danger);
-  --destructive-foreground: #ffffff;
-
-  --success: var(--support-success);
-  --success-foreground: #ffffff;
+  --success: var(--brand-accent);
+  --success-foreground: var(--brand-surface);
 
   --warning: var(--support-warning);
-  --warning-foreground: #ffffff;
+  --warning-foreground: var(--brand-surface);
 
-  --border: var(--neutral-200);
-  --input: var(--neutral-200);
+  --destructive: var(--support-danger);
+  --destructive-foreground: var(--brand-surface);
+
+  --info: var(--support-info);
+  --info-foreground: var(--brand-surface);
+
+  --border: var(--brand-line);
+  --border-strong: var(--brand-line-strong);
+  --input: var(--brand-line-strong);
   --ring: var(--brand-accent);
 
-  /* Data visualisation — an ordered, distinguishable series scale anchored on
-     the accent. See docs/DESIGN_SYSTEM.md before adding a sixth. */
-  --chart-1: #6b8f71;
-  --chart-2: #4a6f8a;
-  --chart-3: #b8863b;
-  --chart-4: #8a6f9e;
-  --chart-5: #a4453c;
+  --chart-1: var(--series-1);
+  --chart-2: var(--series-2);
+  --chart-3: var(--series-3);
+  --chart-4: var(--series-4);
+  --chart-5: var(--series-5);
 
-  /* Sidebar surface — a distinct surface, not a shade of `--background`, so the
-     app chrome stays legible when the content area changes theme. */
-  --sidebar: #ffffff;
-  --sidebar-foreground: var(--brand-primary);
-  --sidebar-primary: var(--brand-primary);
-  --sidebar-primary-foreground: var(--brand-background);
-  --sidebar-accent: var(--neutral-100);
-  --sidebar-accent-foreground: var(--brand-primary);
-  --sidebar-border: var(--neutral-200);
+  /* Sidebar — a distinct surface, not a shade of the canvas, so the app chrome
+     stays legible when the content area changes theme. */
+  --sidebar: var(--brand-surface);
+  --sidebar-foreground: var(--brand-ink);
+  --sidebar-primary: var(--brand-accent);
+  --sidebar-primary-foreground: var(--brand-surface);
+  --sidebar-accent: var(--brand-accent-soft);
+  --sidebar-accent-foreground: var(--brand-accent-ink);
+  --sidebar-border: var(--brand-line);
   --sidebar-ring: var(--brand-accent);
 
-  /* ── Shape ────────────────────────────────────────────────────────────── */
-  --radius: 0.625rem;
+  /* ── Motion — exactly one curve for the whole project ─────────────────── */
+  --duration-fast: 200ms;
+  --duration-slow: 700ms;
 }
 
 .dark {
-  --background: var(--neutral-950);
-  --foreground: var(--neutral-100);
+  --background: var(--brand-deep);
+  --foreground: var(--deep-ink);
+  --body: var(--deep-ink-soft);
 
-  --card: var(--neutral-900);
-  --card-foreground: var(--neutral-100);
+  --card: var(--deep-surface);
+  --card-foreground: var(--deep-ink);
 
-  --popover: var(--neutral-900);
-  --popover-foreground: var(--neutral-100);
+  --popover: var(--deep-surface);
+  --popover-foreground: var(--deep-ink);
 
-  /* Inverted: on a dark canvas the "primary" surface is light. */
-  --primary: var(--neutral-100);
-  --primary-foreground: var(--neutral-950);
+  /* Inverted: on a dark ground the "primary" plane is light. */
+  --primary: var(--deep-ink);
+  --primary-foreground: var(--brand-deep);
 
-  --secondary: var(--neutral-800);
-  --secondary-foreground: var(--neutral-300);
+  --secondary: var(--deep-surface-muted);
+  --secondary-foreground: var(--deep-ink-soft);
 
-  --muted: var(--neutral-800);
-  --muted-foreground: var(--neutral-400);
+  --muted: var(--deep-surface-muted);
+  --muted-foreground: var(--deep-ink-muted);
 
-  /* Lifted for contrast — the light-theme sage fails AA on a near-black field. */
-  --accent: #86ab8c;
-  --accent-foreground: var(--neutral-950);
+  --accent: var(--deep-accent);
+  --accent-foreground: var(--brand-deep);
+  --accent-strong: var(--deep-accent-strong);
+  --accent-soft: var(--deep-accent-soft);
+  --accent-soft-foreground: var(--deep-accent-ink);
 
-  --destructive: #c76259;
-  --destructive-foreground: var(--neutral-950);
+  --success: var(--deep-accent);
+  --success-foreground: var(--brand-deep);
 
-  --success: #6d9a74;
-  --success-foreground: var(--neutral-950);
+  --warning: var(--support-warning-dark);
+  --warning-foreground: var(--brand-deep);
 
-  --warning: #d3a45c;
-  --warning-foreground: var(--neutral-950);
+  --destructive: var(--support-danger-dark);
+  --destructive-foreground: var(--brand-deep);
 
-  --border: #ffffff1a;
-  --input: #ffffff26;
-  --ring: #86ab8c;
+  --info: var(--support-info-dark);
+  --info-foreground: var(--brand-deep);
 
-  --chart-1: #86ab8c;
-  --chart-2: #6b93b0;
-  --chart-3: #d3a45c;
-  --chart-4: #a88fbb;
-  --chart-5: #c76259;
+  /* Hairlines on a dark ground read better as translucent white than as a
+     fixed grey — they stay consistent over every surface step. */
+  --border: #ffffff1f;
+  --border-strong: #ffffff33;
+  --input: #ffffff33;
+  --ring: var(--deep-accent);
 
-  --sidebar: var(--neutral-900);
-  --sidebar-foreground: var(--neutral-100);
-  --sidebar-primary: #86ab8c;
-  --sidebar-primary-foreground: var(--neutral-950);
-  --sidebar-accent: var(--neutral-800);
-  --sidebar-accent-foreground: var(--neutral-100);
-  --sidebar-border: #ffffff1a;
-  --sidebar-ring: #86ab8c;
+  --chart-1: var(--series-1-dark);
+  --chart-2: var(--series-2-dark);
+  --chart-3: var(--series-3-dark);
+  --chart-4: var(--series-4-dark);
+  --chart-5: var(--series-5-dark);
+
+  --sidebar: var(--deep-surface);
+  --sidebar-foreground: var(--deep-ink);
+  --sidebar-primary: var(--deep-accent);
+  --sidebar-primary-foreground: var(--brand-deep);
+  --sidebar-accent: var(--deep-accent-soft);
+  --sidebar-accent-foreground: var(--deep-accent-ink);
+  --sidebar-border: #ffffff1f;
+  --sidebar-ring: var(--deep-accent);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    TAILWIND THEME
-   Maps semantic tokens onto Tailwind utilities, so `bg-background`,
-   `text-muted-foreground`, `border-border` etc. resolve to the tokens above.
+   Maps semantic tokens onto utilities, so `bg-background`,
+   `text-muted-foreground`, `border-border`, `shadow-card` etc. resolve here.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-body: var(--body);
 
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
@@ -190,9 +260,9 @@
 
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
-
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-soft-foreground: var(--accent-soft-foreground);
 
   --color-success: var(--success);
   --color-success-foreground: var(--success-foreground);
@@ -200,7 +270,14 @@
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
 
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-input: var(--input);
   --color-ring: var(--ring);
 
@@ -219,21 +296,83 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  /* Typography.
-     Geist is the display/UI face (set by `next/font` in apps/web); Inter is the
-     reading face for long-form and dense data. Both are loaded as variable
-     fonts and exposed here as `font-sans` / `font-display` / `font-mono`. */
+  /* ── Typography ───────────────────────────────────────────────────────── */
+  /* Manrope for display, Inter for reading, IBM Plex Mono for figures — the
+     marketing set, unchanged. `next/font` in apps/web self-hosts all three and
+     exposes them as the variables read here, so the design system stays
+     independent of how the app loads its typefaces. */
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-geist-sans), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: var(--font-manrope), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  /* Radius scale, all derived from a single `--radius` so rounding stays
-     proportional when the brand shape changes. */
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-  --radius-2xl: calc(var(--radius) + 8px);
+  /* Two registers, one voice.
+
+     MARKETING — `text-display-*`, straight from tokens.json. Landing pages and
+     the public surface.
+     PRODUCT — Tailwind's own scale (`text-3xl` and below). A 68px heading in a
+     table of measurements is unusable, so the product never uses the display
+     grades; it inherits the same face and tracking instead.
+
+     `eyebrow` and `lead` are shared by both. */
+  --text-eyebrow: 0.6875rem;
+  --text-eyebrow--line-height: 1.4;
+  --text-eyebrow--letter-spacing: 0.16em;
+  --text-eyebrow--font-weight: 500;
+
+  --text-lead: 1.0625rem;
+  --text-lead--line-height: 1.65;
+
+  --text-display-sm: 1.5rem;
+  --text-display-sm--line-height: 1.25;
+  --text-display-sm--letter-spacing: -0.022em;
+
+  --text-display-md: 2.75rem;
+  --text-display-md--line-height: 1.1;
+  --text-display-md--letter-spacing: -0.03em;
+
+  --text-display-lg: 4.25rem;
+  --text-display-lg--line-height: 1.02;
+  --text-display-lg--letter-spacing: -0.03em;
+
+  /* The negative tracking on large type against positive tracking on the
+     eyebrow is what carries the premium impression — see tokens.json. */
+  --tracking-display: -0.03em;
+  --tracking-heading: -0.022em;
+  --tracking-body: 0em;
+  --tracking-eyebrow: 0.16em;
+
+  /* ── Shape ────────────────────────────────────────────────────────────── */
+  /* The brand's named scale, not a single radius with derived steps: the steps
+     are not proportional to one another and were chosen individually. */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+
+  /* ── Elevation — floating elements only, always soft, negative spread ──── */
+  --shadow-card: 0 24px 48px -32px rgb(22 24 26 / 0.4);
+  --shadow-float: 0 12px 32px -16px rgb(22 24 26 / 0.35);
+  --shadow-modal: 0 48px 96px -40px rgb(22 24 26 / 0.6);
+
+  /* ── Motion — one curve, two durations ────────────────────────────────── */
+  --ease-brand: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* ── Measure ──────────────────────────────────────────────────────────── */
+  --container-narrow: 48rem;
+  --container-content: 72rem;
+  --container-wide: 80rem;
+
+  /* ── Section rhythm ───────────────────────────────────────────────────── */
+  --spacing-section: 5rem;
+  --spacing-section-lg: 8rem;
+  --spacing-section-tight: 4rem;
+  --spacing-section-tight-lg: 5rem;
+  --spacing-card: 2rem;
+  --spacing-card-lg: 2.5rem;
+
+  /* Breakpoints are Tailwind's defaults (640/768/1024/1280) and already match
+     tokens.json exactly — nothing to override. */
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -251,7 +390,7 @@
   }
 
   body {
-    @apply bg-background font-sans text-foreground antialiased;
+    @apply bg-background font-sans text-body antialiased;
     text-rendering: optimizeLegibility;
     font-feature-settings: 'cv11', 'ss01';
   }
@@ -260,7 +399,7 @@
   h2,
   h3,
   h4 {
-    @apply font-display tracking-tight;
+    @apply font-display tracking-heading text-foreground;
     text-wrap: balance;
   }
 
@@ -290,5 +429,18 @@
       transition-duration: 0.01ms !important;
       scroll-behavior: auto !important;
     }
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   COMPONENT PRIMITIVES
+   Only patterns that would otherwise be repeated verbatim across features.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@layer components {
+  /* The small caps label above a heading. Its positive tracking is the
+     counterpoint to the negative tracking on display type. */
+  .eyebrow {
+    @apply font-mono text-eyebrow text-muted-foreground uppercase;
   }
 }

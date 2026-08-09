@@ -26,7 +26,7 @@ export default function GlobalError({
 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-6 px-6 text-center">
-      <h1 className="font-display text-3xl font-semibold tracking-tight">Something went wrong</h1>
+      <h1 className="font-display text-3xl font-semibold tracking-heading">Something went wrong</h1>
       <p className="max-w-sm text-pretty text-muted-foreground">
         An unexpected error occurred. The team has been notified.
       </p>

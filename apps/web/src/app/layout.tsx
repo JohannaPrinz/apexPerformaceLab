@@ -1,7 +1,4 @@
-import { Inter } from 'next/font/google';
-
-import { GeistMono } from 'geist/font/mono';
-import { GeistSans } from 'geist/font/sans';
+import { IBM_Plex_Mono, Inter, Manrope } from 'next/font/google';
 
 import { Providers } from '@/components/common/providers';
 
@@ -12,16 +9,34 @@ import type { Metadata, Viewport } from 'next';
 import '@apex/ui/styles.css';
 
 /**
- * Fonts are loaded via `next/font`, which self-hosts them and emits a CSS
- * variable. That variable is what `packages/ui/src/styles/globals.css` reads
- * (`--font-geist-sans`, `--font-inter`), so the design system stays decoupled
- * from how the app happens to load its typefaces.
+ * The three faces of the brand, matching `docs/design/tokens.json`:
+ * Manrope → headings · Inter → body and controls · IBM Plex Mono → figures and
+ * micro-labels.
  *
- * Geist → display/UI. Inter → body and dense data.
+ * Loaded via `next/font`, which self-hosts them and emits a CSS variable. Those
+ * variables are what `packages/ui/src/styles/globals.css` reads
+ * (`--font-manrope`, `--font-inter`, `--font-plex-mono`), so the design system
+ * stays decoupled from how the app happens to load its typefaces — and no
+ * request ever leaves for a font CDN.
  */
 const inter = Inter({
   subsets: ['latin'],
   variable: '--font-inter',
+  display: 'swap',
+});
+
+const manrope = Manrope({
+  subsets: ['latin'],
+  variable: '--font-manrope',
+  display: 'swap',
+});
+
+// IBM Plex Mono ships as static instances rather than a variable font, so the
+// weights have to be named. Only the two the brand uses are loaded.
+const plexMono = IBM_Plex_Mono({
+  subsets: ['latin'],
+  weight: ['400', '500'],
+  variable: '--font-plex-mono',
   display: 'swap',
 });
 
@@ -47,9 +62,11 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
+  // The brand canvas and its inverted counterpart — `color.canvas` and
+  // `color.deep` in docs/design/tokens.json.
   themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#F8F8F6' },
-    { media: '(prefers-color-scheme: dark)', color: '#121211' },
+    { media: '(prefers-color-scheme: light)', color: '#F7F7F5' },
+    { media: '(prefers-color-scheme: dark)', color: '#16181A' },
   ],
   width: 'device-width',
   initialScale: 1,
@@ -62,7 +79,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${GeistSans.variable} ${GeistMono.variable} ${inter.variable}`}
+      className={`${manrope.variable} ${inter.variable} ${plexMono.variable}`}
     >
       <body className="min-h-dvh antialiased">
         <Providers>{children}</Providers>
