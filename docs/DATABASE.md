@@ -341,7 +341,8 @@ The `db:*` scripts call `prisma` directly and take flags normally
 ## 8. Local setup
 
 Development runs against a hosted Postgres — currently Supabase in
-`eu-central-1`, matching the `fra1` region in [`vercel.json`](../vercel.json).
+`eu-central-1`, matching the `fra1` region in
+[`apps/web/vercel.json`](../apps/web/vercel.json).
 
 ```bash
 cp .env.example .env

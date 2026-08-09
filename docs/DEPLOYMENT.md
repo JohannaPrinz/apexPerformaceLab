@@ -1,6 +1,6 @@
 # Deployment
 
-> Status: **Vercel-ready** · Last updated: 2026-08-02
+> Status: **Vercel-ready** · Last updated: 2026-08-10
 
 ## Contents
 
@@ -35,29 +35,52 @@ anything else in the request path.
 
 ## 2. Vercel configuration
 
-[`vercel.json`](../vercel.json):
+**Root Directory is `apps/web`** — Vercel's own monorepo detection proposes it,
+and it is correct. Vercel identifies the framework by reading `package.json` in
+the Root Directory; `next` is declared in `apps/web/package.json`, so pointing
+Vercel at the repository root fails outright with
+_"No Next.js version detected"_. Vercel still runs `pnpm install` from the
+repository root, because it detects `pnpm-workspace.yaml` there.
 
-| Setting           | Value                                        | Why                                                                                                                      |
-| ----------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `buildCommand`    | `pnpm turbo run build --filter=@apex/web...` | The `...` suffix builds `@apex/web` **and its workspace dependencies** — without it the shared packages are never built. |
-| `installCommand`  | `pnpm install --frozen-lockfile`             | A lockfile mismatch fails the build instead of silently resolving different versions.                                    |
-| `outputDirectory` | `apps/web/.next`                             | Monorepo — the app is not at the repo root.                                                                              |
-| `regions`         | `["fra1"]`                                   | See above.                                                                                                               |
-| `github.silent`   | `true`                                       | Suppresses per-commit bot comments.                                                                                      |
+Consequently the project's [`vercel.json`](../apps/web/vercel.json) lives in
+`apps/web`, not at the repository root — Vercel reads it from the Root Directory:
 
-Prisma client generation runs as part of `@apex/database`'s build, so the
-generated client exists before `next build` typechecks against it.
+| Setting         | Value      | Why                                         |
+| --------------- | ---------- | ------------------------------------------- |
+| `framework`     | `nextjs`   | Explicit rather than inferred.              |
+| `regions`       | `["fra1"]` | See above — must match the database region. |
+| `github.silent` | `true`     | Suppresses per-commit bot comments.         |
+
+Build, install and output commands are **not** overridden: Vercel's defaults for
+a Next.js app inside a pnpm workspace are already right.
+
+### How the Prisma client gets generated
+
+`packages/database` declares `"postinstall": "prisma generate"`. Generation is
+therefore tied to **install**, not to a build command.
+
+That distinction is what makes the deployment robust. `generated/` is
+gitignored, so a fresh clone has no client and `next build` would fail on
+unresolvable imports. Hanging generation off a custom `buildCommand` works only
+as long as nobody changes the Root Directory or the build command; hanging it
+off `postinstall` works no matter who builds what, including on a teammate's
+first `pnpm install`.
 
 ## 3. First deployment
 
 1. Push the repository to GitHub.
 2. Vercel → **Add New Project** → import the repository.
-3. **Root Directory: leave at the repository root** (`./`), not `apps/web`.
-   `vercel.json` handles the monorepo layout. Pointing Vercel at `apps/web`
-   breaks the workspace resolution — this is the most common setup mistake.
+3. **Root Directory: `apps/web`** — accept Vercel's detected value. Do not set
+   it to the repository root; framework detection then finds no `next`
+   dependency and the import fails before any build starts.
 4. Framework preset: Next.js (auto-detected).
-5. Add the environment variables from [§4](#4-environment-variables).
-6. Deploy.
+5. Leave Build Command, Install Command and Output Directory at their defaults.
+6. Add the environment variables from [§4](#4-environment-variables).
+7. Deploy.
+
+Confirm in the build log that `prisma generate` ran during installation. If it
+did not, the deployment will fail at `next build` on imports from
+`generated/prisma` — fix the cause, not the symptom.
 
 Post-deploy: set `NEXT_PUBLIC_APP_URL` and `BETTER_AUTH_URL` to the real
 production URL and redeploy. Both are baked in at build time, so the first
@@ -93,7 +116,8 @@ Preview must not point at the production database.
 1. Create a Postgres instance in the same region as the deployment.
 2. Set `DATABASE_URL` to the pooled connection string, `DIRECT_URL` to the
    direct one.
-3. Apply the schema: `pnpm db:migrate deploy` against the target database.
+3. Apply the schema against the target database:
+   `pnpm --filter @apex/database db:migrate:deploy`
 
 Why the two URLs are not interchangeable:
 [DATABASE.md §1](./DATABASE.md#1-stack).
@@ -119,11 +143,11 @@ drop old column in a later release) is the only safe sequence.
 
 ## 7. Environments
 
-| Environment | Branch | Database              | Purpose         |
-| ----------- | ------ | --------------------- | --------------- |
-| Production  | `main` | Production            | Live            |
-| Preview     | any PR | Preview/branch DB     | Review per PR   |
-| Development | local  | Local Docker Postgres | Day-to-day work |
+| Environment | Branch | Database                         | Purpose         |
+| ----------- | ------ | -------------------------------- | --------------- |
+| Production  | `main` | Production                       | Live            |
+| Preview     | any PR | Preview/branch DB                | Review per PR   |
+| Development | local  | Supabase dev project (or Docker) | Day-to-day work |
 
 ## 8. Third-party services
 
