@@ -1,0 +1,14 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# Packages whose install/build scripts are allowed to execute.
+# pnpm blocks lifecycle scripts by default; this is the explicit allowlist.
+# Everything here is a first-party toolchain dependency that genuinely needs a
+# postinstall step (native binary download or engine generation).
+allowBuilds:
+  '@prisma/engines': true
+  core-js: true
+  esbuild: true
+  prisma: true
+  sharp: true

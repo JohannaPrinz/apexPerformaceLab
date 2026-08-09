@@ -1,0 +1,42 @@
+{
+  "name": "apex-os",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Apex OS — multi-tenant SaaS platform for performance coaching",
+  "packageManager": "pnpm@11.18.0",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "start": "turbo run start",
+    "lint": "turbo run lint",
+    "lint:fix": "turbo run lint -- --fix",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "clean": "turbo run clean && rimraf node_modules .turbo",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,mjs,cjs,json,md,mdx,css,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,mjs,cjs,json,md,mdx,css,yml,yaml}\"",
+    "db:generate": "pnpm --filter @apex/database db:generate",
+    "db:push": "pnpm --filter @apex/database db:push",
+    "db:migrate": "pnpm --filter @apex/database db:migrate",
+    "db:studio": "pnpm --filter @apex/database db:studio",
+    "db:seed": "pnpm --filter @apex/database db:seed",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@apex/config": "workspace:*",
+    "@commitlint/cli": "21.2.1",
+    "@commitlint/config-conventional": "21.2.0",
+    "husky": "9.1.7",
+    "lint-staged": "17.3.0",
+    "prettier": "3.9.6",
+    "prettier-plugin-tailwindcss": "0.8.1",
+    "prisma": "7.9.1",
+    "rimraf": "6.1.3",
+    "turbo": "2.10.8",
+    "typescript": "6.0.3"
+  }
+}

@@ -1,0 +1,30 @@
+# Line endings are normalised to LF in the repository and on checkout.
+#
+# This is not cosmetic: Prettier is configured with `endOfLine: "lf"`. Without
+# this file, Git for Windows checks out CRLF by default and `pnpm format:check`
+# then fails on every file — for anyone cloning on Windows and for CI.
+* text=auto eol=lf
+
+# Shell scripts must keep LF even where a platform would prefer otherwise —
+# the Husky hooks are executed by sh.
+*.sh text eol=lf
+.husky/* text eol=lf
+
+# Binary files: never converted, never diffed as text.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.avif binary
+*.ico  binary
+*.pdf  binary
+*.woff binary
+*.woff2 binary
+*.ttf  binary
+*.otf  binary
+*.mp4  binary
+*.webm binary
+
+# Generated: collapsed in reviews, excluded from language statistics.
+pnpm-lock.yaml linguist-generated=true

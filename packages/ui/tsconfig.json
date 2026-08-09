@@ -1,0 +1,5 @@
+{
+  "extends": "@apex/config/typescript/react-library.json",
+  "include": ["src/**/*.ts", "src/**/*.tsx", "eslint.config.mjs"],
+  "exclude": ["node_modules"]
+}

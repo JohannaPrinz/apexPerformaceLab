@@ -1,0 +1,42 @@
+{
+  "name": "@apex/database",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Prisma schema, generated client and data-access primitives for Apex OS",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts",
+    "./tenant": "./src/tenant.ts"
+  },
+  "scripts": {
+    "db:generate": "prisma generate",
+    "db:push": "dotenv -e ../../.env -- prisma db push",
+    "db:migrate": "dotenv -e ../../.env -- prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:studio": "dotenv -e ../../.env -- prisma studio",
+    "db:seed": "dotenv -e ../../.env -- tsx prisma/seed.ts",
+    "build": "prisma generate",
+    "lint": "eslint .",
+    "typecheck": "prisma generate && tsc --noEmit",
+    "clean": "rimraf .turbo node_modules generated"
+  },
+  "dependencies": {
+    "@apex/types": "workspace:*",
+    "@prisma/adapter-pg": "7.9.1",
+    "@prisma/client": "7.9.1",
+    "pg": "8.22.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@apex/config": "workspace:*",
+    "@types/node": "26.1.2",
+    "@types/pg": "8.20.3",
+    "dotenv-cli": "11.0.0",
+    "eslint": "9.39.5",
+    "prisma": "7.9.1",
+    "rimraf": "6.1.3",
+    "tsx": "4.23.1",
+    "typescript": "6.0.3"
+  }
+}

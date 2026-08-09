@@ -1,0 +1,10 @@
+{
+  "extends": "@apex/config/typescript/library.json",
+  "compilerOptions": {
+    // The Prisma 7 generator emits TypeScript source with explicit `.ts`
+    // import specifiers, so the compiler has to accept them.
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src/**/*.ts", "prisma/**/*.ts", "prisma.config.ts", "eslint.config.mjs"],
+  "exclude": ["node_modules", "generated"]
+}

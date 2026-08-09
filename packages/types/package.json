@@ -1,0 +1,31 @@
+{
+  "name": "@apex/types",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared domain types, Zod schemas and result primitives for Apex OS",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./common": "./src/common/index.ts",
+    "./tenancy": "./src/tenancy/index.ts",
+    "./errors": "./src/errors/index.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rimraf .turbo node_modules dist"
+  },
+  "dependencies": {
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@apex/config": "workspace:*",
+    "@types/node": "26.1.2",
+    "eslint": "9.39.5",
+    "rimraf": "6.1.3",
+    "typescript": "6.0.3",
+    "vitest": "4.1.10"
+  }
+}

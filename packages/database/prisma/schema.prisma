@@ -1,0 +1,1338 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Apex OS — Prisma schema
+//
+// The domain model is defined in docs/domain/DOMAIN_DECISIONS.md. Section
+// references below (§n) point there; that document wins in case of doubt.
+//
+// Canonical hierarchy (§3):
+//   Workspace → Athlete → Performance Case → Assessment → Module → Measurement
+//
+// Workspace is modelled as `Organization` (§5) — a Personal Workspace is
+// internally an Organization, and that stays invisible to the user.
+//
+// Tenancy strategy: shared database, shared schema, discriminator column.
+// Every tenant-owned row carries `organizationId` and is indexed on it. This is
+// the right trade-off for a coaching SaaS — thousands of small tenants, where
+// schema-per-tenant would multiply migration cost without buying isolation we
+// cannot get from disciplined query scoping. See docs/ARCHITECTURE.md.
+//
+// Convention: every tenant-scoped model MUST
+//   1. hold an `organizationId` field with a cascading relation, and
+//   2. be indexed on it.
+//
+// A composite index satisfies (2) as long as `organizationId` is its **first**
+// column — Postgres uses the leftmost prefix, so `@@index([organizationId,
+// athleteId, …])` serves the plain tenant lookup too. Several models use that
+// form; a separate single-column index next to it would be dead weight.
+//
+// Two exceptions to (1):
+//
+//   • Pure join tables (`InsightMeasurement`, `InsightAsset`, `InsightNote`,
+//     `RecommendationInsight`) carry no `organizationId`. They hold no
+//     attributes of their own and are never queried standalone — every path
+//     reaches them through a parent that is already tenant-scoped. A join table
+//     that ever gains its own attributes loses this exemption.
+//
+//   • `Coach` and `CoachCredential` are **not tenant-scoped at all** (§6). A
+//     coach profile is organisation-independent: a coach may work alone, in one
+//     practice, for several, or move between them. Affiliation is a
+//     `Membership`. Everything a coach *authors* is tenant-scoped; the person
+//     is not.
+//
+// On `organizationId` vs. DOMAIN_RULES #3 ("derive the chain, do not duplicate
+// it"): that rule forbids storing *athlete, case and assessment* a second time
+// on a Measurement — and this schema does not. The tenant discriminator is a
+// different matter: carrying it on every tenant-owned table means a query can
+// never reach another workspace's row by ID alone, even if a join is forgotten.
+// It is defence in depth, deliberately kept, and the only duplication allowed.
+//
+// Enum casing: the four Identity/Tenancy enums use lowercase values because
+// Better Auth writes those literals. Domain enums use UPPER_SNAKE_CASE to match
+// DOMAIN_DECISIONS.
+//
+// Some invariants cannot be expressed in Prisma. They are listed at the bottom
+// of this file and must be added to the migration as raw SQL.
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ── Identity ─────────────────────────────────────────────────────────────────
+// These four models are the schema Better Auth expects. Field names are dictated
+// by the adapter — do not rename them.
+
+model User {
+  id            String   @id @default(cuid(2))
+  name          String
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sessions        Session[]
+  accounts        Account[]
+  memberships     Membership[]
+  invitationsSent Invitation[] @relation("InvitedBy")
+
+  /// Domain links. Authentication stays independent of the domain (§26.22):
+  /// a user account never *is* a Coach or an Athlete, it is linked to one.
+  ///
+  /// One coach profile per person, independent of any organisation (§6);
+  /// organisational affiliation is a `Membership`.
+  coachProfile Coach?
+  athlete      Athlete?
+
+  @@index([email])
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid(2))
+  token     String   @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The organization the user is currently acting within. Every request
+  /// derives its tenant scope from here, so it lives on the session rather than
+  /// on the user — one person may coach for several organizations.
+  activeOrganizationId String?
+
+  @@index([userId])
+  @@index([token])
+  @@map("sessions")
+}
+
+model Account {
+  id                    String    @id @default(cuid(2))
+  accountId             String
+  providerId            String
+  accessToken           String?
+  refreshToken          String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  idToken               String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Verification {
+  id         String   @id @default(cuid(2))
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verifications")
+}
+
+// ── Tenancy ──────────────────────────────────────────────────────────────────
+// `Organization` is the Workspace (§5). Field set unchanged; only the domain
+// back-relations below were added — Prisma requires both sides of a relation.
+
+model Organization {
+  id        String   @id @default(cuid(2))
+  name      String
+  /// Used for the tenant subdomain and public URLs; immutable once issued.
+  slug      String   @unique
+  logo      String?
+  /// Free-form tenant settings. JSON keeps the schema stable while product
+  /// requirements are still moving; anything queried or validated gets promoted
+  /// to a real column.
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members     Membership[]
+  invitations Invitation[]
+
+  /// Domain back-relations.
+  ///
+  /// `Coach` is deliberately absent: a coach profile is organisation-independent
+  /// (§6). Affiliation runs through `Membership` above.
+  athletes         Athlete[]
+  cases            PerformanceCase[]
+  goals            Goal[]
+  assessments      Assessment[]
+  modules          AssessmentModule[]
+  measurementTypes MeasurementType[]
+  measurements     Measurement[]
+  insights         Insight[]
+  recommendations  Recommendation[]
+  reports          Report[]
+  shares           Share[]
+  assets           Asset[]
+  videoAnnotations VideoAnnotation[]
+  programs         Program[]
+  notes            Note[]
+  appointments     Appointment[]
+  timelineEntries  TimelineEntry[]
+
+  @@index([slug])
+  @@map("organizations")
+}
+
+model Membership {
+  id        String         @id @default(cuid(2))
+  role      MembershipRole @default(coach)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// A user holds exactly one role per organization.
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@index([userId])
+  @@map("memberships")
+}
+
+model Invitation {
+  id        String           @id @default(cuid(2))
+  email     String
+  role      MembershipRole   @default(coach)
+  status    InvitationStatus @default(pending)
+  expiresAt DateTime
+  createdAt DateTime         @default(now())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedById    String
+  invitedBy      User         @relation("InvitedBy", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, email])
+  @@index([organizationId])
+  @@index([email])
+  @@map("invitations")
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// DOMAIN
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ── Coach & Athlete ──────────────────────────────────────────────────────────
+
+/// A professional user (§6).
+///
+/// **Organisation-independent by design.** A Coach profile carries no
+/// `organizationId`: a coach may work alone, inside one practice, for several
+/// organisations, or move between them (§6). Affiliation is a `Membership`, not
+/// a property of the profile — binding the profile to one Workspace would make
+/// every one of those cases a data migration.
+///
+/// This is the one domain object that is deliberately **not** tenant-scoped.
+/// Everything a Coach authors *is* tenant-scoped; the profile itself is the
+/// person, and a person is not owned by a Workspace.
+///
+/// `Membership` carries the *role within an organisation*; `Coach` carries the
+/// *professional profile*. Authentication stays independent of both (§26.22).
+///
+/// **The row is never deleted.** A Coach may delete their profile (§6), but the
+/// Assessments, Insights and Reports they authored belong to the Athlete and the
+/// Workspace — erasing them would destroy someone else's record and break the
+/// performance history (§22). Deletion therefore anonymises: personal fields are
+/// cleared, `userId` is unlinked, `deletedAt` is set. Authorship references stay
+/// intact and resolve to a deleted coach.
+model Coach {
+  id                String    @id @default(cuid(2))
+  /// Professional information only (§6). Cleared on deletion.
+  displayName       String?
+  professionalTitle String?
+  bio               String?
+  /// No longer practising — data intact, reversible.
+  archivedAt        DateTime?
+  /// Self-deleted (§6). Personal fields are cleared and `userId` unlinked;
+  /// the row survives as a tombstone so authored content keeps its author.
+  /// Distinct from `archivedAt`: archiving is reversible, this is not.
+  deletedAt         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  /// One profile per person. Null once the profile is deleted — the link to the
+  /// account is severed while the tombstone remains. Postgres treats NULLs as
+  /// distinct, so any number of tombstones may coexist.
+  ///
+  /// `SetNull` rather than `Cascade`: deleting the user account must never
+  /// cascade into an athlete's record.
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  credentials      CoachCredential[]
+  cases            PerformanceCase[]
+  appointments     Appointment[]
+  insights         Insight[]
+  reports          Report[]
+  notes            Note[]
+  videoAnnotations VideoAnnotation[]
+  uploadedAssets   Asset[]
+  sharesCreated    Share[]
+
+  @@map("coaches")
+}
+
+/// Proof of qualification — a licence, certification or accreditation (§6).
+///
+/// Deliberately **not** an `Asset`: the context ladder anchors every Asset to an
+/// Athlete (§18), which is what keeps the athlete timeline complete. A coach
+/// credential belongs to the Coach and has no place on any athlete's timeline,
+/// so it carries its own storage reference rather than bending that invariant.
+///
+/// Never reachable through a Share — credentials are not athlete-facing (§6).
+///
+/// Follows the Coach: no `organizationId`. A qualification belongs to the
+/// person and travels with them between organisations.
+model CoachCredential {
+  id         String    @id @default(cuid(2))
+  title      String
+  issuer     String?
+  issuedAt   DateTime? @db.Date
+  /// Null means it does not expire.
+  expiresAt  DateTime? @db.Date
+  /// Object key in R2. Null while only the metadata is recorded — a coach may
+  /// name a licence without uploading the certificate.
+  storageKey String?   @unique
+  fileName   String?
+  mimeType   String?
+  sizeBytes  Int?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  coachId String
+  coach   Coach  @relation(fields: [coachId], references: [id], onDelete: Cascade)
+
+  @@index([coachId])
+  @@map("coach_credentials")
+}
+
+/// The person receiving services (§7).
+///
+/// An Athlete exists **independently of a user account**: `userId` stays null
+/// until the Coach activates portal access, and linking one later requires no
+/// data migration (§21). Nothing in the domain may depend on it being set.
+///
+/// Athletes belong to the Workspace, never to an individual Coach (§26.24) —
+/// that is what makes multi-coach workspaces possible without restructuring.
+model Athlete {
+  id          String    @id @default(cuid(2))
+  firstName   String
+  lastName    String
+  dateOfBirth DateTime? @db.Date
+  email       String?
+  phone       String?
+  /// Inactive marker. Athletes are archived, never deleted — the performance
+  /// history outlives the coaching relationship (§22). Set when the coaching
+  /// ends, and also when the Athlete deletes their portal account (§7).
+  archivedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Globally unique: one user account belongs to exactly one Athlete.
+  /// Identity is not shared across Workspaces (§7), so a person coached by two
+  /// workspaces is two Athlete records.
+  ///
+  /// Deleting the account unlinks it and marks the Athlete inactive via
+  /// `archivedAt` (§7). The record stays with the Coach — the findings drawn
+  /// from it are their professional documentation. Erasing the record itself is
+  /// a separate question, see docs/SECURITY.md.
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  cases           PerformanceCase[]
+  assets          Asset[]
+  programs        Program[]
+  notes           Note[]
+  appointments    Appointment[]
+  timelineEntries TimelineEntry[]
+
+  /// Covers the tenant scope on its own (leftmost prefix) and the roster
+  /// listing in full. A separate `organizationId` index would be redundant.
+  @@index([organizationId, lastName, firstName])
+  @@map("athletes")
+}
+
+// ── Performance Case & Goal ──────────────────────────────────────────────────
+
+/// The structural container of an athlete's journey (§8).
+///
+/// Mandatory in the model but never a manual step: creating an Assessment for
+/// an athlete without an open Case creates one of type `SINGLE_ASSESSMENT`
+/// automatically. That keeps exactly one query and authorization path instead
+/// of two.
+model PerformanceCase {
+  id          String     @id @default(cuid(2))
+  title       String
+  description String?
+  type        CaseType   @default(ONGOING)
+  status      CaseStatus @default(OPEN)
+  startedAt   DateTime   @default(now())
+  endedAt     DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  athleteId      String
+  athlete        Athlete      @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+
+  /// Creator, not assignee — "Der Coach erstellt Cases" (CORE_OBJECTS §Coach).
+  /// Deliberately *not* named `coachId`: §5 defers explicit coach-to-athlete
+  /// assignment until multi-coach workspaces exist, and athletes belong to the
+  /// Workspace rather than to a Coach (§26.24). `Restrict` because a Case is
+  /// part of the record — a coach with cases is deactivated, not deleted.
+  createdByCoachId String
+  createdByCoach   Coach  @relation(fields: [createdByCoachId], references: [id], onDelete: Restrict)
+
+  goals        Goal[]
+  assessments  Assessment[]
+  reports      Report[]
+  assets       Asset[]
+  programs     Program[]
+  notes        Note[]
+  appointments Appointment[]
+
+  @@index([organizationId])
+  @@index([athleteId, status])
+  @@index([createdByCoachId])
+  @@map("performance_cases")
+}
+
+/// What a Case is meant to achieve (§9). A Case may have several.
+model Goal {
+  id         String    @id @default(cuid(2))
+  title      String
+  targetDate DateTime? @db.Date
+  achievedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  caseId         String
+  case           PerformanceCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([caseId])
+  @@map("goals")
+}
+
+// ── Assessment & Module ──────────────────────────────────────────────────────
+
+/// The primary working unit (§10).
+///
+/// The Athlete is reached through the Case and is deliberately **not** stored
+/// here a second time (§26.4).
+model Assessment {
+  id          String         @id @default(cuid(2))
+  /// Mandatory (§10, DOMAIN_RULES #6): data is never collected without a
+  /// purpose. There is no separate Question object.
+  question    String
+  /// Position in the process only — the content comes solely from the Modules.
+  type        AssessmentType @default(INITIAL)
+  performedAt DateTime
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  caseId         String
+  case           PerformanceCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  modules      AssessmentModule[]
+  reports      Report[]
+  assets       Asset[]
+  programs     Program[]
+  notes        Note[]
+  appointments Appointment[]
+
+  @@index([organizationId])
+  @@index([caseId, performedAt])
+  @@map("assessments")
+}
+
+/// One module within an Assessment (§11).
+///
+/// `moduleKey` is a **string, never an enum**: module identity is data, module
+/// behaviour (validation schema, measurement types, report renderer) lives in
+/// the registry in `packages/domain`. Adding a module must not require a
+/// migration (DOMAIN_RULES #8) — an enum would force one every time.
+///
+/// The canonical keys are: running, strength, movement, mobility, lactate,
+/// body_composition, nutrition, recovery, sleep, cycle, custom.
+/// Device manufacturers and competition formats are never module keys (§11).
+model AssessmentModule {
+  id            String   @id @default(cuid(2))
+  moduleKey     String
+  /// The registry version this module was captured under (§11, "Each Module
+  /// additionally defines Version"). Recorded on the row, not only in the
+  /// registry: a published Report must stay re-renderable with the payload
+  /// shape it was written against, even after the module evolves (§16).
+  moduleVersion Int      @default(1)
+  /// Module-specific input, validated against the registry's Zod schema for
+  /// `moduleVersion`.
+  payload       Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assessmentId   String
+  assessment     Assessment   @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  measurements    Measurement[]
+  insights        Insight[]
+  recommendations Recommendation[]
+  reports         Report[]
+  assets          Asset[]
+  programs        Program[]
+  notes           Note[]
+  appointments    Appointment[]
+
+  /// A module appears at most once per Assessment.
+  @@unique([assessmentId, moduleKey])
+  @@index([organizationId])
+  @@index([moduleKey])
+  @@map("assessment_modules")
+}
+
+// ── Measurement Type & Measurement ───────────────────────────────────────────
+
+/// A reusable template for objective measurements (§12).
+///
+/// `organizationId` is nullable on purpose: `null` marks a system-wide default
+/// that every workspace inherits, a value marks a workspace-specific addition.
+///
+/// Side is deliberately **not** here — the type "Grip Strength" is the same on
+/// both sides, only the recorded value differs (§12, §26.10).
+model MeasurementType {
+  id           String               @id @default(cuid(2))
+  /// Stable identifier used by the module registry, e.g. `grip_strength`.
+  key          String
+  name         String
+  unit         String
+  valueType    MeasurementValueType
+  /// Classification for filtering and grouping, independent of the Module a
+  /// measurement is recorded in (§12). The value set is maintained in
+  /// `packages/domain`, not as a database enum — same reasoning as `moduleKey`.
+  category     String
+  referenceMin Decimal?             @db.Decimal(12, 4)
+  referenceMax Decimal?             @db.Decimal(12, 4)
+  archivedAt   DateTime?
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  measurements Measurement[]
+
+  /// Workspace-scoped uniqueness. Postgres treats NULLs as distinct, so the
+  /// system catalogue needs an additional partial unique index — see the raw
+  /// SQL notes at the bottom of this file.
+  @@unique([organizationId, key])
+  @@index([organizationId])
+  @@index([category])
+  @@map("measurement_types")
+}
+
+/// An objective fact (§13).
+///
+/// Measurements are **never edited**. A correction is a new Measurement that
+/// supersedes the previous one, and the superseded row stays visible — an
+/// erroneous reading is part of the scientific record (§4, §26.11).
+///
+/// Context: exactly one Measurement Type and exactly one Module. Assessment,
+/// Case and Athlete are reached through the Module and are never stored here
+/// (DOMAIN_RULES #3). `organizationId` is the documented exception — see the
+/// file header.
+model Measurement {
+  id             String            @id @default(cuid(2))
+  side           BodySide          @default(BILATERAL)
+  /// Exactly one of the three value columns is set, matching the type's
+  /// `valueType`. Enforced by a raw SQL check — see the notes below.
+  numericValue   Decimal?          @db.Decimal(12, 4)
+  textValue      String?
+  booleanValue   Boolean?
+  /// When the measurement was taken.
+  capturedAt     DateTime
+  /// When it reached Apex OS. Separate from `capturedAt` because devices
+  /// deliver late — a sleep record from last night arrives this morning and
+  /// must still land on the correct day of the timeline (§13).
+  ///
+  /// This is also the row's creation time; a separate `createdAt` would carry
+  /// the same value under a less meaningful name. The `createdAt`/`updatedAt`
+  /// convention is deliberately not applied here — a Measurement is a fact and
+  /// is never updated (§4).
+  ingestedAt     DateTime          @default(now())
+  source         MeasurementSource @default(MANUAL)
+  /// Origin system, e.g. `vald`, `garmin`. Null for manual entry. Devices are
+  /// data sources, never modules (§11).
+  externalSystem String?
+  /// The source system's own identifier.
+  externalId     String?
+
+  organizationId     String
+  organization       Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assessmentModuleId String
+  assessmentModule   AssessmentModule @relation(fields: [assessmentModuleId], references: [id], onDelete: Cascade)
+  measurementTypeId  String
+  measurementType    MeasurementType  @relation(fields: [measurementTypeId], references: [id], onDelete: Restrict)
+
+  /// Correction chain. `supersededById` points at the replacement.
+  supersededById String?      @unique
+  supersededBy   Measurement? @relation("MeasurementCorrection", fields: [supersededById], references: [id], onDelete: SetNull)
+  supersedes     Measurement? @relation("MeasurementCorrection")
+
+  insightEvidence InsightMeasurement[]
+
+  /// Makes every re-import idempotent **within a Workspace** (§13,
+  /// DOMAIN_RULES #12): repeating a Garmin or VALD sync can never create
+  /// duplicates.
+  ///
+  /// Scoped by `organizationId` on purpose. External identifiers are only
+  /// guaranteed unique inside the system that issued them — a VALD test number
+  /// from one practice may collide with one from another. Without the tenant
+  /// column, a legitimate import in Workspace B would be rejected because
+  /// Workspace A already holds that identifier.
+  ///
+  /// The constraint governs the *imported external record*, not the Assessment:
+  /// a new external test with a new identifier is always a new Measurement.
+  @@unique([organizationId, externalSystem, externalId])
+  @@index([organizationId])
+  @@index([assessmentModuleId])
+  @@index([measurementTypeId, capturedAt])
+  @@map("measurements")
+}
+
+// ── Insight & Evidence ───────────────────────────────────────────────────────
+
+/// A professional interpretation of Measurements (§14).
+///
+/// No publication state of its own — an Insight freezes together with the
+/// Report that references it (§4).
+model Insight {
+  id        String   @id @default(cuid(2))
+  title     String
+  body      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organizationId     String
+  organization       Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assessmentModuleId String
+  assessmentModule   AssessmentModule @relation(fields: [assessmentModuleId], references: [id], onDelete: Cascade)
+  authorCoachId      String
+  authorCoach        Coach            @relation(fields: [authorCoachId], references: [id], onDelete: Restrict)
+
+  /// Evidence links (§14). Relations, not owned objects — see the Evidence
+  /// section below.
+  measurementEvidence InsightMeasurement[]
+  assetEvidence       InsightAsset[]
+  noteEvidence        InsightNote[]
+
+  recommendations RecommendationInsight[]
+
+  @@index([organizationId])
+  @@index([assessmentModuleId])
+  @@map("insights")
+}
+
+// ── Evidence ─────────────────────────────────────────────────────────────────
+//
+// **Evidence is a relation, not a domain object** (§3 Relations, §14). It
+// connects an Insight to what supports it, carries no attributes and — this is
+// the load-bearing part — has **no identity of its own**.
+//
+// The three models below are therefore *persistence structures, not entities*.
+// They exist because a relational database expresses n:m through a table; they
+// are not part of the domain object list and must never gain an attribute, a
+// surrogate key or a repository of their own.
+//
+// **Why three tables and not one.** §3 names four evidence targets: Measurement,
+// Video, Document and Note. Video and Document are both `Asset`, so three
+// targets remain. A single table would need three nullable columns, and Prisma
+// requires every model to have a key — with nullable targets no composite key is
+// possible, so it would need a surrogate `id`. That would give Evidence exactly
+// the identity the domain forbids, and it would still not prevent the same
+// measurement being linked twice.
+//
+// Splitting per target removes all three problems at once:
+//   • composite primary key → no identity, no attributes
+//   • exactly one target per row → structural, no CHECK constraint needed
+//   • duplicate links impossible → free, from the primary key
+//
+// Heterogeneous evidence stays required, not optional: an insight about running
+// technique rests on a video, not on a number. That an Insight has at least one
+// piece of evidence is a *domain* invariant — see the notes at the bottom.
+
+/// Evidence link: Insight ← Measurement. Not a domain object.
+model InsightMeasurement {
+  insightId     String
+  insight       Insight     @relation(fields: [insightId], references: [id], onDelete: Cascade)
+  measurementId String
+  measurement   Measurement @relation(fields: [measurementId], references: [id], onDelete: Cascade)
+
+  @@id([insightId, measurementId])
+  @@index([measurementId])
+  @@map("insight_measurements")
+}
+
+/// Evidence link: Insight ← Asset (Document or Video). Not a domain object.
+model InsightAsset {
+  insightId String
+  insight   Insight @relation(fields: [insightId], references: [id], onDelete: Cascade)
+  assetId   String
+  asset     Asset   @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@id([insightId, assetId])
+  @@index([assetId])
+  @@map("insight_assets")
+}
+
+/// Evidence link: Insight ← Note. Not a domain object.
+model InsightNote {
+  insightId String
+  insight   Insight @relation(fields: [insightId], references: [id], onDelete: Cascade)
+  noteId    String
+  note      Note    @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@id([insightId, noteId])
+  @@index([noteId])
+  @@map("insight_notes")
+}
+
+// ── Recommendation ───────────────────────────────────────────────────────────
+
+/// The only object for measures (§15).
+///
+/// There is no separate Task, Action, Intervention or Measure object — those
+/// are states of this one. A Recommendation assigned to the Athlete is what the
+/// portal shows as a task (§21).
+///
+/// Content freezes with the publishing Report; the **status does not** (§4).
+model Recommendation {
+  id          String                 @id @default(cuid(2))
+  title       String
+  body        String?
+  status      RecommendationStatus   @default(PROPOSED)
+  assignee    RecommendationAssignee @default(ATHLETE)
+  dueDate     DateTime?              @db.Date
+  completedAt DateTime?
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+
+  organizationId     String
+  organization       Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assessmentModuleId String
+  assessmentModule   AssessmentModule @relation(fields: [assessmentModuleId], references: [id], onDelete: Cascade)
+
+  /// Replacement chain for `SUPERSEDED`.
+  supersededById String?         @unique
+  supersededBy   Recommendation? @relation("RecommendationSupersede", fields: [supersededById], references: [id], onDelete: SetNull)
+  supersedes     Recommendation? @relation("RecommendationSupersede")
+
+  insights RecommendationInsight[]
+  shares   Share[]
+
+  @@index([organizationId])
+  @@index([assessmentModuleId])
+  @@index([status, assignee])
+  @@map("recommendations")
+}
+
+/// A Recommendation always references one or more Insights (§15, §26.14) and is
+/// never derived directly from a Measurement. The join table is what makes
+/// "one or more" expressible; the mandatory minimum of one is enforced in the
+/// domain layer, since SQL cannot require a row in a child table.
+model RecommendationInsight {
+  recommendationId String
+  recommendation   Recommendation @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
+  insightId        String
+  insight          Insight        @relation(fields: [insightId], references: [id], onDelete: Cascade)
+
+  @@id([recommendationId, insightId])
+  @@index([insightId])
+  @@map("recommendation_insights")
+}
+
+// ── Report & Share ───────────────────────────────────────────────────────────
+
+/// The professional conclusion at a point in time (§16).
+///
+/// **One object, three scopes** — not three tables. All scopes share status,
+/// versioning, PDF export and sharing; three tables would carry that logic
+/// three times.
+///
+/// Exactly one of the three scope targets is set, matching `scope` — enforced
+/// by a raw SQL check.
+///
+/// `content` is the frozen snapshot taken at publication. Reports are snapshots
+/// (§2): re-rendering from live data would silently change a document the
+/// athlete already received.
+model Report {
+  id          String       @id @default(cuid(2))
+  scope       ReportScope
+  status      ReportStatus @default(DRAFT)
+  version     Int          @default(1)
+  title       String
+  /// Null while `DRAFT`; written once on publication and immutable after.
+  content     Json?
+  publishedAt DateTime?
+  archivedAt  DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  authorCoachId  String
+  authorCoach    Coach        @relation(fields: [authorCoachId], references: [id], onDelete: Restrict)
+
+  assessmentModuleId String?
+  assessmentModule   AssessmentModule? @relation(fields: [assessmentModuleId], references: [id], onDelete: Cascade)
+  assessmentId       String?
+  assessment         Assessment?       @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  caseId             String?
+  case               PerformanceCase?  @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  shares Share[]
+
+  @@index([organizationId, status])
+  @@index([assessmentModuleId])
+  @@index([assessmentId])
+  @@index([caseId])
+  @@map("reports")
+}
+
+/// Access to content — never a status on the content itself (§17).
+///
+/// Report is the content, Share is the access to it. Two independent
+/// lifecycles: `DRAFT → PUBLISHED → ARCHIVED` for the Report,
+/// `ACTIVE → EXPIRED` for the Share.
+///
+/// `ACTIVE`/`EXPIRED` is **derived**, not stored: a Share is expired when
+/// `revokedAt` is set or `expiresAt` has passed. Two causes, one terminal
+/// state — a status column would need a job to keep it true.
+///
+/// Expired Shares are never deleted: who had access, and until when, is part of
+/// the audit trail.
+///
+/// Exactly one target column is set per row — enforced by a raw SQL check.
+model Share {
+  id           String    @id @default(cuid(2))
+  /// The secure link. Unique across the platform; never guessable.
+  token        String    @unique
+  passwordHash String?
+  expiresAt    DateTime?
+  revokedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  organizationId   String
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdByCoachId String
+  createdByCoach   Coach        @relation(fields: [createdByCoachId], references: [id], onDelete: Restrict)
+
+  reportId         String?
+  report           Report?         @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  assetId          String?
+  asset            Asset?          @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  programId        String?
+  program          Program?        @relation(fields: [programId], references: [id], onDelete: Cascade)
+  recommendationId String?
+  recommendation   Recommendation? @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
+  noteId           String?
+  note             Note?           @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([reportId])
+  @@index([assetId])
+  @@index([programId])
+  @@index([recommendationId])
+  @@index([noteId])
+  @@map("shares")
+}
+
+// ── Documents & Videos ───────────────────────────────────────────────────────
+
+/// Uploaded files (§18).
+///
+/// Document and Video are **separate domain objects** with separate
+/// capabilities — a Video is not a document type. They share one table because
+/// they share upload, storage and context assignment; that is an implementation
+/// detail and stays invisible in the domain, in the same way a Personal
+/// Workspace is internally an Organization (§5).
+///
+/// Video-specific behaviour lives in `VideoAnnotation` and in the `video*`
+/// columns, which stay null for other kinds.
+///
+/// Context ladder (§18): the Athlete link is always set, the rest narrows the
+/// context. It does **not** depend on portal access — a medical report must be
+/// filable for an athlete without an account.
+model Asset {
+  id         String    @id @default(cuid(2))
+  kind       AssetKind
+  fileName   String
+  mimeType   String
+  sizeBytes  Int
+  /// Object key in R2. Unique because two rows must never point at one object.
+  storageKey String    @unique
+  /// Video only.
+  durationMs Int?
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  athleteId          String
+  athlete            Athlete           @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+  caseId             String?
+  case               PerformanceCase?  @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  assessmentId       String?
+  assessment         Assessment?       @relation(fields: [assessmentId], references: [id], onDelete: SetNull)
+  assessmentModuleId String?
+  assessmentModule   AssessmentModule? @relation(fields: [assessmentModuleId], references: [id], onDelete: SetNull)
+
+  /// Null means the Athlete uploaded it — both may (§18).
+  ///
+  /// `Restrict`, not `SetNull`: null already carries meaning here. Nulling a
+  /// coach upload would silently re-attribute it to the athlete — misleading on
+  /// a medical document. The Coach row is never deleted anyway (see `Coach`),
+  /// so this only guards against a future mistake.
+  uploadedByCoachId String?
+  uploadedByCoach   Coach?  @relation(fields: [uploadedByCoachId], references: [id], onDelete: Restrict)
+
+  annotations     VideoAnnotation[]
+  insightEvidence InsightAsset[]
+  shares          Share[]
+
+  /// Composite: serves the tenant scope alone, plus "this athlete's files" and
+  /// "this athlete's videos" — an athlete query without a tenant filter would
+  /// be a bug, so the standalone indexes are not needed.
+  @@index([organizationId, athleteId, kind])
+  @@index([caseId])
+  @@index([assessmentId])
+  @@index([assessmentModuleId])
+  @@map("assets")
+}
+
+/// A timestamped comment on a Video (§18). Only valid for `kind = VIDEO`.
+model VideoAnnotation {
+  id          String   @id @default(cuid(2))
+  timestampMs Int
+  body        String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assetId        String
+  asset          Asset        @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  /// Null when produced by AI. Every AI output still requires coach approval
+  /// before it counts (§24).
+  ///
+  /// `Restrict` for the same reason as `Asset.uploadedByCoachId`: null means
+  /// "AI", so nulling a coach comment would fake its origin.
+  authorCoachId  String?
+  authorCoach    Coach?       @relation(fields: [authorCoachId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([assetId, timestampMs])
+  @@map("video_annotations")
+}
+
+// ── Program, Note, Appointment ───────────────────────────────────────────────
+
+/// A structured coaching plan built inside Apex OS (§19).
+///
+/// A living object: it evolves over time and is independent from published
+/// Reports. An *uploaded* PDF training plan is an `Asset`, not a Program — the
+/// distinction is authorship, not content.
+model Program {
+  id         String    @id @default(cuid(2))
+  title      String
+  /// Structured plan content. Shape is owned by `packages/domain`.
+  content    Json?
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  athleteId          String
+  athlete            Athlete           @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+  caseId             String?
+  case               PerformanceCase?  @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  assessmentId       String?
+  assessment         Assessment?       @relation(fields: [assessmentId], references: [id], onDelete: SetNull)
+  assessmentModuleId String?
+  assessmentModule   AssessmentModule? @relation(fields: [assessmentModuleId], references: [id], onDelete: SetNull)
+
+  shares Share[]
+
+  @@index([organizationId, athleteId])
+  @@index([caseId])
+  @@index([assessmentId])
+  @@map("programs")
+}
+
+/// Free-form text written by a Coach or an Athlete (§20).
+///
+/// Deliberately unconstrained: unlike a Recommendation it need not derive from
+/// an Insight. Forcing every observation through the Insight chain would either
+/// dilute Recommendations or suppress notes entirely. A Note may itself serve
+/// as evidence for an Insight.
+///
+/// Always optional — no workflow requires one (§20).
+model Note {
+  id        String   @id @default(cuid(2))
+  body      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Null means the Athlete wrote it — the one named by `athleteId` below.
+  /// Same convention as `Asset.uploadedByCoachId`, and safe for the same
+  /// reason: `Restrict` plus the Coach tombstone mean a coach note can never
+  /// silently become an athlete note.
+  ///
+  /// A second author column is unnecessary because an Athlete only ever sees
+  /// their own record, so author and subject are the same person.
+  authorCoachId String?
+  authorCoach   Coach?  @relation(fields: [authorCoachId], references: [id], onDelete: Restrict)
+
+  athleteId          String
+  athlete            Athlete           @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+  caseId             String?
+  case               PerformanceCase?  @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  assessmentId       String?
+  assessment         Assessment?       @relation(fields: [assessmentId], references: [id], onDelete: SetNull)
+  assessmentModuleId String?
+  assessmentModule   AssessmentModule? @relation(fields: [assessmentModuleId], references: [id], onDelete: SetNull)
+  /// Notes taken during an appointment (§20, USER_FLOWS #6). A fifth level
+  /// beyond the shared context ladder, and only Notes have it: what was
+  /// discussed belongs to the appointment it was discussed at.
+  appointmentId      String?
+  appointment        Appointment?      @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+
+  insightEvidence InsightNote[]
+  /// A coach Note is coach-internal until a Share exists; an athlete Note
+  /// reaches the Coach immediately (§20).
+  shares          Share[]
+
+  @@index([organizationId, athleteId])
+  @@index([caseId])
+  /// The assessment view and the module report both list their notes.
+  @@index([assessmentId])
+  @@index([assessmentModuleId])
+  @@index([appointmentId])
+  @@map("notes")
+}
+
+/// A scheduled event (§20).
+///
+/// The Case link is **optional** on purpose: an initial consultation takes
+/// place before any Case exists, so requiring it would make the first real
+/// workflow impossible.
+///
+/// Competitions are Appointments, not a separate object — they anchor the
+/// timeline against goals such as "Sub 60 HYROX".
+model Appointment {
+  id         String          @id @default(cuid(2))
+  type       AppointmentType
+  title      String
+  startsAt   DateTime
+  endsAt     DateTime?
+  location   String?
+  meetingUrl String?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  organizationId   String
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// Creator, not assignee. Explicit coach-to-athlete assignment is deferred
+  /// until multi-coach workspaces exist (§5).
+  createdByCoachId String
+  createdByCoach   Coach        @relation(fields: [createdByCoachId], references: [id], onDelete: Restrict)
+
+  /// Context ladder (§18) — Appointments use the same four levels as Documents,
+  /// Videos, Programs and Notes (§3). The Case link is optional because an
+  /// initial consultation happens before any Case exists.
+  athleteId          String
+  athlete            Athlete           @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+  caseId             String?
+  case               PerformanceCase?  @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  assessmentId       String?
+  assessment         Assessment?       @relation(fields: [assessmentId], references: [id], onDelete: SetNull)
+  assessmentModuleId String?
+  assessmentModule   AssessmentModule? @relation(fields: [assessmentModuleId], references: [id], onDelete: SetNull)
+
+  notes Note[]
+
+  /// Composite: tenant scope alone, plus the calendar view for one athlete.
+  @@index([organizationId, athleteId, startsAt])
+  @@index([caseId])
+  @@index([assessmentId])
+  @@map("appointments")
+}
+
+// ── Timeline ─────────────────────────────────────────────────────────────────
+
+/// A projection over the domain objects (§22) — never a second source of truth.
+///
+/// Every entry points back at the object it represents via `kind` + `refId`.
+/// That pair is intentionally *not* a foreign key: the target type varies, and
+/// the table is rebuildable from the domain objects at any time. Integrity
+/// therefore comes from the rebuild, not from the constraint.
+///
+/// It exists so the full history can be read in one query without
+/// denormalising the athlete reference onto every table.
+model TimelineEntry {
+  id         String            @id @default(cuid(2))
+  kind       TimelineEntryKind
+  /// Primary key of the referenced domain object.
+  refId      String
+  occurredAt DateTime
+  createdAt  DateTime          @default(now())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  athleteId      String
+  athlete        Athlete      @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+
+  /// One entry per domain object.
+  @@unique([kind, refId])
+  /// Composite: tenant scope alone, plus the only real query pattern — one
+  /// athlete's history in chronological order (§22). An athlete query without
+  /// a tenant filter would be a bug, so separate indexes are not needed.
+  @@index([organizationId, athleteId, occurredAt])
+  @@map("timeline_entries")
+}
+
+// ── Enums ────────────────────────────────────────────────────────────────────
+
+// Identity & tenancy. Lowercase values because Better Auth writes these
+// literals. Kept in sync with `@apex/types` → `organizationRoleSchema`.
+
+enum MembershipRole {
+  owner
+  admin
+  coach
+  athlete
+}
+
+enum InvitationStatus {
+  pending
+  accepted
+  rejected
+  expired
+}
+
+// Domain enums (§8–§22). UPPER_SNAKE_CASE, matching DOMAIN_DECISIONS.
+
+enum CaseType {
+  SINGLE_ASSESSMENT
+  ONGOING
+}
+
+enum CaseStatus {
+  OPEN
+  CLOSED
+  ARCHIVED
+}
+
+/// Position in the process, never content — that comes from the Modules (§10).
+enum AssessmentType {
+  INITIAL
+  RE_ASSESSMENT
+  FOLLOW_UP
+}
+
+enum MeasurementValueType {
+  NUMERIC
+  TEXT
+  BOOLEAN
+}
+
+/// Belongs to the Measurement, not the Measurement Type (§13, §26.10). Without
+/// it, asymmetry cannot be calculated — and left/right imbalance is one of the
+/// most common Insights.
+enum BodySide {
+  LEFT
+  RIGHT
+  BILATERAL
+}
+
+/// Where a Measurement came from (§13). Devices are sources, never Modules.
+enum MeasurementSource {
+  MANUAL
+  DEVICE
+  IMPORT
+  DERIVED
+}
+
+/// The full lifecycle of a measure (§15). Task, Action and Intervention are
+/// states here, not separate objects.
+enum RecommendationStatus {
+  PROPOSED
+  ACCEPTED
+  IN_PROGRESS
+  DONE
+  SKIPPED
+  SUPERSEDED
+}
+
+enum RecommendationAssignee {
+  COACH
+  ATHLETE
+}
+
+enum ReportScope {
+  MODULE
+  ASSESSMENT
+  CASE
+}
+
+/// Publication is the point of no return (§16). Sharing is not a status here —
+/// it is the `Share` object.
+enum ReportStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+/// §3 knows two file-shaped objects: Document and Video. Images are listed as a
+/// Document example (§18) and are therefore `DOCUMENT`, not a kind of their own.
+enum AssetKind {
+  DOCUMENT
+  VIDEO
+}
+
+enum AppointmentType {
+  CONSULTATION
+  TRAINING
+  ASSESSMENT
+  FOLLOW_UP
+  ONLINE_MEETING
+  RACE_SUPPORT
+  COMPETITION
+}
+
+enum TimelineEntryKind {
+  ASSESSMENT
+  REPORT
+  MEASUREMENT
+  DOCUMENT
+  VIDEO
+  PROGRAM
+  RECOMMENDATION
+  APPOINTMENT
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INVARIANTS REQUIRING RAW SQL
+//
+// Prisma cannot express CHECK constraints or partial unique indexes. The
+// statements below must be appended **to the generated `migration.sql`**, not
+// run separately — only then does Prisma replay them into the shadow database
+// and report no drift on the next migration.
+//
+// Column names are camelCase and therefore double-quoted: the schema uses
+// `@@map` for tables only, no `@map` on any field.
+//
+//  1. measurement_types — system catalogue uniqueness
+//     Postgres treats NULLs as distinct, so `@@unique([organizationId, key])`
+//     does not prevent two system-wide types sharing a key.
+//       CREATE UNIQUE INDEX measurement_types_system_key_key
+//         ON measurement_types ("key") WHERE "organizationId" IS NULL;
+//
+//  2. measurements — exactly one value column, matching the type
+//       ALTER TABLE measurements ADD CONSTRAINT measurements_one_value
+//         CHECK (num_nonnulls("numericValue", "textValue", "booleanValue") = 1);
+//
+//  3. reports — exactly one scope target, matching `scope` (§16)
+//       ALTER TABLE reports ADD CONSTRAINT reports_scope_target
+//         CHECK (
+//           (scope = 'MODULE'     AND "assessmentModuleId" IS NOT NULL
+//                                 AND "assessmentId" IS NULL AND "caseId" IS NULL) OR
+//           (scope = 'ASSESSMENT' AND "assessmentId" IS NOT NULL
+//                                 AND "assessmentModuleId" IS NULL AND "caseId" IS NULL) OR
+//           (scope = 'CASE'       AND "caseId" IS NOT NULL
+//                                 AND "assessmentModuleId" IS NULL AND "assessmentId" IS NULL)
+//         );
+//
+//  4. reports — one version number per scope target
+//       CREATE UNIQUE INDEX reports_module_version_key
+//         ON reports ("assessmentModuleId", "version") WHERE "assessmentModuleId" IS NOT NULL;
+//       CREATE UNIQUE INDEX reports_assessment_version_key
+//         ON reports ("assessmentId", "version") WHERE "assessmentId" IS NOT NULL;
+//       CREATE UNIQUE INDEX reports_case_version_key
+//         ON reports ("caseId", "version") WHERE "caseId" IS NOT NULL;
+//
+//  5. reports — a published Report carries its snapshot (§16)
+//     `content` is written once on publication; a PUBLISHED or ARCHIVED row
+//     without it would be an empty document the athlete may already hold.
+//       ALTER TABLE reports ADD CONSTRAINT reports_published_has_content
+//         CHECK (status = 'DRAFT'
+//                OR ("content" IS NOT NULL AND "publishedAt" IS NOT NULL));
+//
+//  6. shares — exactly one target (§17)
+//       ALTER TABLE shares ADD CONSTRAINT shares_one_target
+//         CHECK (num_nonnulls("reportId", "assetId", "programId",
+//                             "recommendationId", "noteId") = 1);
+//
+//  7. coaches — an unlinked profile is a tombstone (§6)
+//     `userId` is nulled when a Coach deletes their profile. A row without a
+//     user and without `deletedAt` would be neither active nor deleted.
+//       ALTER TABLE coaches ADD CONSTRAINT coaches_unlinked_is_deleted
+//         CHECK ("userId" IS NOT NULL OR "deletedAt" IS NOT NULL);
+//
+//  8. video_annotations — only on videos (§18)
+//       Not expressible: a CHECK cannot read `assets.kind` from another table.
+//       Enforced in `packages/domain`.
+//
+// Evidence needs no constraint. Splitting it into three typed join tables makes
+// "exactly one target" structural rather than checked — see the Evidence
+// section above.
+//
+// Invariants that stay in `packages/domain` because SQL cannot express them:
+//   • every Assessment has at least one Module (§26.6)
+//   • every Insight records at least one piece of evidence (§14)
+//   • every Recommendation references at least one Insight (§26.14)
+//   • a published Report and its Insights/Recommendations are immutable (§4)
+//   • a Measurement's value column matches its type's `valueType`
+//   • a VideoAnnotation only attaches to an Asset of kind `VIDEO`
+//   • a relation never crosses workspaces — see the cross-tenant note in
+//     docs/ARCHITECTURE.md §6; Postgres RLS is the planned second layer
+// ─────────────────────────────────────────────────────────────────────────────

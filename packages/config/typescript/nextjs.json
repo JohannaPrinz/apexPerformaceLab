@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "Apex OS — Next.js App",
+  "extends": "./base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "preserve",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowJs": true,
+    "noEmit": true,
+
+    // The application is never consumed as a package, so it emits no
+    // declarations. Leaving `declaration` on would enforce the "inferred type
+    // must be nameable" rule (TS2883) on every export — which the tRPC + Prisma
+    // inference chain cannot satisfy without hand-writing enormous type
+    // annotations for types that are never written to disk.
+    "declaration": false,
+    "declarationMap": false,
+
+    "plugins": [{ "name": "next" }]
+  }
+}

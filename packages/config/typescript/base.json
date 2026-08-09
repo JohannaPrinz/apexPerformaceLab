@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "Apex OS — Base",
+
+  // This preset is deliberately self-contained. An earlier version extended the
+  // repository-root tsconfig.base.json via "../../../", which resolves fine on
+  // disk but breaks as soon as the preset is consumed through its workspace
+  // symlink (packages/*/node_modules/@apex/config/...) — the traversal then
+  // lands outside the repository. Tooling that does not resolve realpaths
+  // (Prisma's config loader, for one) fails outright.
+  //
+  // The root tsconfig.base.json remains the editor-facing solution root; the
+  // options below are the shared contract every workspace inherits.
+
+  "compilerOptions": {
+    /* Language & Environment */
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "moduleDetection": "force",
+
+    /* Modules */
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "verbatimModuleSyntax": true,
+
+    /* Strictness — non-negotiable across the monorepo. */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "allowUnreachableCode": false,
+    "exactOptionalPropertyTypes": false,
+
+    /* Interop */
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+
+    /* Emit */
+    "noEmit": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "removeComments": false,
+
+    /* Performance */
+    "skipLibCheck": true,
+    "incremental": true
+  },
+
+  "exclude": ["node_modules", "dist", ".next", ".turbo", "coverage"]
+}

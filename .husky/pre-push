@@ -1,0 +1,6 @@
+# Lint and typecheck before pushing rather than on every commit: ESLint is
+# configured per workspace and `tsc` across the monorepo is too slow for a
+# pre-commit hook, but catching either here is still far cheaper than catching
+# it in CI. Both are Turborepo tasks, so unchanged packages hit the cache.
+pnpm run lint
+pnpm run typecheck

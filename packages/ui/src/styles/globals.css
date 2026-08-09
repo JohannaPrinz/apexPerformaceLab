@@ -1,0 +1,294 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/* Dark mode is class-driven (`<html class="dark">`) rather than media-driven, so
+   the user's explicit choice can override the OS setting. `next-themes` toggles
+   the class. */
+@custom-variant dark (&:is(.dark *));
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   APEX OS — DESIGN TOKENS
+   ═══════════════════════════════════════════════════════════════════════════
+
+   Two token layers, deliberately separated:
+
+   1. PRIMITIVE tokens (`--brand-*`, `--neutral-*`) — raw values. The four brand
+      colours are kept as the exact hex from the brand guide so they can be
+      diffed against design files without conversion.
+
+   2. SEMANTIC tokens (`--color-background`, `--color-primary`, …) — what
+      components actually consume. A component never references a primitive
+      directly; that indirection is what makes theming (dark mode, future
+      per-tenant white-labelling) a token swap instead of a component rewrite.
+
+   See docs/DESIGN_SYSTEM.md.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Brand primitives ─────────────────────────────────────────────────── */
+  --brand-background: #f8f8f6; /* warm off-white — the canvas */
+  --brand-primary: #202124; /* near-black — type & primary actions */
+  --brand-secondary: #4b5563; /* slate — supporting type & surfaces */
+  --brand-accent: #6b8f71; /* sage — performance / positive signal */
+
+  /* ── Neutral ramp ─────────────────────────────────────────────────────── */
+  /* Derived from the background/primary pair; used for borders, surfaces and
+     muted type. Kept as an explicit ramp so contrast stays auditable. */
+  --neutral-50: #fbfbfa;
+  --neutral-100: #f1f1ee;
+  --neutral-200: #e4e4e0;
+  --neutral-300: #cfcfc9;
+  --neutral-400: #a3a39c;
+  --neutral-500: #78786f;
+  --neutral-600: #55554e;
+  --neutral-700: #3d3d38;
+  --neutral-800: #2a2a27;
+  --neutral-900: #1c1c1a;
+  --neutral-950: #121211;
+
+  /* ── Support palette ──────────────────────────────────────────────────── */
+  --support-success: #4f7a56;
+  --support-warning: #b8863b;
+  --support-danger: #a4453c;
+  --support-info: #4a6f8a;
+
+  /* ── Semantic tokens — light theme ────────────────────────────────────── */
+  --background: var(--brand-background);
+  --foreground: var(--brand-primary);
+
+  --card: #ffffff;
+  --card-foreground: var(--brand-primary);
+
+  --popover: #ffffff;
+  --popover-foreground: var(--brand-primary);
+
+  --primary: var(--brand-primary);
+  --primary-foreground: var(--brand-background);
+
+  --secondary: var(--neutral-100);
+  --secondary-foreground: var(--brand-secondary);
+
+  --muted: var(--neutral-100);
+  --muted-foreground: var(--neutral-500);
+
+  --accent: var(--brand-accent);
+  --accent-foreground: #ffffff;
+
+  --destructive: var(--support-danger);
+  --destructive-foreground: #ffffff;
+
+  --success: var(--support-success);
+  --success-foreground: #ffffff;
+
+  --warning: var(--support-warning);
+  --warning-foreground: #ffffff;
+
+  --border: var(--neutral-200);
+  --input: var(--neutral-200);
+  --ring: var(--brand-accent);
+
+  /* Data visualisation — an ordered, distinguishable series scale anchored on
+     the accent. See docs/DESIGN_SYSTEM.md before adding a sixth. */
+  --chart-1: #6b8f71;
+  --chart-2: #4a6f8a;
+  --chart-3: #b8863b;
+  --chart-4: #8a6f9e;
+  --chart-5: #a4453c;
+
+  /* Sidebar surface — a distinct surface, not a shade of `--background`, so the
+     app chrome stays legible when the content area changes theme. */
+  --sidebar: #ffffff;
+  --sidebar-foreground: var(--brand-primary);
+  --sidebar-primary: var(--brand-primary);
+  --sidebar-primary-foreground: var(--brand-background);
+  --sidebar-accent: var(--neutral-100);
+  --sidebar-accent-foreground: var(--brand-primary);
+  --sidebar-border: var(--neutral-200);
+  --sidebar-ring: var(--brand-accent);
+
+  /* ── Shape ────────────────────────────────────────────────────────────── */
+  --radius: 0.625rem;
+}
+
+.dark {
+  --background: var(--neutral-950);
+  --foreground: var(--neutral-100);
+
+  --card: var(--neutral-900);
+  --card-foreground: var(--neutral-100);
+
+  --popover: var(--neutral-900);
+  --popover-foreground: var(--neutral-100);
+
+  /* Inverted: on a dark canvas the "primary" surface is light. */
+  --primary: var(--neutral-100);
+  --primary-foreground: var(--neutral-950);
+
+  --secondary: var(--neutral-800);
+  --secondary-foreground: var(--neutral-300);
+
+  --muted: var(--neutral-800);
+  --muted-foreground: var(--neutral-400);
+
+  /* Lifted for contrast — the light-theme sage fails AA on a near-black field. */
+  --accent: #86ab8c;
+  --accent-foreground: var(--neutral-950);
+
+  --destructive: #c76259;
+  --destructive-foreground: var(--neutral-950);
+
+  --success: #6d9a74;
+  --success-foreground: var(--neutral-950);
+
+  --warning: #d3a45c;
+  --warning-foreground: var(--neutral-950);
+
+  --border: #ffffff1a;
+  --input: #ffffff26;
+  --ring: #86ab8c;
+
+  --chart-1: #86ab8c;
+  --chart-2: #6b93b0;
+  --chart-3: #d3a45c;
+  --chart-4: #a88fbb;
+  --chart-5: #c76259;
+
+  --sidebar: var(--neutral-900);
+  --sidebar-foreground: var(--neutral-100);
+  --sidebar-primary: #86ab8c;
+  --sidebar-primary-foreground: var(--neutral-950);
+  --sidebar-accent: var(--neutral-800);
+  --sidebar-accent-foreground: var(--neutral-100);
+  --sidebar-border: #ffffff1a;
+  --sidebar-ring: #86ab8c;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TAILWIND THEME
+   Maps semantic tokens onto Tailwind utilities, so `bg-background`,
+   `text-muted-foreground`, `border-border` etc. resolve to the tokens above.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Typography.
+     Geist is the display/UI face (set by `next/font` in apps/web); Inter is the
+     reading face for long-form and dense data. Both are loaded as variable
+     fonts and exposed here as `font-sans` / `font-display` / `font-mono`. */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-geist-sans), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Radius scale, all derived from a single `--radius` so rounding stays
+     proportional when the brand shape changes. */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BASE LAYER
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@layer base {
+  * {
+    @apply border-border outline-ring/40;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply font-display tracking-tight;
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  /* Numeric data must align in columns — tabular figures, always. */
+  [data-numeric],
+  th[data-numeric],
+  td[data-numeric] {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+
+  /* A visible focus ring is a requirement, not a style choice. */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}

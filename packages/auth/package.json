@@ -1,0 +1,36 @@
+{
+  "name": "@apex/auth",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Better Auth server configuration and typed client for Apex OS",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./server": "./src/server.ts",
+    "./client": "./src/client.ts",
+    "./permissions": "./src/permissions.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf .turbo node_modules"
+  },
+  "dependencies": {
+    "@apex/database": "workspace:*",
+    "@apex/types": "workspace:*",
+    "better-auth": "1.6.25",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@apex/config": "workspace:*",
+    "@types/node": "26.1.2",
+    "@types/react": "19.2.18",
+    "eslint": "9.39.5",
+    "react": "19.2.8",
+    "rimraf": "6.1.3",
+    "typescript": "6.0.3"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  }
+}

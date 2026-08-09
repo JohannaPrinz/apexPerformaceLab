@@ -1,0 +1,61 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.*
+.yarn/*
+
+# Builds
+dist/
+build/
+out/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+
+# Caches
+.turbo/
+.cache/
+.eslintcache
+.swc/
+.vercel/
+
+# Environment — only .env.example is committed
+.env
+.env.*
+!.env.example
+
+# Prisma
+packages/database/prisma/*.db
+packages/database/prisma/*.db-journal
+packages/database/generated/
+
+# Testing
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
+
+# Editors & OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Claude Code — personal settings stay local; a shared .claude/settings.json
+# would be committed.
+.claude/settings.local.json
+
+# Trigger.dev
+.trigger/

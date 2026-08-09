@@ -1,0 +1,24 @@
+{
+  "extends": "@apex/config/typescript/nextjs.json",
+  "compilerOptions": {
+    // The Prisma 7 generated client (reached through @apex/database) uses
+    // explicit `.ts` import specifiers.
+    "allowImportingTsExtensions": true,
+    // No `baseUrl` — it is deprecated as of TypeScript 6. Since TS 5.0 `paths`
+    // resolves relative to this file's directory, which is what we want anyway:
+    // `@/*` is app-local, and cross-package imports go through `@apex/*`
+    // workspace names rather than through path mapping.
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    "next.config.ts",
+    "eslint.config.mjs"
+  ],
+  "exclude": ["node_modules", ".next"]
+}
