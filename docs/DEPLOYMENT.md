@@ -170,17 +170,35 @@ schema. Reverting a migration means writing a new forward migration.
 
 ## 10. CI
 
-_TBD._ Not yet configured. Intended pipeline on pull request:
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs on every push to
+`main` and on every pull request:
 
 ```text
-install → typecheck → lint → format:check → test → build
+install → lint → typecheck → test → format:check → build
 ```
 
-Plus `prisma migrate deploy` on merge to `main`, and dependency scanning
-(see [SECURITY.md §9](./SECURITY.md#9-open-items)).
+The same four checks the `pre-push` hook runs, but on a neutral machine. That
+distinction is the point:
 
-Until CI exists, the Husky `pre-push` hook is the only automated gate — see
-[CONTRIBUTING.md](./CONTRIBUTING.md).
+- Hooks live in `.husky/` and exist only after someone has run `pnpm install`.
+- `git push --no-verify` skips them.
+- Locally the checks read the Turborepo cache. A run reporting `>>> FULL TURBO`
+  in 87ms verified nothing — it replayed stored logs. CI restores no Turborepo
+  cache, deliberately; only the pnpm store is cached, which affects download
+  time alone.
+
+The build step receives **placeholder** environment values, not secrets. They
+are required because `packages/database/src/client.ts` constructs the Prisma
+client at module load and Next.js evaluates every route module while collecting
+page data — constructing it opens no connection, since the pg pool connects
+lazily. `SKIP_ENV_VALIDATION` is deliberately not used: well-formed placeholders
+let the real Zod schema run, so a newly added required variable fails in CI,
+which is the reminder needed to add it in Vercel too.
+
+Not wired in, on purpose: `prisma migrate deploy`. Migrations run as an explicit
+step — see [§6](#6-migrations-in-the-pipeline).
+
+_TBD:_ dependency scanning (see [SECURITY.md §9](./SECURITY.md#9-open-items)).
 
 ---
 

@@ -6,6 +6,7 @@
 
 A multi-tenant SaaS platform for coaches, athletes and teams.
 
+[![CI](https://github.com/JohannaPrinz/apexPerformaceLab/actions/workflows/ci.yml/badge.svg)](https://github.com/JohannaPrinz/apexPerformaceLab/actions/workflows/ci.yml)
 [![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white)](https://nextjs.org)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)

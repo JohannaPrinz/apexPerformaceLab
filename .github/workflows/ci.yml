@@ -1,0 +1,82 @@
+name: CI
+
+# Runs the same four checks as the local hooks, but on a neutral machine.
+#
+# Why this exists when `pre-push` already runs them:
+#   • Hooks live in `.husky/` and only exist after someone has run `pnpm
+#     install`. A fresh clone has none.
+#   • `git push --no-verify` skips them.
+#   • Locally the checks read the Turborepo cache — a run reporting
+#     ">>> FULL TURBO" in 87ms verified nothing, it replayed stored logs. Here
+#     there is no cache to replay.
+#   • A dependency that resolves locally because it happens to be installed, but
+#     is missing from a `package.json`, only fails somewhere clean.
+#
+# Deliberately *not* restoring a Turborepo cache: neutrality is the entire
+# point. The pnpm store is cached, because that only affects download time.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same ref makes the older run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint · Typecheck · Test · Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Reads the pnpm version from `packageManager` in package.json, so it can
+      # never drift from what developers run locally.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # `--frozen-lockfile` fails on a lockfile that does not match
+      # package.json, instead of silently resolving different versions.
+      # `postinstall` in @apex/database generates the Prisma client here.
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Separate steps rather than one command: the failing check is then
+      # visible in the job summary without opening the log.
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Test
+        run: pnpm run test
+
+      - name: Format
+        run: pnpm run format:check
+
+      # Placeholders, not secrets — nothing here is ever connected to. They are
+      # required because `packages/database/src/client.ts` constructs the Prisma
+      # client at module load, and Next.js evaluates every route module while
+      # collecting page data. Constructing the client opens no connection; the
+      # pg pool connects lazily, on the first query.
+      #
+      # `SKIP_ENV_VALIDATION` is deliberately *not* used, although `env.ts`
+      # offers it. Supplying well-formed values instead means the real Zod
+      # schema runs, so a newly added required variable fails here — which is
+      # exactly the reminder needed to also add it in Vercel.
+      - name: Build
+        run: pnpm run build
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+          DIRECT_URL: postgresql://ci:ci@localhost:5432/ci
+          BETTER_AUTH_SECRET: ci-placeholder-secret-not-a-real-key-000
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
