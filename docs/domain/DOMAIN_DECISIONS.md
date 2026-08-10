@@ -123,6 +123,7 @@ Assessment
 Module
 Measurement Type
 Measurement
+Tracking Entry
 Insight
 Recommendation
 Report
@@ -220,6 +221,7 @@ Objects:
 - Programs
 - Goals
 - Appointments
+- Tracking Entries
 
 Changes to these objects do not affect the historical integrity of published Assessments.
 
@@ -803,6 +805,51 @@ The superseded measurement remains visible.
 
 Measurements of identical type can be compared across Assessments.
 
+### A Tracking Entry is not a Measurement
+
+Athletes record their own data — body weight, steps, heart rate, the loads they
+trained with, how long they rested — and their devices deliver more of the same.
+This is **not** a Measurement, and the difference is not cosmetic:
+
+|                   | Measurement                    | Tracking Entry                      |
+| ----------------- | ------------------------------ | ----------------------------------- |
+| Recorded by       | Coach only                     | Athlete, or their device            |
+| Context           | always inside a Module         | none — it stands alone in time      |
+| Correctable       | never; a correction supersedes | yes, the athlete may edit or delete |
+| Evidential weight | diagnostic finding             | self-report                         |
+
+Three reasons this is a separate object rather than a relaxed Measurement:
+
+1. **A Measurement is a fact inside an Assessment and is never edited (§4).**
+   A mistyped body weight does not deserve a supersede chain.
+2. **The mandatory Module link is a guarantee**, not an inconvenience: every
+   Measurement has a professional context. Making it optional would take that
+   assurance away from the entire record.
+3. **Mixing them would make every query about "this Assessment's measurements"
+   depend on remembering an extra filter.** That is where silent errors live.
+
+**A Tracking Entry reuses `Measurement Type`.** This is the point of the design:
+"Body weight" is the same type with the same unit whether the Coach measures it
+during an Assessment or the Athlete steps on a scale on a Tuesday. The Coach can
+plot both on one axis with no translation layer, which is exactly what makes
+self-reported data useful to a professional.
+
+A Tracking Entry carries: the Athlete, a Measurement Type, a value, when it was
+captured, and its source (`MANUAL` · `DEVICE` · `IMPORT`) — the same enum
+Measurements use, where the three values mean "typed in", "delivered by a
+device" and "loaded from a file". Device imports additionally carry the external
+system and identifier, which makes a re-import idempotent.
+
+**Tracking Entries are read as a series, not as timeline events.** They do not
+appear on the Athlete Timeline (§22): daily weights and step counts would bury
+the assessments, reports and documents the timeline exists to show. They are
+charted over time and against the Measurements of the same type — which is the
+only form in which they are actually useful.
+
+They are never evidence for an Insight. Evidence is drawn from Measurements,
+Documents, Videos and Notes (§14); a self-report does not carry the weight of a
+diagnostic finding.
+
 ---
 
 ## 14. Insights
@@ -1202,6 +1249,63 @@ The Athlete never edits Measurements, Insights, Recommendations or Reports.
 
 The Coach always decides which content is shared with the Athlete.
 
+### Ending the coaching relationship
+
+When a Coach deactivates an Athlete, portal access does **not** end. It becomes
+read-only.
+
+The Athlete keeps seeing their record and can still download what is theirs.
+What stops is every write: no uploads, no Notes, no status updates, no Tracking
+Entries.
+
+The reason is that a coaching relationship does not always end amicably, and
+cutting someone off from their own health record without warning is neither
+decent nor defensible under Art. 9 GDPR. A read-only state costs nothing and
+removes the need for the Athlete to have anticipated the end.
+
+**The Athlete then closes their own account when they are ready** — after
+downloading their Reports, or immediately, or never. That act is theirs, and it
+follows the rules already in §7: the account is unlinked, the record stays with
+the Coach.
+
+Three states, derived from two existing columns — no separate status field:
+
+| State           | Derivation                     | The Athlete can                      |
+| --------------- | ------------------------------ | ------------------------------------ |
+| Active          | not archived                   | everything the portal offers         |
+| **Deactivated** | archived, account still linked | **read and download only**           |
+| Closed          | no linked account              | nothing — the login no longer exists |
+
+Read-only is enforced in the server procedures, never by hiding buttons.
+
+**Share links are independent of portal access.** A Share has its own expiry and
+revocation (§17), so deactivating an Athlete does not silently invalidate links
+they already hold. A Coach who wants a clean break revokes them deliberately.
+
+### With several Coaches, the last one decides
+
+Once an Athlete works with more than one Coach (§26.24), one Coach ending their
+collaboration must not restrict the Athlete at all. The others carry on, and the
+Athlete keeps every function.
+
+**The read-only state begins only when the last collaboration ends.**
+
+For that state to be reachable, the _creating_ Coach needs an endable
+relationship too — otherwise they are always present and "no Coach remains"
+never occurs. When the assignment object arrives, the creating Coach receives a
+relationship as well, without the consent step: they created the record, they
+are not being granted access to someone else's.
+
+`archivedAt` does not change meaning through any of this. Today it reads "the
+Coach ended it", later "the last Coach ended it" — identical for everything that
+reads the column. What changes is which service sets it, and that is one
+function, not a migration.
+
+It stays a stored flag rather than a derived one. The read-only check runs on
+every portal request, and deriving it would mean joining the relationships every
+time; an Athlete also becomes read-only for reasons unrelated to any coaching
+relationship, such as closing their own account (§7).
+
 ### Both models use the same Athlete
 
 The same Athlete entity is used for both access models.
@@ -1270,6 +1374,28 @@ The architecture must already support
 
 These features are not part of the MVP but must not require architectural redesign.
 
+### Device Integrations are connected and imported deliberately
+
+A device is linked by an explicit act, and data is pulled by an explicit act.
+There is no background process that writes into an Athlete's record on its own.
+
+Two reasons, in this order:
+
+1. **Consent.** These are Art. 9 health data. An explicit act per import is an
+   honest consent model in a way a daemon is not, and it leaves the Athlete in
+   control of what enters a record their Coach will read.
+2. **Cost.** No scheduler, no token refresh, no webhooks, no rate-limit
+   handling — none of which buys anything the MVP needs.
+
+This does not close the door on automatic synchronisation. The ingest path is
+identical; automatic sync is that same path plus a scheduler. The uniqueness of
+`(Workspace, external system, external identifier)` on Measurements and Tracking
+Entries already makes every re-import idempotent (§13), which is the property
+that makes repeated pulls safe in either mode.
+
+Imported device data arrives as **Tracking Entries**, not Measurements — see
+§13. A device is a data source, never a Module (§11).
+
 Organizations already exist in the MVP as the implementation of the Personal Workspace (§5).
 What is deferred is multiple coaches within one Workspace, not the concept itself.
 
@@ -1297,6 +1423,10 @@ The following rules are mandatory.
 8. Module names are domain terms. Devices, vendors and competition formats are not Modules.
 
 9. Every Measurement references exactly one Measurement Type and belongs to exactly one Module.
+
+9a. A Tracking Entry is what the Athlete or their device records. It references a
+Measurement Type but belongs to no Module, is correctable, and is never
+evidence for an Insight (§13).
 
 10. Side belongs to the Measurement, not to the Measurement Type.
 
@@ -1331,6 +1461,12 @@ The following rules are mandatory.
 24a. A Coach profile belongs to no Workspace. Affiliation is a Membership (§6).
 
 25. Athlete Portal access is optional and may be activated at any time.
+
+25a. Deactivating an Athlete makes portal access read-only, it does not end it.
+The Athlete closes their own account (§21, §7).
+
+25b. With several Coaches, one ending their collaboration restricts nothing. The
+read-only state begins only when the last collaboration ends (§21).
 
 26. Shared Links and Athlete Portal provide different access methods to the same underlying data.
 

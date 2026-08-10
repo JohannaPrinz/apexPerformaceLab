@@ -91,6 +91,13 @@ supersedes the previous one; the original stays visible.
 Side belongs to the Measurement. The Measurement Type defines name, unit,
 value type and reference information — never the side.
 
+**Only the Coach records Measurements.** What the Athlete records themselves —
+body weight, steps, heart rate, training loads — and what their device delivers
+is a **Tracking Entry**: same Measurement Type catalogue, no Module, correctable
+by the Athlete, and never evidence for an Insight. A self-report does not carry
+the weight of a diagnostic finding, and the model says so rather than leaving it
+to whoever writes the query.
+
 ---
 
 ## 5. Insights create Recommendations
@@ -294,6 +301,15 @@ all optional, so no natural key exists (§7).
 
 Nothing in the domain may depend on an Athlete having an account.
 Documents, videos and reports are filed against the Athlete either way.
+
+**Deactivating an Athlete does not close their account — it makes the portal
+read-only.** They keep seeing and downloading their own record; every write
+stops. Closing the account is the Athlete's own act, whenever they are ready.
+
+A coaching relationship does not always end amicably, and cutting someone off
+from their own health record without warning is neither decent nor defensible
+under Art. 9 GDPR. The read-only state costs nothing and removes the need for
+the Athlete to have anticipated the end.
 
 A Coach profile is organisation-independent; a person is not owned by a
 Workspace. Organisational affiliation is a Membership (§6).

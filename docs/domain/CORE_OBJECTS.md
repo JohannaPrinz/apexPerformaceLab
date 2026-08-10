@@ -442,6 +442,60 @@ zur wissenschaftlichen Dokumentation.
 
 ---
 
+## Tracking Entry
+
+Ein Tracking Entry ist ein Wert, den der **Athlet selbst** festhält oder den
+sein Gerät liefert: Körpergewicht, Schritte, Herzfrequenz, im Training benutzte
+Gewichte, Pausenlängen.
+
+**Ein Tracking Entry ist kein Measurement.** Der Unterschied ist fachlich, nicht
+technisch:
+
+|              | Measurement                 | Tracking Entry                         |
+| ------------ | --------------------------- | -------------------------------------- |
+| Erfasst von  | ausschließlich dem Coach    | dem Athleten oder seinem Gerät         |
+| Kontext      | immer in einem Modul        | keiner — er steht allein in der Zeit   |
+| Korrigierbar | nie; eine Korrektur löst ab | ja, der Athlet darf ändern und löschen |
+| Beweiskraft  | diagnostischer Befund       | Selbstauskunft                         |
+
+Ein Measurement ist ein Fakt innerhalb eines Assessments und wird nie geändert.
+Ein vertipptes Körpergewicht braucht diese Zeremonie nicht. Und die Pflicht, an
+einem Modul zu hängen, ist eine Zusicherung für die gesamte Akte — jeder
+Messwert hat einen fachlichen Kontext. Sie aufzuweichen, würde diese Zusicherung
+für alle Messwerte kosten.
+
+### Derselbe Katalog
+
+Ein Tracking Entry verwendet **denselben Measurement Type** wie ein Measurement.
+Das ist der Kern der Sache: „Körpergewicht" ist derselbe Typ mit derselben
+Einheit, ob der Coach ihn im Assessment misst oder der Athlet dienstags auf die
+Waage steigt. Der Coach kann beides auf einer Achse darstellen, ohne
+Übersetzungsschicht — und genau das macht Selbstauskunft für die fachliche
+Auswertung überhaupt brauchbar.
+
+### Herkunft
+
+Dieselben Quellen wie beim Measurement: manuell eingetragen, vom Gerät geliefert
+oder aus einer Datei importiert. Bei Geräteimporten werden System und externe ID
+mitgeführt, wodurch ein wiederholter Import keine Dubletten erzeugt.
+
+Geräte werden bewusst verbunden und Daten bewusst importiert. Es gibt keinen
+Hintergrundprozess, der von sich aus in die Akte eines Athleten schreibt.
+
+### Grenze
+
+Tracking Entries werden als **Verlauf** gelesen, nicht als Timeline-Ereignisse.
+Sie erscheinen nicht in der Athleten-Timeline: tägliche Gewichte und
+Schrittzahlen würden die Assessments, Reports und Dokumente zuschütten, für die
+die Timeline da ist. Dargestellt werden sie als Kurve über die Zeit — gemeinsam
+mit den Measurements desselben Typs.
+
+Sie sind **nie Evidence für ein Insight**. Evidence stammt aus Measurements,
+Dokumenten, Videos und Notizen. Eine Selbstauskunft trägt nicht das Gewicht
+eines diagnostischen Befunds.
+
+---
+
 ## Insight
 
 Ein Insight beschreibt die Interpretation eines oder mehrerer Measurements.
