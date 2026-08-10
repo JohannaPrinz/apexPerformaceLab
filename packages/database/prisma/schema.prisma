@@ -284,6 +284,7 @@ model Coach {
   user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   credentials      CoachCredential[]
+  athletesCreated  Athlete[]
   cases            PerformanceCase[]
   appointments     Appointment[]
   insights         Insight[]
@@ -366,6 +367,21 @@ model Athlete {
   userId String? @unique
   user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
+  /// The Coach who created this record (§26.24). Ownership stays with the
+  /// Workspace — this is authorship, not possession, exactly as on
+  /// `PerformanceCase`.
+  ///
+  /// Required, because it is the anchor for the coach-to-athlete assignment
+  /// that arrives with multi-coach Workspaces: existing Athletes will need a
+  /// relationship row, and only the creator makes that backfill deterministic.
+  /// A Workspace can already hold several Coaches through `Membership`, so the
+  /// information cannot be reconstructed later.
+  ///
+  /// `Restrict` for the same reason as everywhere else: a Coach row is a
+  /// tombstone that survives deletion, so authorship never silently detaches.
+  createdByCoachId String
+  createdByCoach   Coach  @relation(fields: [createdByCoachId], references: [id], onDelete: Restrict)
+
   cases           PerformanceCase[]
   assets          Asset[]
   programs        Program[]
@@ -376,6 +392,10 @@ model Athlete {
   /// Covers the tenant scope on its own (leftmost prefix) and the roster
   /// listing in full. A separate `organizationId` index would be redundant.
   @@index([organizationId, lastName, firstName])
+  /// Mirrors `PerformanceCase`: serves the `Restrict` check on the foreign key
+  /// and the "which Athletes did this Coach create" lookup the assignment
+  /// backfill will need.
+  @@index([createdByCoachId])
   @@map("athletes")
 }
 

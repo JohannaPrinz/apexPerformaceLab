@@ -25,6 +25,7 @@ const statement = {
   member: ['read', 'invite', 'update', 'remove'],
   invitation: ['create', 'cancel'],
   athlete: ['read', 'write', 'delete'],
+  case: ['read', 'write'],
   billing: ['read', 'manage'],
 } as const;
 
@@ -35,6 +36,7 @@ export const owner = accessControl.newRole({
   member: ['read', 'invite', 'update', 'remove'],
   invitation: ['create', 'cancel'],
   athlete: ['read', 'write', 'delete'],
+  case: ['read', 'write'],
   billing: ['read', 'manage'],
 });
 
@@ -44,6 +46,7 @@ export const admin = accessControl.newRole({
   member: ['read', 'invite', 'update', 'remove'],
   invitation: ['create', 'cancel'],
   athlete: ['read', 'write', 'delete'],
+  case: ['read', 'write'],
   billing: ['read'],
 });
 
@@ -51,6 +54,7 @@ export const coach = accessControl.newRole({
   organization: ['read'],
   member: ['read'],
   athlete: ['read', 'write'],
+  case: ['read', 'write'],
 });
 
 /**

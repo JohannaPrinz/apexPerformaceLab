@@ -44,6 +44,12 @@ const PROTECTED_PREFIXES = [
 
 const AUTH_ROUTES = ['/sign-in', '/sign-up'] as const;
 
+/**
+ * Where a signed-in user is sent from an auth route. Kept here rather than
+ * inline so the redirect target has one definition.
+ */
+const SIGNED_IN_HOME = '/dashboard';
+
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const hasSession = Boolean(getSessionCookie(request));
@@ -62,7 +68,7 @@ export function proxy(request: NextRequest) {
   const isAuthRoute = AUTH_ROUTES.some((route) => pathname.startsWith(route));
 
   if (isAuthRoute && hasSession) {
-    return NextResponse.redirect(new URL('/dashboard', request.url));
+    return NextResponse.redirect(new URL(SIGNED_IN_HOME, request.url));
   }
 
   return NextResponse.next();

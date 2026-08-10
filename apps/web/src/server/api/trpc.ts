@@ -148,23 +148,71 @@ export const organizationProcedure = protectedProcedure.use(async ({ ctx, next }
 });
 
 /**
- * Builds a procedure that additionally requires a specific permission.
+ * Requires a signed-in user **with a coach profile**, on top of the tenant
+ * scope.
  *
- * @example
- * ```ts
- * const updateAthlete = withPermission('athlete:write').mutation(...)
- * ```
+ * Every domain object records who authored it — `createdByCoachId` on Cases,
+ * Athletes and Appointments, `authorCoachId` on Insights, Reports and Notes.
+ * That identity is the `Coach`, not the `User`: the two are deliberately
+ * separate (§26.22), so the id cannot be taken from the session.
+ *
+ * This rung exists so the lookup and its error handling live in one place
+ * rather than at the top of every authoring mutation.
  */
-export function withPermission(permission: Permission) {
-  return organizationProcedure.use(({ ctx, next }) => {
-    if (!hasPermission(ctx.tenant.role, permission)) {
+export const coachProcedure = organizationProcedure.use(async ({ ctx, next }) => {
+  const coach = await ctx.db.coach.findUnique({
+    where: { userId: ctx.session.user.id },
+    select: { id: true },
+  });
+
+  if (!coach) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'This action requires a coach profile.',
+      cause: AppError.forbidden('This action requires a coach profile.'),
+    });
+  }
+
+  return next({ ctx: { ...ctx, coach } });
+});
+
+/** Shared by the two permission-gated builders below. */
+const requirePermission = (permission: Permission) =>
+  t.middleware(({ ctx, next }) => {
+    const tenant = (ctx as { tenant?: TenantContext }).tenant;
+
+    if (!tenant || !hasPermission(tenant.role, permission)) {
       throw new TRPCError({
         code: 'FORBIDDEN',
-        message: `Your role (${ctx.tenant.role}) cannot perform "${permission}".`,
+        message: `Your role (${tenant?.role ?? 'unknown'}) cannot perform "${permission}".`,
         cause: AppError.forbidden(),
       });
     }
 
-    return next({ ctx });
+    return next();
   });
+
+/**
+ * Builds a procedure that additionally requires a specific permission.
+ *
+ * @example
+ * ```ts
+ * const archiveAthlete = withPermission('athlete:write').mutation(...)
+ * ```
+ */
+export function withPermission(permission: Permission) {
+  return organizationProcedure.use(requirePermission(permission));
+}
+
+/**
+ * Same, but also resolves the coach profile — for mutations that record
+ * authorship.
+ *
+ * @example
+ * ```ts
+ * const createAthlete = withCoachPermission('athlete:write').mutation(...)
+ * ```
+ */
+export function withCoachPermission(permission: Permission) {
+  return coachProcedure.use(requirePermission(permission));
 }

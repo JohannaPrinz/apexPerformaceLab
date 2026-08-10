@@ -13,6 +13,17 @@ import { defineConfig } from 'vitest/config';
  */
 export default defineConfig({
   plugins: [react(), tsconfigPaths()],
+
+  resolve: {
+    alias: {
+      // `server-only` throws unless resolved under React's `react-server`
+      // condition, which Vitest does not provide. Without this, every test of a
+      // server module fails on a guard that is doing its job. The real package
+      // is untouched in the application build — see the stub for why.
+      'server-only': new URL('./src/test/server-only-stub.ts', import.meta.url).pathname,
+    },
+  },
+
   test: {
     environment: 'jsdom',
     globals: true,

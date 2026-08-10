@@ -1,34 +1,65 @@
 # athletes
 
-The athlete roster: profiles, status, and portal activation.
+The roster: creating, finding, viewing and deactivating athletes.
 
-The athlete is at the centre of the platform — every Performance Case, and
-through it every Assessment, belongs to exactly one Athlete.
+First link in the canonical chain (§3):
 
-An Athlete exists **independently of a user account**. A coach creates an
-athlete on site; a login can be linked later without any data migration. Nothing
-in this slice may depend on an athlete having an account.
-
-Athletes belong to the Workspace, never to an individual Coach. That is what
-makes multi-coach workspaces possible later without restructuring.
+```text
+Athlete → Performance Case → Assessment → Module → Measurement
+```
 
 ## Scope
 
-- Roster list, search, filtering
-- Athlete profile and master data
-- Portal activation — linking a user account to an existing Athlete
-- Athlete-level overview across all Cases
+- Create an athlete — only the name is required
+- Roster with name search, deactivated hidden by default
+- Detail view
+- Deactivate and reactivate
 
-## Constraints
+## Two rules this slice exists to honour
 
-- Every person receiving services is an Athlete. There are no guest athletes and
-  no temporary athletes.
-- An Athlete exists exactly once within a Workspace.
+**An athlete is never deleted (§22).** Deactivating sets `archivedAt` and is
+reversible. The performance history outlives the coaching relationship, and the
+findings drawn from it are the coach's professional documentation — deleting the
+record would destroy someone else's work, not just an entry.
 
-## Not in this slice
+**An athlete needs no account (§21).** `userId` stays null until a coach
+activates portal access. Nothing here may depend on it being set, which is why
+email and phone are optional: the ordinary case is someone entered during a
+first consultation, about whom little is known yet.
 
-- **Performance history** → `features/timeline`
-- **The athlete-facing surface** → `features/portal`
-- **Authentication** → `features/auth` and `@apex/auth`
+## Where the tenancy guarantee lives
 
-_Not implemented yet — see docs/domain/DOMAIN_DECISIONS.md §7._
+`server/service.ts` is the **only** module in this slice that touches the
+database, and every query in it goes through `scoped()` / `withTenant()` from
+`@apex/database/tenant`.
+
+This is the first slice holding real data, so it is the first place a forgotten
+`where` would leak one coaching business's athletes to another — the highest
+threat in the model (docs/SECURITY.md §1). Two consequences worth knowing:
+
+- **Lookups use `findFirst` with the tenant filter, never `findUnique` by id.**
+  A primary key proves nothing about ownership.
+- **Writes use `updateMany`, never `update`.** `update` takes a unique `where`
+  and cannot carry the tenant filter, so it would happily write another
+  workspace's row. A zero count means "not in this workspace" and surfaces as
+  `NOT_FOUND` — never `FORBIDDEN`, which would confirm the row exists.
+
+`server/service.test.ts` asserts this rather than trusting it. The service takes
+`db` as an argument precisely so the queries it builds can be inspected without
+a database.
+
+## Authorship
+
+`createdByCoachId` is required. It records who created the record — ownership
+stays with the Workspace (§26.24). It is the anchor for the coach-to-athlete
+assignment that arrives with multi-coach workspaces: existing athletes will need
+a relationship row, and only the creator makes that backfill deterministic.
+
+The coach identity comes from `coachProcedure`, never from the request.
+
+## Not built yet
+
+- Editing an athlete from the UI — the `update` procedure exists, no screen uses it
+- Portal activation, and the read-only state that follows deactivation (§21)
+- Cases, assessments, measurements — the rest of the chain
+- Duplicate detection on creation (§7)
