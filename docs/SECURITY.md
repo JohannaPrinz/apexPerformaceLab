@@ -1,6 +1,6 @@
 # Security
 
-> Status: **Foundation + open items** · Last updated: 2026-08-02
+> Status: **Foundation + open items** · Last updated: 2026-08-10
 >
 > Everything under [Open items](#9-open-items) is a known gap, not an
 > oversight. Read that section before the first production tenant.
@@ -50,12 +50,16 @@ Better Auth, self-hosted, sessions in our own Postgres.
 
 ## 3. Authorization
 
+### Organization roles
+
 Role-based, defined in [`packages/auth/src/permissions.ts`](../packages/auth/src/permissions.ts).
+Every role below is **scoped to one organization** and is granted by a
+`Membership` row. There is no role that spans organizations.
 
 | Role      | Scope                                                            |
 | --------- | ---------------------------------------------------------------- |
 | `owner`   | Full control, including billing and deletion of the organization |
-| `admin`   | Manage members and settings                                      |
+| `admin`   | Manage members and settings **of that organization**             |
 | `coach`   | Manage assigned athletes and their programmes                    |
 | `athlete` | Own data only                                                    |
 
@@ -65,6 +69,57 @@ endpoint is still reachable with `curl`.
 
 Checks live in one module so the matrix is auditable as a unit rather than
 scattered across dozens of inline `if (role === 'admin')` conditions.
+
+**A resource enters the permission schema when the slice that owns it is
+built.** The earlier entries `training`, `nutrition` and `analysis` predated the
+domain model and were removed rather than renamed — a matrix written for
+features that do not exist cannot be reviewed against a real screen, and tends
+to be copied forward unexamined.
+
+### `platformAdmin` — the system-wide role
+
+Apex OS needs operators who can support customers across the whole system:
+manage users and coaches, manage organizations and their memberships, change a
+plan, suspend an account. **That is a different kind of authority from anything
+in the table above.**
+
+> **Decided.** The name of that role is **`platformAdmin`**. `admin` means
+> _organization admin_ and nothing else — in the `MembershipRole` enum, in
+> `organizationRoleSchema`, and in `permissions.ts`. The two are separate
+> concepts and are never used interchangeably, in code or in conversation.
+>
+> **`platformAdmin` is not implemented.** No schema field, no Better Auth admin
+> plugin, no dashboard, no procedure. What exists is this decision and the three
+> rules below, which the current model already satisfies.
+
+**1. It is not a `Membership`.** Granting an operator membership in every
+organization would be the obvious shortcut and it is the wrong one: it makes
+platform authority indistinguishable from tenant authority in every query,
+every audit log and every permission check. `organizationProcedure` resolves
+the tenant scope from a real `Membership` and must keep doing exactly that.
+Platform authority becomes a **separate rung** on the procedure ladder, not a
+wider role inside the existing one.
+
+**2. It does not read athlete data by default.** Health and performance records
+are special-category data under GDPR Art. 9 (§1, §8). A blanket "operators see
+everything" switch would put every athlete's record one compromised operator
+account away from exposure. The intended shape is account- and
+organization-level administration first, with any access to athlete data being
+explicit, time-boxed and logged — see the support-access item in [§9](#9-open-items).
+
+**3. It lives outside the tenancy model.** `User` is already independent of both
+`Coach` and `Organization`, so a system-wide role sits beside the tenancy model
+rather than inside it. Nothing in the current schema blocks it.
+
+**How it will be built.** Better Auth ships an `admin` plugin that models
+exactly this: a `role` field on the user, plus `banned` / `banReason` /
+`banExpires` for suspension. That plugin is the vehicle — no parallel
+authorization system. Adopting it costs one migration, because those four
+columns do not exist on `users` today. That migration belongs to the
+admin/support slice and is deliberately not carried speculatively.
+
+Enforced in `packages/types/src/tenancy/permissions.test.ts`: the organization
+role list is asserted to contain no cross-organization role.
 
 ## 4. Tenant isolation
 

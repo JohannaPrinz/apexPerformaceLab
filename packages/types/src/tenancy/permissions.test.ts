@@ -51,6 +51,36 @@ describe('PERMISSIONS matrix', () => {
     expect(hasPermission('coach', 'member:remove')).toBe(false);
   });
 
+  it('lets a coach edit athletes but not delete them', () => {
+    expect(hasPermission('coach', 'athlete:write')).toBe(true);
+    expect(hasPermission('coach', 'athlete:delete')).toBe(false);
+  });
+
+  /**
+   * `training`, `nutrition` and `analysis` came from a taxonomy that predates
+   * the domain model and were removed, not renamed. This pins that: a resource
+   * enters the schema when the slice that owns it is built, not before.
+   */
+  it('carries no resource from the pre-domain taxonomy', () => {
+    const retired = ['training', 'nutrition', 'analysis'];
+
+    for (const permission of permissionSchema.options) {
+      const resource = permission.split(':')[0];
+      expect(retired, `"${permission}" belongs to a retired resource`).not.toContain(resource);
+    }
+  });
+
+  /**
+   * Every role here is granted by a `Membership` and is therefore scoped to one
+   * organization. The system-wide operator role is `platformAdmin`, it lives
+   * outside the tenancy model, and it must never appear as an organization
+   * role — see docs/SECURITY.md §3.
+   */
+  it('holds no role that spans organizations', () => {
+    expect(ORGANIZATION_ROLES).not.toContain('platformAdmin');
+    expect(ORGANIZATION_ROLES).toEqual(['owner', 'admin', 'coach', 'athlete']);
+  });
+
   it('restricts an athlete to read-only access', () => {
     const writes = permissionSchema.options.filter((permission) => !permission.endsWith(':read'));
 

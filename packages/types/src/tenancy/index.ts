@@ -17,13 +17,27 @@ import { z } from 'zod';
  * Deliberately coarse. Fine-grained permissions are derived from the role
  * (see `PERMISSIONS`) rather than stored per user, so adding a capability is a
  * code change with a reviewable diff instead of a data migration.
+ *
+ * **Every role here is scoped to one organization** and is granted by a
+ * `Membership` row. `admin` therefore means *organization admin* — nothing in
+ * this enum spans organizations, and nothing may be added that does. The
+ * system-wide operator role is `platformAdmin`; it is a separate concept, lives
+ * outside the tenancy model, and is not implemented yet. See
+ * `docs/SECURITY.md` §3.
  */
 export const organizationRoleSchema = z.enum(['owner', 'admin', 'coach', 'athlete']);
 export type OrganizationRole = z.infer<typeof organizationRoleSchema>;
 
 export const ORGANIZATION_ROLES = organizationRoleSchema.options;
 
-/** Capabilities a role may exercise. Checked in the tRPC middleware layer. */
+/**
+ * Capabilities a role may exercise. Checked in the tRPC middleware layer.
+ *
+ * A resource enters this list when the slice that owns it is built. `training`,
+ * `nutrition` and `analysis` were removed rather than renamed: they came from a
+ * taxonomy that predates the domain model, and inventing permissions for
+ * unbuilt features produces a matrix nobody can review against a real screen.
+ */
 export const permissionSchema = z.enum([
   'organization:read',
   'organization:update',
@@ -32,12 +46,7 @@ export const permissionSchema = z.enum([
   'member:remove',
   'athlete:read',
   'athlete:write',
-  'training:read',
-  'training:write',
-  'nutrition:read',
-  'nutrition:write',
-  'analysis:read',
-  'analysis:write',
+  'athlete:delete',
   'billing:manage',
 ]);
 export type Permission = z.infer<typeof permissionSchema>;
@@ -57,25 +66,12 @@ export const PERMISSIONS: Readonly<Record<OrganizationRole, readonly Permission[
     'member:remove',
     'athlete:read',
     'athlete:write',
-    'training:read',
-    'training:write',
-    'nutrition:read',
-    'nutrition:write',
-    'analysis:read',
-    'analysis:write',
+    'athlete:delete',
   ],
-  coach: [
-    'organization:read',
-    'athlete:read',
-    'athlete:write',
-    'training:read',
-    'training:write',
-    'nutrition:read',
-    'nutrition:write',
-    'analysis:read',
-    'analysis:write',
-  ],
-  athlete: ['organization:read', 'training:read', 'nutrition:read', 'analysis:read'],
+  coach: ['organization:read', 'athlete:read', 'athlete:write'],
+  // Narrow while the athlete portal is unbuilt: the resources it will read —
+  // reports, recommendations, programs — arrive with that slice (§21).
+  athlete: ['organization:read'],
 } as const;
 
 export function hasPermission(role: OrganizationRole, permission: Permission): boolean {
