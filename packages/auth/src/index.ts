@@ -7,3 +7,11 @@
  */
 export { auth, type Auth, type Session } from './server';
 export * from './permissions';
+export {
+  personalWorkspaceName,
+  provisionPersonalWorkspace,
+  resolveInitialOrganizationId,
+  slugifyWorkspaceName,
+  type ProvisionedWorkspace,
+  type ProvisionPersonalWorkspaceInput,
+} from './provisioning';

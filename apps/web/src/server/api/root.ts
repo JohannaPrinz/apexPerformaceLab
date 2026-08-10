@@ -1,3 +1,5 @@
+import { authRouter } from '@/features/auth/server/router';
+
 import { healthRouter } from './routers/health';
 import { createCallerFactory, createTRPCRouter } from './trpc';
 
@@ -8,10 +10,11 @@ import { createCallerFactory, createTRPCRouter } from './trpc';
  * and registers it here. Nothing else in the app imports feature routers
  * directly, so the API surface is fully described by this file.
  *
- * Only `health` exists today; feature routers are added as slices are built.
+ * Feature routers are added here as slices are built.
  */
 export const appRouter = createTRPCRouter({
   health: healthRouter,
+  auth: authRouter,
 });
 
 export type AppRouter = typeof appRouter;

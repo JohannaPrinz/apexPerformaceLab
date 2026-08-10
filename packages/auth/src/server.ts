@@ -6,6 +6,7 @@ import { organization } from 'better-auth/plugins';
 import { db } from '@apex/database';
 
 import { accessControl, roles } from './permissions';
+import { provisionPersonalWorkspace, resolveInitialOrganizationId } from './provisioning';
 
 /**
  * Better Auth server instance — the single source of truth for identity.
@@ -71,6 +72,66 @@ export const auth = betterAuth({
     database: {
       // Match the `cuid(2)` default used across the Prisma schema.
       generateId: false,
+    },
+  },
+
+  /**
+   * The registration → workspace flow.
+   *
+   * Both hooks live here rather than in a sign-up handler on purpose: they fire
+   * for *every* path Better Auth creates a user or a session through — email
+   * and password, GitHub, Google, and any provider added later. A flow wired
+   * into one form would silently skip the others, and the first coach to
+   * register with Google would land in an account with no workspace.
+   */
+  databaseHooks: {
+    user: {
+      create: {
+        /**
+         * Gives the new coach a profile and a personal workspace.
+         *
+         * Idempotent, so a retried registration cannot produce a second
+         * workspace.
+         *
+         * **Constraint to respect when athlete portal accounts arrive (§21):**
+         * this fires for every user Better Auth creates, and an athlete must
+         * not receive a coach profile. Portal activation is a coach-initiated
+         * server-side action and will create that `User` directly, bypassing
+         * Better Auth's public sign-up — so this hook never sees it. If that
+         * ever changes, gate this on the registration intent rather than
+         * removing it.
+         */
+        after: async (user) => {
+          await provisionPersonalWorkspace(db, {
+            userId: user.id,
+            userName: user.name,
+          });
+        },
+      },
+    },
+
+    session: {
+      create: {
+        /**
+         * Puts the session into a workspace at sign-in.
+         *
+         * The active organization is resolved **from Membership** — never from
+         * the coach profile, which holds no organization by design (§6). This
+         * only supplies the initial value; a workspace switcher will later
+         * write `activeOrganizationId` explicitly.
+         *
+         * `null` is a valid result: a user with no membership (a future athlete
+         * portal account) gets a session without a tenant scope, and
+         * `organizationProcedure` refuses it. That is the correct outcome, not
+         * an error to swallow here.
+         */
+        before: async (session) => ({
+          data: {
+            ...session,
+            activeOrganizationId: await resolveInitialOrganizationId(db, session.userId),
+          },
+        }),
+      },
     },
   },
 
