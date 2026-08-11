@@ -3,9 +3,12 @@ import 'server-only';
 import type { PrismaClientInstance } from '@apex/database';
 import { scoped, withTenant } from '@apex/database/tenant';
 import {
+  canRemove,
+  canTransition,
   findMeasurementTemplate,
   MODULE_CONFIGURATION_VERSION,
   moduleConfigurationSchema,
+  type AssessmentModuleStatus,
   type ModuleConfiguration,
   type ModuleKey,
 } from '@apex/domain';
@@ -38,6 +41,8 @@ const moduleSelect = {
   moduleKey: true,
   moduleVersion: true,
   payload: true,
+  status: true,
+  createdByCoachId: true,
   createdAt: true,
 } as const;
 
@@ -57,6 +62,9 @@ export interface AssessmentModuleRecord {
   moduleVersion: number;
   /** The stored configuration, or null on a module created before one existed. */
   configuration: ModuleConfiguration | null;
+  status: AssessmentModuleStatus;
+  /** Recorded, not yet enforced — see the schema comment and §26.24. */
+  createdByCoachId: string;
   createdAt: Date;
 }
 
@@ -96,18 +104,22 @@ function toRecord(row: {
     moduleKey: string;
     moduleVersion: number;
     payload: unknown;
+    status: string;
+    createdByCoachId: string;
     createdAt: Date;
   }[];
 }): AssessmentRecord {
   return {
     ...row,
     type: row.type as AssessmentRecord['type'],
-    modules: row.modules.map((module) => ({
-      id: module.id,
-      moduleKey: module.moduleKey,
-      moduleVersion: module.moduleVersion,
-      configuration: readConfiguration(module.payload),
-      createdAt: module.createdAt,
+    modules: row.modules.map((entry) => ({
+      id: entry.id,
+      moduleKey: entry.moduleKey,
+      moduleVersion: entry.moduleVersion,
+      configuration: readConfiguration(entry.payload),
+      status: entry.status as AssessmentModuleStatus,
+      createdByCoachId: entry.createdByCoachId,
+      createdAt: entry.createdAt,
     })),
   };
 }
@@ -184,6 +196,7 @@ export async function createAssessment(
 export async function addModule(
   db: AssessmentDb,
   tenant: Pick<TenantContext, 'organizationId'>,
+  createdByCoachId: string,
   { assessmentId, moduleKey, templateKey, configuration }: AddModuleInput,
   resolveTemplateTypeIds: (keys: readonly string[]) => Promise<string[]>,
 ): Promise<AssessmentModuleRecord | null> {
@@ -205,6 +218,7 @@ export async function addModule(
       moduleKey,
       moduleVersion: MODULE_CONFIGURATION_VERSION,
       payload: resolved,
+      createdByCoachId,
     }),
     select: moduleSelect,
   });
@@ -214,6 +228,8 @@ export async function addModule(
     moduleKey: created.moduleKey,
     moduleVersion: created.moduleVersion,
     configuration: readConfiguration(created.payload),
+    status: created.status,
+    createdByCoachId: created.createdByCoachId,
     createdAt: created.createdAt,
   };
 }
@@ -260,16 +276,82 @@ export async function updateModuleConfiguration(
   return count > 0;
 }
 
-export async function removeModule(
+/**
+ * Moves a test through its lifecycle.
+ *
+ * Only the transitions `@apex/domain` declares legal are performed. A refused
+ * one is reported rather than silently ignored — a coach who presses "complete"
+ * on a skipped test deserves to know why nothing happened.
+ *
+ * **The status never creates or removes a Measurement.** Skipping and aborting
+ * are statements about the test, not about its values: what was recorded stays,
+ * and what was never taken has no row (requirement 7).
+ */
+export type StatusChange =
+  | { ok: true; status: AssessmentModuleStatus }
+  | { ok: false; reason: 'NOT_FOUND' | 'ILLEGAL_TRANSITION'; from?: AssessmentModuleStatus };
+
+export async function setModuleStatus(
   db: AssessmentDb,
   tenant: Pick<TenantContext, 'organizationId'>,
   moduleId: string,
-): Promise<boolean> {
-  const { count } = await db.assessmentModule.deleteMany({
+  status: AssessmentModuleStatus,
+): Promise<StatusChange> {
+  const current = await db.assessmentModule.findFirst({
     where: scoped(tenant, { id: moduleId }),
+    select: { id: true, status: true },
   });
 
-  return count > 0;
+  if (!current) return { ok: false, reason: 'NOT_FOUND' };
+
+  const from = current.status;
+  if (from === status) return { ok: true, status };
+  if (!canTransition(from, status)) return { ok: false, reason: 'ILLEGAL_TRANSITION', from };
+
+  await db.assessmentModule.updateMany({
+    where: scoped(tenant, { id: moduleId }),
+    data: { status },
+  });
+
+  return { ok: true, status };
+}
+
+/**
+ * Removes a test from an assessment.
+ *
+ * Allowed only for one that was never started and holds nothing — there is no
+ * history to preserve. A started test is `ABORTED` instead, and a skipped one
+ * stays: "we decided not to run this" is a statement about the examination, and
+ * losing it would make the assessment look like the test was never considered.
+ */
+export type RemovalResult =
+  | { ok: true }
+  | { ok: false; reason: 'NOT_FOUND' | 'HAS_HISTORY'; status?: AssessmentModuleStatus };
+
+export async function removeModule(
+  db: AssessmentDb & Pick<PrismaClientInstance, 'measurement'>,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  moduleId: string,
+): Promise<RemovalResult> {
+  const current = await db.assessmentModule.findFirst({
+    where: scoped(tenant, { id: moduleId }),
+    select: { id: true, status: true },
+  });
+
+  if (!current) return { ok: false, reason: 'NOT_FOUND' };
+
+  const measurementCount = await db.measurement.count({
+    where: scoped(tenant, { assessmentModuleId: moduleId }),
+  });
+
+  const status = current.status;
+  if (!canRemove(status, measurementCount)) {
+    return { ok: false, reason: 'HAS_HISTORY', status };
+  }
+
+  await db.assessmentModule.deleteMany({ where: scoped(tenant, { id: moduleId }) });
+
+  return { ok: true };
 }
 
 /**
@@ -320,11 +402,15 @@ export async function copyAssessment(
       type: 'RE_ASSESSMENT' as const,
       performedAt: performedAt ? new Date(performedAt) : new Date(),
       modules: {
-        create: source.modules.map((module) => ({
+        // The copy is a fresh examination: every test starts PLANNED, and the
+        // coach making the copy is its author. Carrying the source's status
+        // across would claim work that has not happened.
+        create: source.modules.map((entry) => ({
           organizationId: tenant.organizationId,
-          moduleKey: module.moduleKey,
-          moduleVersion: module.moduleVersion,
-          payload: module.payload ?? undefined,
+          moduleKey: entry.moduleKey,
+          moduleVersion: entry.moduleVersion,
+          payload: entry.payload ?? undefined,
+          createdByCoachId,
         })),
       },
     }),

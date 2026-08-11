@@ -2,9 +2,15 @@
 
 import { useState, useTransition } from 'react';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
-import { MODULE_LABELS, type ModuleKey } from '@apex/domain';
+import {
+  ASSESSMENT_MODULE_STATUS_LABELS,
+  MODULE_LABELS,
+  type AssessmentModuleStatus,
+  type ModuleKey,
+} from '@apex/domain';
 import { Badge, Button } from '@apex/ui';
 
 import { removeModuleAction } from '../server/actions';
@@ -20,6 +26,7 @@ export interface ModuleCardData {
     dimensions: { key: string; label: string; values?: string[] }[];
     notes?: string;
   } | null;
+  status: AssessmentModuleStatus;
 }
 
 /**
@@ -55,23 +62,29 @@ export function ModuleCard({
             <Badge variant="accent">{configuration.passes} passes</Badge>
           ) : null}
           {configuration?.recordsSide ? <Badge variant="outline">Left / right</Badge> : null}
+          <Badge variant="secondary">{ASSESSMENT_MODULE_STATUS_LABELS[module.status]}</Badge>
         </div>
 
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={pending}
-          onClick={() => {
-            setError(null);
-            startTransition(async () => {
-              const result = await removeModuleAction(module.id, assessmentId);
-              if (result.message) setError(result.message);
-              else router.refresh();
-            });
-          }}
-        >
-          {pending ? 'Removing…' : 'Remove'}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" asChild>
+            <Link href={`/assessments/${assessmentId}/tests/${module.id}`}>Perform</Link>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={pending}
+            onClick={() => {
+              setError(null);
+              startTransition(async () => {
+                const result = await removeModuleAction(module.id, assessmentId);
+                if (result.message) setError(result.message);
+                else router.refresh();
+              });
+            }}
+          >
+            {pending ? 'Removing…' : 'Remove'}
+          </Button>
+        </div>
       </div>
 
       {configuration ? (

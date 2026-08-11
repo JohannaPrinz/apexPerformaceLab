@@ -3,10 +3,12 @@ import 'server-only';
 import { TRPCError } from '@trpc/server';
 
 import type { PrismaClientInstance } from '@apex/database';
+import { assessmentModuleStatusSchema } from '@apex/domain';
 import { AppError } from '@apex/types';
 
 import { createTRPCRouter, withCoachPermission, withPermission } from '@/server/api/trpc';
 
+import { measurementsRouter } from '../measurements/server/router';
 import {
   addModuleSchema,
   assessmentIdSchema,
@@ -25,6 +27,7 @@ import {
   listAssessmentsForAthlete,
   measurementTypeNames,
   removeModule,
+  setModuleStatus,
   updateModuleConfiguration,
 } from './service';
 
@@ -85,10 +88,10 @@ export const assessmentsRouter = createTRPCRouter({
       return assessment;
     }),
 
-  addModule: withPermission('assessment:write')
+  addModule: withCoachPermission('assessment:write')
     .input(addModuleSchema)
     .mutation(async ({ ctx, input }) => {
-      const assessmentModule = await addModule(ctx.db, ctx.tenant, input, (keys) =>
+      const assessmentModule = await addModule(ctx.db, ctx.tenant, ctx.coach.id, input, (keys) =>
         resolveMeasurementTypeIds(ctx.db, ctx.tenant.organizationId, keys),
       );
 
@@ -112,14 +115,52 @@ export const assessmentsRouter = createTRPCRouter({
       return { moduleId: input.moduleId };
     }),
 
+  /**
+   * Moves a test through PLANNED → IN_PROGRESS → COMPLETED, or to SKIPPED /
+   * ABORTED. Never creates or removes a Measurement.
+   */
+  setModuleStatus: withPermission('assessment:write')
+    .input(moduleIdSchema.extend({ status: assessmentModuleStatusSchema }))
+    .mutation(async ({ ctx, input }) => {
+      const result = await setModuleStatus(ctx.db, ctx.tenant, input.moduleId, input.status);
+
+      if (!result.ok) {
+        if (result.reason === 'NOT_FOUND') throw notFound('Test');
+
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `A ${String(result.from).toLowerCase().replace('_', ' ')} test cannot become ${input.status.toLowerCase().replace('_', ' ')}.`,
+        });
+      }
+
+      return { moduleId: input.moduleId, status: result.status };
+    }),
+
+  /**
+   * Removes a test that was never started. A started one is aborted instead —
+   * its measurements are history and are never deleted (§22).
+   */
   removeModule: withPermission('assessment:write')
     .input(moduleIdSchema)
     .mutation(async ({ ctx, input }) => {
-      const removed = await removeModule(ctx.db, ctx.tenant, input.moduleId);
-      if (!removed) throw notFound('Module');
+      const result = await removeModule(ctx.db, ctx.tenant, input.moduleId);
+
+      if (!result.ok) {
+        if (result.reason === 'NOT_FOUND') throw notFound('Test');
+
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message:
+            result.status === 'SKIPPED'
+              ? 'A skipped test is kept — the decision not to run it is part of the examination.'
+              : 'This test has been started. Abort it instead; its measurements are history.',
+        });
+      }
 
       return { moduleId: input.moduleId };
     }),
+
+  measurements: measurementsRouter,
 });
 
 /**

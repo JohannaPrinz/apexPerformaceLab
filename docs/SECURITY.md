@@ -76,6 +76,34 @@ domain model and were removed rather than renamed — a matrix written for
 features that do not exist cannot be reviewed against a real screen, and tends
 to be copied forward unexamined.
 
+### Author-based write access — decided, not implemented
+
+> **Decided.** The Coach who performed a test may edit it: continue it, abort
+> it, correct its measurements, and write its analysis. **Other Coaches in the
+> same organization may view the test but not change it.**
+>
+> **Not implemented.** The authorization boundary in the MVP is the Workspace,
+> as §26.24 prescribes while coach-to-athlete assignment is deferred. Nothing in
+> the current code enforces authorship.
+
+What exists today is the **information**, not the rule:
+`AssessmentModule.createdByCoachId` and `Athlete.createdByCoachId` are written
+on every row. That is the part that cannot wait — once several coaches share a
+Workspace, "who ran this test" is not reconstructible after the fact.
+
+The rule arrives with the permissions/support slice, together with the
+consent-based assignment §26.24 describes. Deliberately **nothing is stubbed for
+it now**: a half-built author check would have to be unpicked, and a `canEdit`
+that is constant today is honest about being constant.
+
+Where it will attach when it does arrive:
+
+- the write procedures under `assessments.*` and `assessments.measurements.*`,
+  as a rung above `coachProcedure` — not as a wider role, for the same reason
+  platform authority is not a `Membership`
+- the `canEdit` prop the test runner already takes, which is where the screen
+  reads the answer rather than deciding it
+
 ### `platformAdmin` — the system-wide role
 
 Apex OS needs operators who can support customers across the whole system:

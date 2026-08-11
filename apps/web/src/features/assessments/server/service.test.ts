@@ -4,6 +4,7 @@ import type { PrismaClientInstance } from '@apex/database';
 
 import {
   addModule,
+  setModuleStatus,
   copyAssessment,
   createAssessment,
   getAssessment,
@@ -43,6 +44,8 @@ function fakeDb(overrides: { sourceModules?: unknown[] } = {}) {
           moduleKey: 'lactate',
           moduleVersion: 1,
           payload: configuration,
+          status: 'PLANNED',
+          createdByCoachId: 'coach_1',
           createdAt: new Date('2026-01-01'),
         },
       ],
@@ -60,11 +63,16 @@ function fakeDb(overrides: { sourceModules?: unknown[] } = {}) {
   };
 
   const assessmentModule = {
+    findFirst: vi
+      .fn<(args: QueryArgs) => Promise<unknown>>()
+      .mockResolvedValue({ id: 'mod_1', status: 'PLANNED' }),
     create: vi.fn<(args: QueryArgs) => Promise<unknown>>().mockResolvedValue({
       id: 'mod_new',
       moduleKey: 'lactate',
       moduleVersion: 1,
       payload: configuration,
+      status: 'PLANNED',
+      createdByCoachId: 'coach_1',
       createdAt: new Date(),
     }),
     updateMany: vi
@@ -86,15 +94,20 @@ function fakeDb(overrides: { sourceModules?: unknown[] } = {}) {
     findFirst: vi.fn<(args: QueryArgs) => Promise<unknown>>().mockResolvedValue({ id: 'ath_1' }),
   };
 
+  const measurement = {
+    count: vi.fn<(args: QueryArgs) => Promise<number>>().mockResolvedValue(0),
+  };
+
   return {
-    db: { assessment, assessmentModule, performanceCase, athlete } as unknown as Pick<
+    db: { assessment, assessmentModule, performanceCase, athlete, measurement } as unknown as Pick<
       PrismaClientInstance,
-      'assessment' | 'assessmentModule' | 'performanceCase' | 'athlete'
+      'assessment' | 'assessmentModule' | 'performanceCase' | 'athlete' | 'measurement'
     >,
     assessment,
     assessmentModule,
     performanceCase,
     athlete,
+    measurement,
   };
 }
 
@@ -143,11 +156,44 @@ describe('assessment service — tenant scoping', () => {
   it('scopes a module removal', async () => {
     const { db, assessmentModule } = fakeDb();
 
-    await removeModule(db, TENANT, 'mod_1');
+    const result = await removeModule(db, TENANT, 'mod_1');
 
+    expect(result.ok).toBe(true);
     expect(argsOf(assessmentModule.deleteMany).where).toMatchObject({
       organizationId: 'org_a',
     });
+  });
+
+  /**
+   * A started test is history. Aborting keeps it and its measurements; deleting
+   * would erase a test that was actually performed (§22).
+   */
+  it('refuses to delete a test that has been started', async () => {
+    const { db, assessmentModule } = fakeDb();
+    assessmentModule.findFirst.mockResolvedValue({ id: 'mod_1', status: 'IN_PROGRESS' });
+
+    const result = await removeModule(db, TENANT, 'mod_1');
+
+    expect(result).toMatchObject({ ok: false, reason: 'HAS_HISTORY' });
+    expect(assessmentModule.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses to delete a planned test that already holds values', async () => {
+    const { db, assessmentModule, measurement } = fakeDb();
+    measurement.count.mockResolvedValue(3);
+
+    const result = await removeModule(db, TENANT, 'mod_1');
+
+    expect(result.ok).toBe(false);
+    expect(assessmentModule.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses to delete a skipped test — the decision is part of the record', async () => {
+    const { db, assessmentModule } = fakeDb();
+    assessmentModule.findFirst.mockResolvedValue({ id: 'mod_1', status: 'SKIPPED' });
+
+    expect((await removeModule(db, TENANT, 'mod_1')).ok).toBe(false);
+    expect(assessmentModule.deleteMany).not.toHaveBeenCalled();
   });
 });
 
@@ -188,8 +234,12 @@ describe('adding a module', () => {
   it('verifies the assessment before writing', async () => {
     const { db, assessment } = fakeDb();
 
-    await addModule(db, TENANT, { assessmentId: 'as_1', moduleKey: 'lactate', configuration }, () =>
-      Promise.resolve([]),
+    await addModule(
+      db,
+      TENANT,
+      'coach_1',
+      { assessmentId: 'as_1', moduleKey: 'lactate', configuration },
+      () => Promise.resolve([]),
     );
 
     expect(argsOf(assessment.findFirst).where).toMatchObject({
@@ -205,6 +255,7 @@ describe('adding a module', () => {
     const result = await addModule(
       db,
       TENANT,
+      'coach_1',
       { assessmentId: 'as_elsewhere', moduleKey: 'lactate', configuration },
       () => Promise.resolve([]),
     );
@@ -220,6 +271,7 @@ describe('adding a module', () => {
     await addModule(
       db,
       TENANT,
+      'coach_1',
       { assessmentId: 'as_1', moduleKey: 'lactate', templateKey: 'lactate_step_test' },
       resolve,
     );
@@ -238,6 +290,7 @@ describe('adding a module', () => {
     await addModule(
       db,
       TENANT,
+      'coach_1',
       { assessmentId: 'as_1', moduleKey: 'lactate', templateKey: 'lactate_step_test' },
       () => Promise.resolve(['mt_1']),
     );
@@ -309,5 +362,40 @@ describe('copying an assessment', () => {
 
     expect(await copyAssessment(db, TENANT, 'coach_1', { assessmentId: 'as_x' })).toBeNull();
     expect(assessment.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('test lifecycle', () => {
+  it('scopes the status change and performs a legal transition', async () => {
+    const { db, assessmentModule } = fakeDb();
+
+    const result = await setModuleStatus(db, TENANT, 'mod_1', 'IN_PROGRESS');
+
+    expect(result).toMatchObject({ ok: true, status: 'IN_PROGRESS' });
+    expect(argsOf(assessmentModule.updateMany).where).toMatchObject({
+      organizationId: 'org_a',
+      id: 'mod_1',
+    });
+  });
+
+  it('refuses an illegal transition without writing', async () => {
+    const { db, assessmentModule } = fakeDb();
+
+    const result = await setModuleStatus(db, TENANT, 'mod_1', 'COMPLETED');
+
+    expect(result).toMatchObject({ ok: false, reason: 'ILLEGAL_TRANSITION', from: 'PLANNED' });
+    expect(assessmentModule.updateMany).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Skipping and aborting are statements about the test, never about its
+   * values: no measurement is created and none is removed (requirement 7).
+   */
+  it('creates no measurement when a test is skipped', async () => {
+    const { db, measurement } = fakeDb();
+
+    await setModuleStatus(db, TENANT, 'mod_1', 'SKIPPED');
+
+    expect(measurement.count).not.toHaveBeenCalled();
   });
 });

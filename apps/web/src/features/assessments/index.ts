@@ -8,6 +8,27 @@ export { AddModuleForm } from './components/add-module-form';
 export { AssessmentForm } from './components/assessment-form';
 export { CopyAssessmentButton } from './components/copy-assessment-button';
 export { ModuleCard, type ModuleCardData } from './components/module-card';
+export { MeasurementCell } from './measurements/components/measurement-cell';
+export { TestRunner } from './measurements/components/test-runner';
+export {
+  findRecorded,
+  formatValue,
+  isPassEmpty,
+  passesOf,
+  passProgress,
+  slotsForPass,
+  type MeasurementSlot,
+  type RecordedMeasurement,
+} from './measurements/components/slots';
+export {
+  addModuleNoteSchema,
+  correctMeasurementSchema,
+  moduleMeasurementsSchema,
+  recordMeasurementSchema,
+  type AddModuleNoteInput,
+  type CorrectMeasurementInput,
+  type RecordMeasurementInput,
+} from './measurements/schemas';
 export {
   addModuleSchema,
   assessmentIdSchema,
