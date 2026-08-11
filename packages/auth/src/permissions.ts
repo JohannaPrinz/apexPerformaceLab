@@ -27,6 +27,8 @@ const statement = {
   athlete: ['read', 'write', 'delete'],
   case: ['read', 'write'],
   assessment: ['read', 'write'],
+  measurement: ['read', 'write'],
+  report: ['read', 'write'],
   billing: ['read', 'manage'],
 } as const;
 
@@ -39,6 +41,8 @@ export const owner = accessControl.newRole({
   athlete: ['read', 'write', 'delete'],
   case: ['read', 'write'],
   assessment: ['read', 'write'],
+  measurement: ['read', 'write'],
+  report: ['read', 'write'],
   billing: ['read', 'manage'],
 });
 
@@ -50,6 +54,8 @@ export const admin = accessControl.newRole({
   athlete: ['read', 'write', 'delete'],
   case: ['read', 'write'],
   assessment: ['read', 'write'],
+  measurement: ['read', 'write'],
+  report: ['read', 'write'],
   billing: ['read'],
 });
 
@@ -59,6 +65,8 @@ export const coach = accessControl.newRole({
   athlete: ['read', 'write'],
   case: ['read', 'write'],
   assessment: ['read', 'write'],
+  measurement: ['read', 'write'],
+  report: ['read', 'write'],
 });
 
 /**

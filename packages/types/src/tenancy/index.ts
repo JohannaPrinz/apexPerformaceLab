@@ -51,6 +51,10 @@ export const permissionSchema = z.enum([
   'case:write',
   'assessment:read',
   'assessment:write',
+  'measurement:read',
+  'measurement:write',
+  'report:read',
+  'report:write',
   'billing:manage',
 ]);
 export type Permission = z.infer<typeof permissionSchema>;
@@ -75,6 +79,10 @@ export const PERMISSIONS: Readonly<Record<OrganizationRole, readonly Permission[
     'case:write',
     'assessment:read',
     'assessment:write',
+    'measurement:read',
+    'measurement:write',
+    'report:read',
+    'report:write',
   ],
   coach: [
     'organization:read',
@@ -84,6 +92,10 @@ export const PERMISSIONS: Readonly<Record<OrganizationRole, readonly Permission[
     'case:write',
     'assessment:read',
     'assessment:write',
+    'measurement:read',
+    'measurement:write',
+    'report:read',
+    'report:write',
   ],
   // Narrow while the athlete portal is unbuilt: the resources it will read —
   // reports, recommendations, programs — arrive with that slice (§21).
