@@ -20,8 +20,12 @@
  * This package is pure, which is what makes the invariants testable in
  * isolation.
  *
- * Only the registry exists today. The invariants arrive with the objects they
- * constrain — writing them for unbuilt features would produce rules nobody can
- * check against a real screen.
+ * The registry and the system measurement type catalogue exist today. The
+ * invariants arrive with the objects they constrain — writing them for unbuilt
+ * features would produce rules nobody can check against a real screen.
  */
+export * from './measurement-types';
 export * from './modules';
+export * from './modules/configuration';
+export * from './modules/context';
+export * from './modules/templates';

@@ -1,5 +1,7 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 
+import { SYSTEM_MEASUREMENT_TYPES } from '@apex/domain';
+
 import { PrismaClient } from '../generated/prisma/client';
 import '../src/load-env';
 
@@ -76,9 +78,46 @@ async function main() {
     },
   });
 
+  /**
+   * The system measurement type catalogue (§12).
+   *
+   * `organizationId` is null: these belong to no workspace and every workspace
+   * inherits them. The definitions live in `@apex/domain` — which quantities
+   * the platform knows how to record is a professional statement, reviewable in
+   * a diff, not data that accumulates in a seed file.
+   *
+   * Matched on `(key, organizationId: null)` rather than upserted on a unique
+   * key: system-wide uniqueness is a *partial* index
+   * (`WHERE "organizationId" IS NULL`), which Prisma's `upsert` cannot target.
+   */
+  let created = 0;
+  for (const type of SYSTEM_MEASUREMENT_TYPES) {
+    const existing = await db.measurementType.findFirst({
+      where: { key: type.key, organizationId: null },
+      select: { id: true },
+    });
+
+    if (existing) continue;
+
+    await db.measurementType.create({
+      data: {
+        key: type.key,
+        name: type.name,
+        unit: type.unit,
+        valueType: type.valueType,
+        category: type.category,
+        // No reference range: a single global range identical for a 25-year-old
+        // runner and a 55-year-old recreational athlete produces "outside
+        // normal" markers that do not hold up.
+      },
+    });
+    created++;
+  }
+
   console.info(
     `Seeded organization "${organization.slug}" with owner ${owner.email} ` +
-      `and coach profile ${coach.id}.`,
+      `and coach profile ${coach.id}. ` +
+      `Measurement catalogue: ${created} added, ${SYSTEM_MEASUREMENT_TYPES.length} total.`,
   );
 
   await db.$disconnect();

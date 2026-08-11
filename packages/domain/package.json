@@ -6,7 +6,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./modules": "./src/modules/index.ts"
+    "./modules": "./src/modules/index.ts",
+    "./measurement-types": "./src/measurement-types/index.ts"
   },
   "scripts": {
     "lint": "eslint .",

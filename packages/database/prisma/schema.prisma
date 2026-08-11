@@ -613,6 +613,32 @@ model Measurement {
   /// is never updated (§4).
   ingestedAt     DateTime          @default(now())
   source         MeasurementSource @default(MANUAL)
+  /// Which pass of the Module this value belongs to. **1-based**, null when the
+  /// Module records a single pass — which is the ordinary case.
+  ///
+  /// A pass is a structure *inside* the Module, never an entity: it has no
+  /// lifecycle, no author and no identity beyond its position. A table for it
+  /// would add a level the canonical hierarchy (§3) does not have, and every
+  /// query about an Assessment would grow a join for something that is usually
+  /// exactly one.
+  ///
+  /// Without this column a lactate curve cannot be reconstructed: four values
+  /// at stage 2 are indistinguishable from four at stage 3 except by
+  /// `capturedAt`. The Module's configuration declares how many passes exist
+  /// (`AssessmentModule.payload`); this records which one a value came from.
+  passIndex      Int?
+  /// The further dimensions this value was taken along — measurement site,
+  /// joint, position. Side is **not** here: it has its own typed column above.
+  ///
+  /// **Not arbitrary JSON.** The keys are exactly the dimensions the Module's
+  /// configuration declares, validated against the schema the module definition
+  /// derives for its `moduleVersion` (`@apex/domain` →
+  /// `measurementContextSchema`). Unknown keys are rejected.
+  ///
+  /// Json rather than columns because the dimensions differ per module and per
+  /// test: a fixed `joint` column would be null on every measurement that is
+  /// not a mobility reading, and a new dimension would be a migration.
+  context        Json?
   /// Origin system, e.g. `vald`, `garmin`. Null for manual entry. Devices are
   /// data sources, never modules (§11).
   externalSystem String?
@@ -647,7 +673,11 @@ model Measurement {
   /// a new external test with a new identifier is always a new Measurement.
   @@unique([organizationId, externalSystem, externalId])
   @@index([organizationId])
-  @@index([assessmentModuleId])
+  /// The dominant read is "every measurement of this module, in pass order" —
+  /// which is what a lactate curve and a strength comparison both are. The
+  /// leftmost prefix still serves the plain module lookup, so this replaces the
+  /// single-column index rather than joining it.
+  @@index([assessmentModuleId, passIndex])
   @@index([measurementTypeId, capturedAt])
   @@map("measurements")
 }
