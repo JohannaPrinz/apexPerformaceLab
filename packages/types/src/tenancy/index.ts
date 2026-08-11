@@ -49,6 +49,8 @@ export const permissionSchema = z.enum([
   'athlete:delete',
   'case:read',
   'case:write',
+  'assessment:read',
+  'assessment:write',
   'billing:manage',
 ]);
 export type Permission = z.infer<typeof permissionSchema>;
@@ -71,8 +73,18 @@ export const PERMISSIONS: Readonly<Record<OrganizationRole, readonly Permission[
     'athlete:delete',
     'case:read',
     'case:write',
+    'assessment:read',
+    'assessment:write',
   ],
-  coach: ['organization:read', 'athlete:read', 'athlete:write', 'case:read', 'case:write'],
+  coach: [
+    'organization:read',
+    'athlete:read',
+    'athlete:write',
+    'case:read',
+    'case:write',
+    'assessment:read',
+    'assessment:write',
+  ],
   // Narrow while the athlete portal is unbuilt: the resources it will read —
   // reports, recommendations, programs — arrive with that slice (§21).
   athlete: ['organization:read'],
