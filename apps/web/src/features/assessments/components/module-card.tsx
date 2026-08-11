@@ -1,0 +1,122 @@
+'use client';
+
+import { useState, useTransition } from 'react';
+
+import { useRouter } from 'next/navigation';
+
+import { MODULE_LABELS, type ModuleKey } from '@apex/domain';
+import { Badge, Button } from '@apex/ui';
+
+import { removeModuleAction } from '../server/actions';
+
+export interface ModuleCardData {
+  id: string;
+  moduleKey: string;
+  moduleVersion: number;
+  configuration: {
+    measurementTypeIds: string[];
+    passes: number;
+    recordsSide: boolean;
+    dimensions: { key: string; label: string; values?: string[] }[];
+    notes?: string;
+  } | null;
+}
+
+/**
+ * One configured test inside an assessment.
+ *
+ * What it shows is the *plan* — how many quantities, how many passes, along
+ * which dimensions. The values are the Measurements and arrive with the entry
+ * screen; keeping the two apart is what makes copying an assessment a copy of
+ * this card and nothing else.
+ */
+export function ModuleCard({
+  module,
+  assessmentId,
+  typeNames,
+}: {
+  module: ModuleCardData;
+  assessmentId: string;
+  typeNames: Record<string, string>;
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const configuration = module.configuration;
+
+  return (
+    <div className="flex flex-col gap-3 rounded-md border border-border bg-card p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-medium">
+            {MODULE_LABELS[module.moduleKey as ModuleKey] ?? module.moduleKey}
+          </span>
+          {configuration && configuration.passes > 1 ? (
+            <Badge variant="accent">{configuration.passes} passes</Badge>
+          ) : null}
+          {configuration?.recordsSide ? <Badge variant="outline">Left / right</Badge> : null}
+        </div>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={pending}
+          onClick={() => {
+            setError(null);
+            startTransition(async () => {
+              const result = await removeModuleAction(module.id, assessmentId);
+              if (result.message) setError(result.message);
+              else router.refresh();
+            });
+          }}
+        >
+          {pending ? 'Removing…' : 'Remove'}
+        </Button>
+      </div>
+
+      {configuration ? (
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+          <dt className="text-muted-foreground">Records</dt>
+          <dd>
+            {configuration.measurementTypeIds
+              .map((id) => typeNames[id] ?? 'Unknown measurement')
+              .join(' · ')}
+          </dd>
+
+          {configuration.dimensions.length > 0 ? (
+            <>
+              <dt className="text-muted-foreground">Dimensions</dt>
+              <dd>
+                {configuration.dimensions
+                  .map((dimension) =>
+                    dimension.values?.length
+                      ? `${dimension.label} (${dimension.values.join(', ')})`
+                      : dimension.label,
+                  )
+                  .join(' · ')}
+              </dd>
+            </>
+          ) : null}
+
+          {configuration.notes ? (
+            <>
+              <dt className="text-muted-foreground">Protocol</dt>
+              <dd className="text-pretty">{configuration.notes}</dd>
+            </>
+          ) : null}
+        </dl>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          This test was configured under an older shape and cannot be read. The measurements it
+          holds are unaffected.
+        </p>
+      )}
+
+      {error ? (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}

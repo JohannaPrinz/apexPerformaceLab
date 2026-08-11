@@ -17,6 +17,7 @@
   "dependencies": {
     "@apex/auth": "workspace:*",
     "@apex/database": "workspace:*",
+    "@apex/domain": "workspace:*",
     "@apex/types": "workspace:*",
     "@apex/ui": "workspace:*",
     "@t3-oss/env-nextjs": "0.13.11",

@@ -18,7 +18,7 @@ const nextConfig: NextConfig = {
    * The cost is that Next must transpile them — that is what this list does.
    * Add every new `@apex/*` package here.
    */
-  transpilePackages: ['@apex/ui', '@apex/auth', '@apex/database', '@apex/types'],
+  transpilePackages: ['@apex/ui', '@apex/auth', '@apex/database', '@apex/domain', '@apex/types'],
 
   typedRoutes: true,
 

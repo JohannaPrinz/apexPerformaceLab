@@ -1,3 +1,4 @@
+import { assessmentsRouter } from '@/features/assessments/server/router';
 import { athletesRouter } from '@/features/athletes/server/router';
 import { authRouter } from '@/features/auth/server/router';
 import { casesRouter } from '@/features/cases/server/router';
@@ -19,6 +20,7 @@ export const appRouter = createTRPCRouter({
   auth: authRouter,
   athletes: athletesRouter,
   cases: casesRouter,
+  assessments: assessmentsRouter,
 });
 
 export type AppRouter = typeof appRouter;

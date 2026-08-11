@@ -5,6 +5,7 @@ import { TRPCError } from '@trpc/server';
 
 import { Badge, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@apex/ui';
 
+import { AssessmentForm } from '@/features/assessments';
 import { ArchiveButton } from '@/features/athletes';
 import { CaseForm, CaseList } from '@/features/cases';
 import { api } from '@/trpc/server';
@@ -30,7 +31,10 @@ export default async function AthletePage({ params }: { params: Promise<{ athlet
     throw error;
   });
 
-  const cases = await api.cases.listForAthlete({ athleteId });
+  const [cases, assessments] = await Promise.all([
+    api.cases.listForAthlete({ athleteId }),
+    api.assessments.listForAthlete({ athleteId }),
+  ]);
 
   return (
     <main className="mx-auto flex w-full max-w-content flex-col gap-8 px-6 py-12">
@@ -100,6 +104,48 @@ export default async function AthletePage({ params }: { params: Promise<{ athlet
         </div>
 
         <CaseList athleteId={athlete.id} cases={cases} />
+      </section>
+
+      <section className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="flex flex-col gap-1">
+            <span className="eyebrow">Assessments</span>
+            <h2 className="text-xl font-semibold">Examinations</h2>
+          </div>
+
+          <AssessmentForm athleteId={athlete.id} />
+        </div>
+
+        {assessments.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No assessment yet. The performance case is created automatically with the first one
+            (§8).
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {assessments.map((assessment) => (
+              <li key={assessment.id}>
+                <Link
+                  href={`/assessments/${assessment.id}`}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-card px-4 py-3 transition-colors hover:border-border-strong"
+                >
+                  <span className="flex flex-col">
+                    <span className="font-medium text-pretty">{assessment.question}</span>
+                    <span className="text-xs text-muted-foreground" data-numeric>
+                      {assessment.performedAt.toLocaleDateString('de-DE')} ·{' '}
+                      {assessment.modules.length}{' '}
+                      {assessment.modules.length === 1 ? 'test' : 'tests'}
+                    </span>
+                  </span>
+
+                  <Badge variant="secondary">
+                    {assessment.type.replace('_', '-').toLowerCase()}
+                  </Badge>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       {athlete.archivedAt ? (

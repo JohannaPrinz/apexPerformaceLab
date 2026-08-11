@@ -50,6 +50,9 @@ importers:
       '@apex/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@apex/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@apex/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -227,6 +230,9 @@ importers:
 
   packages/database:
     dependencies:
+      '@apex/domain':
+        specifier: workspace:*
+        version: link:../domain
       '@apex/types':
         specifier: workspace:*
         version: link:../types
