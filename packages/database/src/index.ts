@@ -57,6 +57,7 @@ export type {
 
   // ── Reporting (§16, §17) ───────────────────────────────────────────────────
   ReportModel as Report,
+  ReportModuleModel as ReportModule,
   ShareModel as Share,
 
   // ── Supporting objects ─────────────────────────────────────────────────────
@@ -88,6 +89,7 @@ export {
 
   // Assessment & measurement
   AssessmentType,
+  AssessmentModuleStatus,
   MeasurementValueType,
   BodySide,
   MeasurementSource,

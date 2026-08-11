@@ -28,4 +28,6 @@ export * from './measurement-types';
 export * from './modules';
 export * from './modules/configuration';
 export * from './modules/context';
+export * from './modules/readiness';
+export * from './modules/status';
 export * from './modules/templates';

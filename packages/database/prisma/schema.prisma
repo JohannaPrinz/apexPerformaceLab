@@ -183,6 +183,7 @@ model Organization {
   insights         Insight[]
   recommendations  Recommendation[]
   reports          Report[]
+  reportModules    ReportModule[]
   shares           Share[]
   assets           Asset[]
   videoAnnotations VideoAnnotation[]
@@ -285,6 +286,7 @@ model Coach {
 
   credentials      CoachCredential[]
   athletesCreated  Athlete[]
+  modulesCreated   AssessmentModule[]
   cases            PerformanceCase[]
   appointments     Appointment[]
   insights         Insight[]
@@ -509,37 +511,65 @@ model Assessment {
 /// body_composition, nutrition, recovery, sleep, cycle, custom.
 /// Device manufacturers and competition formats are never module keys (§11).
 model AssessmentModule {
-  id            String   @id @default(cuid(2))
+  id            String                 @id @default(cuid(2))
   moduleKey     String
   /// The registry version this module was captured under (§11, "Each Module
   /// additionally defines Version"). Recorded on the row, not only in the
   /// registry: a published Report must stay re-renderable with the payload
   /// shape it was written against, even after the module evolves (§16).
-  moduleVersion Int      @default(1)
+  moduleVersion Int                    @default(1)
   /// Module-specific input, validated against the registry's Zod schema for
   /// `moduleVersion`.
   payload       Json?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  /// How far this test has got.
+  ///
+  /// Deliberately **not** derived from the measurements present: a test with
+  /// every configured value recorded is not necessarily finished, and one with
+  /// none may have been skipped on purpose. Whether a coach considers the test
+  /// done is a professional judgement, and the model asks rather than guesses.
+  ///
+  /// Evaluability is a separate question and is *not* read from here — see
+  /// `evaluateReadiness` in `@apex/domain`. A COMPLETED test may still be
+  /// missing values, and an ABORTED one may hold enough to be useful.
+  status        AssessmentModuleStatus @default(PLANNED)
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
 
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   assessmentId   String
   assessment     Assessment   @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
 
-  measurements    Measurement[]
-  insights        Insight[]
-  recommendations Recommendation[]
-  reports         Report[]
-  assets          Asset[]
-  programs        Program[]
-  notes           Note[]
-  appointments    Appointment[]
+  /// The Coach who set this test up and performs it.
+  ///
+  /// **Recorded now, enforced later.** The rule is decided: the Coach who
+  /// performed a test may edit, continue, abort and correct it; other Coaches in
+  /// the organization may view it but not change it. It is *not* implemented —
+  /// authorization stays workspace-scoped while §26.24 defers coach-to-athlete
+  /// assignment, and nothing is stubbed that would have to be unpicked. See
+  /// docs/SECURITY.md §3.
+  ///
+  /// What cannot wait is the *information*: once several coaches share a
+  /// Workspace, "who ran this test" is not reconstructible after the fact. Same
+  /// reasoning as `Athlete.createdByCoachId`.
+  createdByCoachId String
+  createdByCoach   Coach  @relation(fields: [createdByCoachId], references: [id], onDelete: Restrict)
+
+  measurements     Measurement[]
+  insights         Insight[]
+  reportInclusions ReportModule[]
+  recommendations  Recommendation[]
+  reports          Report[]
+  assets           Asset[]
+  programs         Program[]
+  notes            Note[]
+  appointments     Appointment[]
 
   /// A module appears at most once per Assessment.
   @@unique([assessmentId, moduleKey])
   @@index([organizationId])
   @@index([moduleKey])
+  @@index([createdByCoachId])
   @@map("assessment_modules")
 }
 
@@ -639,6 +669,22 @@ model Measurement {
   /// test: a fixed `joint` column would be null on every measurement that is
   /// not a mobility reading, and a new dimension would be a migration.
   context        Json?
+  /// A remark about this one reading — "probably affected by a measurement
+  /// error", "athlete reported cramp".
+  ///
+  /// A column rather than a `Note`, and the distinction is not cosmetic: a
+  /// `Note` is a domain object with its own lifecycle that can be shared with
+  /// the athlete (§17, §20). A remark qualifying a single value is neither a
+  /// coaching observation nor something to hand over on its own — it belongs to
+  /// the reading and travels with it.
+  ///
+  /// General remarks about the test stay a `Note` on the module, which is what
+  /// that object is for.
+  ///
+  /// A correction carries the note forward only if the coach writes one: the
+  /// superseded row keeps its own, because it explains the value that was
+  /// replaced.
+  note           String?
   /// Origin system, e.g. `vald`, `garmin`. Null for manual entry. Devices are
   /// data sources, never modules (§11).
   externalSystem String?
@@ -872,13 +918,53 @@ model Report {
   caseId             String?
   case               PerformanceCase?  @relation(fields: [caseId], references: [id], onDelete: Cascade)
 
-  shares Share[]
+  shares  Share[]
+  modules ReportModule[]
 
   @@index([organizationId, status])
   @@index([assessmentModuleId])
   @@index([assessmentId])
   @@index([caseId])
   @@map("reports")
+}
+
+/// Which tests an analysis draws on — and which the Coach set aside.
+///
+/// A Report of scope `ASSESSMENT` covers an examination that may hold several
+/// tests, and not every test belongs in every conclusion. A lactate test that
+/// was aborted halfway may be worth excluding from one analysis and worth
+/// keeping in another written for a different question.
+///
+/// **The decision belongs to the analysis, never to the test.** That is why it
+/// lives on this row rather than as a flag on `AssessmentModule`: excluding a
+/// test from one Report leaves it untouched everywhere else, which is
+/// structurally guaranteed here and would be a rule to remember anywhere else.
+/// The module's own `status` is not affected by any inclusion decision.
+///
+/// Unlike the Evidence join tables (§14) this one carries an attribute, so it
+/// takes `organizationId` — the schema-header rule for join tables applies
+/// exactly as written.
+model ReportModule {
+  /// `false` means the Coach deliberately set this test aside for this
+  /// analysis. A missing row means no decision has been taken; the default is
+  /// therefore expressed in code, not in the absence of data.
+  included  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  reportId String
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  assessmentModuleId String
+  assessmentModule   AssessmentModule @relation(fields: [assessmentModuleId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, assessmentModuleId])
+  @@index([organizationId])
+  @@index([assessmentModuleId])
+  @@map("report_modules")
 }
 
 /// Access to content — never a status on the content itself (§17).
@@ -1223,6 +1309,25 @@ enum CaseStatus {
 }
 
 /// Position in the process, never content — that comes from the Modules (§10).
+/// How far a test has got (§10, §11).
+///
+/// `SKIPPED` and `ABORTED` are different statements and both are worth keeping:
+/// skipped means the Coach decided not to run it, aborted means it was started
+/// and stopped. Neither creates a Measurement — a value that was never taken
+/// has no row, and inventing one to represent its absence would put fiction
+/// into a scientific record.
+///
+/// A test that has not been started may be removed from the Assessment
+/// outright; there is nothing historical to preserve. One that has been started
+/// is `ABORTED` instead, and its Measurements stay.
+enum AssessmentModuleStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  SKIPPED
+  ABORTED
+}
+
 enum AssessmentType {
   INITIAL
   RE_ASSESSMENT
