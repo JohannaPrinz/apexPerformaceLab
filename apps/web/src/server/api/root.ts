@@ -2,6 +2,7 @@ import { assessmentsRouter } from '@/features/assessments/server/router';
 import { athletesRouter } from '@/features/athletes/server/router';
 import { authRouter } from '@/features/auth/server/router';
 import { casesRouter } from '@/features/cases/server/router';
+import { reportsRouter } from '@/features/reports/server/router';
 
 import { healthRouter } from './routers/health';
 import { createCallerFactory, createTRPCRouter } from './trpc';
@@ -21,6 +22,7 @@ export const appRouter = createTRPCRouter({
   athletes: athletesRouter,
   cases: casesRouter,
   assessments: assessmentsRouter,
+  reports: reportsRouter,
 });
 
 export type AppRouter = typeof appRouter;
