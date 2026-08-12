@@ -179,6 +179,7 @@ model Organization {
   assessments      Assessment[]
   modules          AssessmentModule[]
   measurementTypes MeasurementType[]
+  exercises        Exercise[]
   measurements     Measurement[]
   insights         Insight[]
   recommendations  Recommendation[]
@@ -287,6 +288,7 @@ model Coach {
   credentials      CoachCredential[]
   athletesCreated  Athlete[]
   modulesCreated   AssessmentModule[]
+  exercisesCreated Exercise[]
   cases            PerformanceCase[]
   appointments     Appointment[]
   insights         Insight[]
@@ -623,6 +625,58 @@ model MeasurementType {
 /// Case and Athlete are reached through the Module and are never stored here
 /// (DOMAIN_RULES #3). `organizationId` is the documented exception — see the
 /// file header.
+/// A movement — bench press, squat, deadlift.
+///
+/// **Not a Measurement Type, and not a Module.** `Maximal strength` describes
+/// what is measured; `Bench press` describes what was done. Folding the movement
+/// into the type would produce one type per movement per quantity and the
+/// catalogue would grow multiplicatively while saying nothing new. The rules and
+/// the system catalogue live in `@apex/domain` → `exercises`.
+///
+/// A central resource on purpose: assessments reference it today, and training
+/// plans, recommendations and reports are meant to reference the same rows
+/// rather than each growing their own list.
+model Exercise {
+  id           String    @id @default(cuid(2))
+  /// Stable identifier, e.g. `bench_press`.
+  key          String
+  name         String
+  /// How the movement is performed.
+  description  String?
+  /// Freely named — a fixed anatomical vocabulary is a professional decision
+  /// that has not been taken. Same restraint as `MeasurementType.referenceMin`
+  /// and the module configuration's dimension values.
+  muscleGroups String[]
+  /// Archived rather than deleted once used. `archivedAt` removes the exercise
+  /// from selection while every past reference stays intact — see
+  /// `canRemoveExercise` in `@apex/domain`.
+  archivedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  /// Null means a **system exercise**: provided by Apex OS, inherited by every
+  /// Workspace, editable by none. Exactly the `MeasurementType` arrangement
+  /// (§12), including the partial unique index the raw SQL notes describe —
+  /// Postgres treats NULLs as distinct, so `@@unique` alone would let two
+  /// system exercises share a key.
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// The Coach who added it. Null on a system exercise, which has no author.
+  ///
+  /// Recorded now, not used for authorization — the same position as
+  /// `AssessmentModule.createdByCoachId`. See docs/SECURITY.md §3.
+  createdByCoachId String?
+  createdByCoach   Coach?  @relation(fields: [createdByCoachId], references: [id], onDelete: Restrict)
+
+  measurements Measurement[]
+
+  @@unique([organizationId, key])
+  @@index([organizationId])
+  @@index([createdByCoachId])
+  @@map("exercises")
+}
+
 model Measurement {
   id             String            @id @default(cuid(2))
   side           BodySide          @default(BILATERAL)
@@ -698,6 +752,23 @@ model Measurement {
   measurementTypeId  String
   measurementType    MeasurementType  @relation(fields: [measurementTypeId], references: [id], onDelete: Restrict)
 
+  /// Which movement this value was taken during — the context a load of 100 kg
+  /// needs in order to mean anything.
+  ///
+  /// Null when the test does not work in exercises at all; a lactate step test
+  /// has no movement to name, and a placeholder would be worse than the null.
+  /// Required exactly when the Module's configuration declares `exerciseIds` —
+  /// enforced in the service against that configuration, the same way
+  /// `passIndex` and `context` are.
+  ///
+  /// **A typed reference, not a name in `context`.** Free text would make the
+  /// catalogue decorative and every later analysis a string comparison. It is
+  /// also what makes `Restrict` below possible: an exercise that has been used
+  /// cannot be deleted, whatever the application layer forgets to check
+  /// (§26 — archive instead of delete once used).
+  exerciseId String?
+  exercise   Exercise? @relation(fields: [exerciseId], references: [id], onDelete: Restrict)
+
   /// Correction chain. `supersededById` points at the replacement.
   supersededById String?      @unique
   supersededBy   Measurement? @relation("MeasurementCorrection", fields: [supersededById], references: [id], onDelete: SetNull)
@@ -725,6 +796,9 @@ model Measurement {
   /// single-column index rather than joining it.
   @@index([assessmentModuleId, passIndex])
   @@index([measurementTypeId, capturedAt])
+  /// "Every measurement recorded during this movement" — the read a strength
+  /// history and the delete-versus-archive check both perform.
+  @@index([exerciseId])
   @@map("measurements")
 }
 
@@ -1431,6 +1505,19 @@ enum TimelineEntryKind {
 //     does not prevent two system-wide types sharing a key.
 //       CREATE UNIQUE INDEX measurement_types_system_key_key
 //         ON measurement_types ("key") WHERE "organizationId" IS NULL;
+//
+//  1b. exercises — system catalogue uniqueness
+//     Same reasoning as (1): a null `organizationId` marks a system exercise,
+//     and Postgres treats NULLs as distinct.
+//       CREATE UNIQUE INDEX exercises_system_key_key
+//         ON exercises ("key") WHERE "organizationId" IS NULL;
+//
+//  1c. exercises — a system exercise has no author
+//     `createdByCoachId` is null exactly when `organizationId` is. A workspace
+//     exercise without an author, or a system one with a coach attached, would
+//     be a row whose scope and provenance disagree.
+//       ALTER TABLE exercises ADD CONSTRAINT exercises_system_has_no_author
+//         CHECK (("organizationId" IS NULL) = ("createdByCoachId" IS NULL));
 //
 //  2. measurements — exactly one value column, matching the type
 //       ALTER TABLE measurements ADD CONSTRAINT measurements_one_value

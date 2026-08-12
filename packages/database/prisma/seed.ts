@@ -1,6 +1,6 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 
-import { SYSTEM_MEASUREMENT_TYPES } from '@apex/domain';
+import { SYSTEM_EXERCISES, SYSTEM_MEASUREMENT_TYPES } from '@apex/domain';
 
 import { PrismaClient } from '../generated/prisma/client';
 import '../src/load-env';
@@ -114,10 +114,39 @@ async function main() {
     created++;
   }
 
+  /**
+   * The system exercise catalogue.
+   *
+   * Same arrangement as the measurement types above, for the same reason: a
+   * null `organizationId` marks a system row that every workspace inherits and
+   * none may edit, and system-wide uniqueness is a partial index that `upsert`
+   * cannot target.
+   *
+   * `createdByCoachId` stays null — a system exercise has no author, and the
+   * database CHECK added with this migration enforces that pairing.
+   *
+   * Descriptions and muscle groups are deliberately not seeded. Writing
+   * execution instructions would be authoring coaching content, which is a
+   * professional decision, not a catalogue one.
+   */
+  let exercisesCreated = 0;
+  for (const exercise of SYSTEM_EXERCISES) {
+    const existing = await db.exercise.findFirst({
+      where: { key: exercise.key, organizationId: null },
+      select: { id: true },
+    });
+
+    if (existing) continue;
+
+    await db.exercise.create({ data: { key: exercise.key, name: exercise.name } });
+    exercisesCreated++;
+  }
+
   console.info(
     `Seeded organization "${organization.slug}" with owner ${owner.email} ` +
       `and coach profile ${coach.id}. ` +
-      `Measurement catalogue: ${created} added, ${SYSTEM_MEASUREMENT_TYPES.length} total.`,
+      `Measurement catalogue: ${created} added, ${SYSTEM_MEASUREMENT_TYPES.length} total. ` +
+      `Exercise catalogue: ${exercisesCreated} added, ${SYSTEM_EXERCISES.length} total.`,
   );
 
   await db.$disconnect();
