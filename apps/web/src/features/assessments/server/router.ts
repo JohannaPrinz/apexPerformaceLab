@@ -3,7 +3,11 @@ import 'server-only';
 import { TRPCError } from '@trpc/server';
 
 import type { PrismaClientInstance } from '@apex/database';
-import { assessmentModuleStatusSchema } from '@apex/domain';
+import {
+  assessmentModuleStatusSchema,
+  describeConfigurationViolation,
+  measurementTypeIdsOf,
+} from '@apex/domain';
 import { AppError } from '@apex/types';
 
 import { createTRPCRouter, withCoachPermission, withPermission } from '@/server/api/trpc';
@@ -23,6 +27,7 @@ import {
   addModule,
   copyAssessment,
   createAssessment,
+  exerciseNames,
   getAssessment,
   listAssessmentsForAthlete,
   measurementTypeNames,
@@ -51,16 +56,19 @@ export const assessmentsRouter = createTRPCRouter({
 
       // Resolved here rather than in the page: a configuration stores type ids,
       // and a screen that showed raw ids would be useless.
-      const ids = assessment.modules.flatMap(
-        (module) => module.configuration?.measurementTypeIds ?? [],
+      const ids = assessment.modules.flatMap((entry) =>
+        entry.configuration ? measurementTypeIdsOf(entry.configuration) : [],
+      );
+      const exerciseIds = assessment.modules.flatMap(
+        (entry) => entry.configuration?.exerciseIds ?? [],
       );
 
-      return {
-        ...assessment,
-        measurementTypeNames: await measurementTypeNames(ctx.db, ctx.tenant.organizationId, [
-          ...new Set(ids),
-        ]),
-      };
+      const [typeNames, movementNames] = await Promise.all([
+        measurementTypeNames(ctx.db, ctx.tenant.organizationId, [...new Set(ids)]),
+        exerciseNames(ctx.db, ctx.tenant.organizationId, [...new Set(exerciseIds)]),
+      ]);
+
+      return { ...assessment, measurementTypeNames: typeNames, exerciseNames: movementNames };
     }),
 
   create: withCoachPermission('assessment:write')
@@ -110,7 +118,22 @@ export const assessmentsRouter = createTRPCRouter({
         input.configuration,
       );
 
-      if (!updated) throw notFound('Module');
+      if (!updated.ok) {
+        if (updated.reason === 'NOT_FOUND') throw notFound('Test');
+        if (updated.reason === 'UNREADABLE') {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'This test has no readable configuration, so it cannot be changed.',
+          });
+        }
+
+        // Names every obstacle, not just the first — a coach editing a test
+        // should learn what is in the way in one go.
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: updated.violations.map((v) => describeConfigurationViolation(v)).join(' '),
+        });
+      }
 
       return { moduleId: input.moduleId };
     }),

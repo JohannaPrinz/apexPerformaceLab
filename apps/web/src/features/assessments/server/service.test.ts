@@ -22,7 +22,11 @@ interface QueryArgs {
 }
 
 const configuration = {
-  measurementTypeIds: ['mt_lactate', 'mt_hr'],
+  measurementTypes: [
+    { measurementTypeId: 'mt_lactate', role: 'required' as const },
+    { measurementTypeId: 'mt_hr', role: 'required' as const },
+  ],
+  exerciseIds: [],
   passes: 4,
   recordsSide: false,
   dimensions: [],
@@ -63,9 +67,12 @@ function fakeDb(overrides: { sourceModules?: unknown[] } = {}) {
   };
 
   const assessmentModule = {
-    findFirst: vi
-      .fn<(args: QueryArgs) => Promise<unknown>>()
-      .mockResolvedValue({ id: 'mod_1', status: 'PLANNED' }),
+    findFirst: vi.fn<(args: QueryArgs) => Promise<unknown>>().mockResolvedValue({
+      id: 'mod_1',
+      status: 'PLANNED',
+      payload: configuration,
+      moduleVersion: 2,
+    }),
     create: vi.fn<(args: QueryArgs) => Promise<unknown>>().mockResolvedValue({
       id: 'mod_new',
       moduleKey: 'lactate',
@@ -96,6 +103,9 @@ function fakeDb(overrides: { sourceModules?: unknown[] } = {}) {
 
   const measurement = {
     count: vi.fn<(args: QueryArgs) => Promise<number>>().mockResolvedValue(0),
+    // What the module has actually recorded — the configuration guard is stated
+    // against this, not against the status.
+    findMany: vi.fn<(args: QueryArgs) => Promise<unknown[]>>().mockResolvedValue([]),
   };
 
   return {
@@ -292,7 +302,7 @@ describe('adding a module', () => {
       TENANT,
       'coach_1',
       { assessmentId: 'as_1', moduleKey: 'lactate', templateKey: 'lactate_step_test' },
-      () => Promise.resolve(['mt_1']),
+      () => Promise.resolve(['mt_1', 'mt_2', 'mt_3', 'mt_4']),
     );
 
     const written = argsOf(assessmentModule.create).data;
@@ -397,5 +407,175 @@ describe('test lifecycle', () => {
     await setModuleStatus(db, TENANT, 'mod_1', 'SKIPPED');
 
     expect(measurement.count).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A template is a starting point; the configuration belongs to the module.
+ * Editing it is free until values exist — after that a change that would
+ * misdescribe them is refused, and the refusal names every obstacle.
+ *
+ * The guard is stated against what was recorded, not against the status:
+ * recording a value does not itself move a module out of `PLANNED`, so a
+ * status-based lock would leave exactly that gap.
+ */
+describe('changing a configuration after values exist', () => {
+  const withMeasurements = (
+    rows: {
+      measurementTypeId: string;
+      exerciseId?: string | null;
+      passIndex?: number | null;
+      side?: string;
+      context?: unknown;
+    }[],
+  ) => {
+    const harness = fakeDb();
+    harness.measurement.findMany.mockResolvedValue(
+      rows.map((row) => ({
+        measurementTypeId: row.measurementTypeId,
+        exerciseId: row.exerciseId ?? null,
+        passIndex: row.passIndex ?? null,
+        side: row.side ?? 'BILATERAL',
+        context: row.context ?? null,
+      })),
+    );
+
+    return harness;
+  };
+
+  it('applies a change freely while the test holds nothing', async () => {
+    const { db, assessmentModule } = fakeDb();
+
+    const result = await updateModuleConfiguration(db, TENANT, 'mod_1', {
+      ...configuration,
+      measurementTypes: [{ measurementTypeId: 'mt_lactate', role: 'required' as const }],
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(assessmentModule.updateMany).toHaveBeenCalled();
+  });
+
+  it('refuses to remove a quantity that already has values', async () => {
+    const { db, assessmentModule } = withMeasurements([{ measurementTypeId: 'mt_hr' }]);
+
+    const result = await updateModuleConfiguration(db, TENANT, 'mod_1', {
+      ...configuration,
+      measurementTypes: [{ measurementTypeId: 'mt_lactate', role: 'required' as const }],
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'WOULD_ALTER_RECORDED_VALUES' });
+    expect(assessmentModule.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses to cut the stages below one that holds values', async () => {
+    const { db } = withMeasurements([{ measurementTypeId: 'mt_lactate', passIndex: 4 }]);
+
+    const result = await updateModuleConfiguration(db, TENANT, 'mod_1', {
+      ...configuration,
+      passes: 2,
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'WOULD_ALTER_RECORDED_VALUES' });
+  });
+
+  /**
+   * Roles decide readiness, and readiness is derived from the configuration by
+   * design. Changing one changes the verdict — no recorded value is touched.
+   */
+  it('allows loosening a role mid-test', async () => {
+    const { db } = withMeasurements([
+      { measurementTypeId: 'mt_lactate' },
+      { measurementTypeId: 'mt_hr' },
+    ]);
+
+    const result = await updateModuleConfiguration(db, TENANT, 'mod_1', {
+      ...configuration,
+      measurementTypes: [
+        { measurementTypeId: 'mt_lactate', role: 'required' as const },
+        { measurementTypeId: 'mt_hr', role: 'optional' as const },
+      ],
+    });
+
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('allows adding a quantity mid-test', async () => {
+    const { db } = withMeasurements([{ measurementTypeId: 'mt_lactate' }]);
+
+    const result = await updateModuleConfiguration(db, TENANT, 'mod_1', {
+      ...configuration,
+      measurementTypes: [
+        ...configuration.measurementTypes,
+        { measurementTypeId: 'mt_rpe', role: 'recommended' as const },
+      ],
+    });
+
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('reads the recorded values inside the tenant only', async () => {
+    const { db, measurement } = withMeasurements([{ measurementTypeId: 'mt_lactate' }]);
+
+    await updateModuleConfiguration(db, TENANT, 'mod_1', configuration);
+
+    expect(argsOf(measurement.findMany).where).toMatchObject({
+      organizationId: 'org_a',
+      assessmentModuleId: 'mod_1',
+    });
+  });
+
+  it('reports a module outside the workspace as not found', async () => {
+    const { db, assessmentModule } = fakeDb();
+    assessmentModule.findFirst.mockResolvedValue(null);
+
+    expect(await updateModuleConfiguration(db, TENANT, 'mod_elsewhere', configuration)).toEqual({
+      ok: false,
+      reason: 'NOT_FOUND',
+    });
+  });
+});
+
+/**
+ * The template's roles must land on the quantities they were written for.
+ * Resolution is positional, so a key the catalogue does not hold would shift
+ * every role after it — silently turning a recommended quantity into a required
+ * one. The service refuses rather than storing that.
+ */
+describe('a template’s roles travel with it', () => {
+  it('carries each role onto the resolved id', async () => {
+    const { db, assessmentModule } = fakeDb();
+
+    await addModule(
+      db,
+      TENANT,
+      'coach_1',
+      { assessmentId: 'as_1', moduleKey: 'body_composition', templateKey: 'body_fat_measurement' },
+      () => Promise.resolve(['mt_body_fat', 'mt_weight']),
+    );
+
+    const payload = argsOf(assessmentModule.create).data?.['payload'] as {
+      measurementTypes: { measurementTypeId: string; role: string }[];
+    };
+
+    expect(payload.measurementTypes).toEqual([
+      { measurementTypeId: 'mt_body_fat', role: 'required' },
+      { measurementTypeId: 'mt_weight', role: 'recommended' },
+    ]);
+  });
+
+  it('refuses a partial resolution rather than shifting the roles', async () => {
+    const { db, assessmentModule } = fakeDb();
+
+    const result = await addModule(
+      db,
+      TENANT,
+      'coach_1',
+      { assessmentId: 'as_1', moduleKey: 'body_composition', templateKey: 'body_fat_measurement' },
+      // Only one of the template's two quantities exists in this catalogue.
+      () => Promise.resolve(['mt_body_fat']),
+    );
+
+    expect(result).toBeNull();
+    expect(assessmentModule.create).not.toHaveBeenCalled();
   });
 });

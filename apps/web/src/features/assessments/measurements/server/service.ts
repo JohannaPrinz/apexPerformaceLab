@@ -4,7 +4,8 @@ import type { PrismaClientInstance } from '@apex/database';
 import { scoped, withTenant } from '@apex/database/tenant';
 import {
   evaluateReadiness,
-  moduleConfigurationSchema,
+  measurementTypeIdsOf,
+  readModuleConfiguration,
   validateMeasurementContext,
   validatePassIndex,
   type ModuleConfiguration,
@@ -31,13 +32,14 @@ import type { CorrectMeasurementInput, RecordMeasurementInput } from '../schemas
 
 type MeasurementDb = Pick<
   PrismaClientInstance,
-  'measurement' | 'assessmentModule' | 'measurementType' | '$transaction'
+  'measurement' | 'assessmentModule' | 'measurementType' | 'exercise' | '$transaction'
 >;
 
 const measurementSelect = {
   id: true,
   measurementTypeId: true,
   side: true,
+  exerciseId: true,
   numericValue: true,
   textValue: true,
   booleanValue: true,
@@ -55,6 +57,7 @@ export interface MeasurementRecord {
   id: string;
   measurementTypeId: string;
   side: 'LEFT' | 'RIGHT' | 'BILATERAL';
+  exerciseId: string | null;
   numericValue: unknown;
   textValue: string | null;
   booleanValue: boolean | null;
@@ -77,6 +80,8 @@ export type RecordFailure =
   | { reason: 'MODULE_NOT_CONFIGURED' }
   | { reason: 'VALUE_TYPE_MISMATCH'; expected: string }
   | { reason: 'PASS_INVALID'; passes: number }
+  | { reason: 'EXERCISE_NOT_CONFIGURED' }
+  | { reason: 'EXERCISE_MISSING' }
   | { reason: 'CONTEXT_INVALID'; errors: Record<string, string> }
   | { reason: 'ALREADY_SUPERSEDED' };
 
@@ -119,9 +124,7 @@ async function loadModule(
 
   if (!row) return null;
 
-  const parsed = moduleConfigurationSchema.safeParse(row.payload);
-
-  return { ...row, configuration: parsed.success ? parsed.data : null };
+  return { ...row, configuration: readModuleConfiguration(row.payload, row.moduleVersion) };
 }
 
 export async function recordMeasurement(
@@ -135,8 +138,17 @@ export async function recordMeasurement(
   const configuration = assessmentModule.configuration;
   if (!configuration) return { ok: false, failure: { reason: 'MODULE_NOT_CONFIGURED' } };
 
-  if (!configuration.measurementTypeIds.includes(input.measurementTypeId)) {
+  if (!measurementTypeIdsOf(configuration).includes(input.measurementTypeId)) {
     return { ok: false, failure: { reason: 'TYPE_NOT_CONFIGURED' } };
+  }
+
+  // The exercise is validated against the module's own configuration, exactly
+  // as `passIndex` and `context` are. A test that declares no exercise must not
+  // acquire one through the API, and one that declares several must say which.
+  if (configuration.exerciseIds.length === 0) {
+    if (input.exerciseId) return { ok: false, failure: { reason: 'EXERCISE_NOT_CONFIGURED' } };
+  } else if (!input.exerciseId || !configuration.exerciseIds.includes(input.exerciseId)) {
+    return { ok: false, failure: { reason: 'EXERCISE_MISSING' } };
   }
 
   const type = await db.measurementType.findFirst({
@@ -173,6 +185,7 @@ export async function recordMeasurement(
       assessmentModuleId: input.moduleId,
       measurementTypeId: input.measurementTypeId,
       side: input.side,
+      exerciseId: input.exerciseId ?? null,
       passIndex: input.passIndex ?? null,
       // An empty context is stored as null rather than `{}` — "no dimensions"
       // and "no values for them" are the same thing, and one representation is
@@ -230,6 +243,8 @@ export async function correctMeasurement(
         assessmentModuleId: original.assessmentModuleId,
         measurementTypeId: original.measurementTypeId,
         side: original.side,
+        // A correction replaces the value, never its coordinates.
+        exerciseId: original.exerciseId,
         passIndex: original.passIndex,
         context: original.context ?? undefined,
         capturedAt: capturedAt ? new Date(capturedAt) : original.capturedAt,
@@ -296,6 +311,7 @@ export async function moduleReadiness(
       readiness: {
         level: 'INSUFFICIENT',
         missingTypeIds: [],
+        missingRecommendedTypeIds: [],
         missingPasses: [],
         expected: 0,
         recorded: 0,
@@ -391,6 +407,8 @@ export interface ModuleWorkspace {
   configuration: ModuleConfiguration | null;
   /** Type id → what a coach needs to see and validate against. */
   types: Record<string, { name: string; unit: string; valueType: string }>;
+  /** Exercise id → display name, for the movements this test covers. */
+  exercises: Record<string, string>;
   measurements: MeasurementRecord[];
   /** Superseded values, for the correction history. */
   superseded: MeasurementRecord[];
@@ -421,8 +439,7 @@ export async function moduleWorkspace(
 
   if (!row) return null;
 
-  const parsed = moduleConfigurationSchema.safeParse(row.payload);
-  const configuration = parsed.success ? parsed.data : null;
+  const configuration = readModuleConfiguration(row.payload, row.moduleVersion);
 
   const [all, notes] = await Promise.all([
     db.measurement.findMany({
@@ -433,10 +450,24 @@ export async function moduleWorkspace(
     listModuleNotes(db, tenant, moduleId),
   ]);
 
+  const exercises =
+    configuration && configuration.exerciseIds.length > 0
+      ? await db.exercise.findMany({
+          where: {
+            id: { in: configuration.exerciseIds },
+            // Same catalogue rule as the measurement types below: a system
+            // exercise carries `organizationId = null` and every workspace
+            // inherits it.
+            OR: [{ organizationId: tenant.organizationId }, { organizationId: null }],
+          },
+          select: { id: true, name: true },
+        })
+      : [];
+
   const types = configuration
     ? await db.measurementType.findMany({
         where: {
-          id: { in: configuration.measurementTypeIds },
+          id: { in: [...measurementTypeIdsOf(configuration)] },
           // Catalogue rule, not an absence of scoping: system types carry
           // `organizationId = null` and every workspace inherits them (§12).
           OR: [{ organizationId: tenant.organizationId }, { organizationId: null }],
@@ -458,12 +489,20 @@ export async function moduleWorkspace(
         { name: type.name, unit: type.unit, valueType: type.valueType },
       ]),
     ),
+    exercises: Object.fromEntries(exercises.map((exercise) => [exercise.id, exercise.name])),
     measurements: all.filter((measurement) => measurement.supersededById === null),
     superseded: all.filter((measurement) => measurement.supersededById !== null),
     notes,
     readiness: configuration
       ? evaluateReadiness(configuration, all)
-      : { level: 'INSUFFICIENT', missingTypeIds: [], missingPasses: [], expected: 0, recorded: 0 },
+      : {
+          level: 'INSUFFICIENT',
+          missingTypeIds: [],
+          missingRecommendedTypeIds: [],
+          missingPasses: [],
+          expected: 0,
+          recorded: 0,
+        },
     assessment: {
       id: row.assessment.id,
       question: row.assessment.question,

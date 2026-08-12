@@ -7,8 +7,10 @@ import { useRouter } from 'next/navigation';
 
 import {
   ASSESSMENT_MODULE_STATUS_LABELS,
+  MEASUREMENT_ROLE_LABELS,
   MODULE_LABELS,
   type AssessmentModuleStatus,
+  type MeasurementRole,
   type ModuleKey,
 } from '@apex/domain';
 import { Badge, Button } from '@apex/ui';
@@ -20,7 +22,8 @@ export interface ModuleCardData {
   moduleKey: string;
   moduleVersion: number;
   configuration: {
-    measurementTypeIds: string[];
+    measurementTypes: { measurementTypeId: string; role: MeasurementRole }[];
+    exerciseIds: string[];
     passes: number;
     recordsSide: boolean;
     dimensions: { key: string; label: string; values?: string[] }[];
@@ -41,10 +44,12 @@ export function ModuleCard({
   module,
   assessmentId,
   typeNames,
+  exerciseNames,
 }: {
   module: ModuleCardData;
   assessmentId: string;
   typeNames: Record<string, string>;
+  exerciseNames: Record<string, string>;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -91,10 +96,29 @@ export function ModuleCard({
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
           <dt className="text-muted-foreground">Records</dt>
           <dd>
-            {configuration.measurementTypeIds
-              .map((id) => typeNames[id] ?? 'Unknown measurement')
+            {configuration.measurementTypes
+              .map((entry) => {
+                const name = typeNames[entry.measurementTypeId] ?? 'Unknown measurement';
+
+                // Required is the ordinary case and stays unmarked; the other
+                // two are what a coach needs to see at a glance.
+                return entry.role === 'required'
+                  ? name
+                  : `${name} (${MEASUREMENT_ROLE_LABELS[entry.role].toLowerCase()})`;
+              })
               .join(' · ')}
           </dd>
+
+          {configuration.exerciseIds.length > 0 ? (
+            <>
+              <dt className="text-muted-foreground">Exercises</dt>
+              <dd>
+                {configuration.exerciseIds
+                  .map((id) => exerciseNames[id] ?? 'Unknown exercise')
+                  .join(' · ')}
+              </dd>
+            </>
+          ) : null}
 
           {configuration.dimensions.length > 0 ? (
             <>

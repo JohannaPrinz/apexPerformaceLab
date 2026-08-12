@@ -70,6 +70,16 @@ function toError(failure: RecordFailure): TRPCError {
             ? `Give a pass between 1 and ${String(failure.passes)}.`
             : 'This test records a single pass, so no pass number belongs on the value.',
       });
+    case 'EXERCISE_NOT_CONFIGURED':
+      return new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'This test does not cover any exercise, so a value cannot name one.',
+      });
+    case 'EXERCISE_MISSING':
+      return new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Say which exercise this value was recorded during.',
+      });
     case 'CONTEXT_INVALID':
       return new TRPCError({
         code: 'BAD_REQUEST',

@@ -1,23 +1,31 @@
-import type { ModuleConfiguration } from '@apex/domain';
+import type { MeasurementRole, ModuleConfiguration } from '@apex/domain';
 
 /**
  * The cells a test asks a coach to fill.
  *
  * Derived entirely from the configuration: quantities × passes × sides ×
- * declared dimension values. **No test type is named here** — a lactate step
- * test and a grip-strength test differ only in what the configuration says,
- * which is what keeps this file free of per-test branches.
+ * exercises × declared dimension values. **No test type is named here** — a
+ * lactate step test and a grip-strength test differ only in what the
+ * configuration says, which is what keeps this file free of per-test branches.
  *
  * An open dimension — a site the coach names as they go — produces no fixed
  * cells: there was never a target number, so the screen offers a free row
  * instead of pretending to know how many are coming.
+ *
+ * Every configured quantity gets a cell, whatever its role. `optional` means
+ * "may be left empty", not "hidden" — a coach who wants to record it must be
+ * able to see it. The role travels with the slot so the cell can say which
+ * values the test is actually waiting for.
  */
 
 export interface MeasurementSlot {
   /** Stable within a pass; used as a React key and to match existing values. */
   readonly key: string;
   readonly measurementTypeId: string;
+  readonly role: MeasurementRole;
   readonly side: 'LEFT' | 'RIGHT' | 'BILATERAL';
+  /** Which movement this cell is recorded during, when the test covers any. */
+  readonly exerciseId: string | null;
   /** Fixed dimension values, when the configuration declares them. */
   readonly context: Record<string, string>;
   /** Dimensions the coach fills in freely. */
@@ -41,19 +49,29 @@ function closedCombinations(configuration: ModuleConfiguration): readonly Record
 export function slotsForPass(configuration: ModuleConfiguration): readonly MeasurementSlot[] {
   const sides = configuration.recordsSide ? (['LEFT', 'RIGHT'] as const) : (['BILATERAL'] as const);
 
+  // A test that names no exercise still has one cell per quantity. `null` here
+  // is the same statement the column makes: this test does not work in
+  // movements at all.
+  const exerciseIds: readonly (string | null)[] =
+    configuration.exerciseIds.length > 0 ? configuration.exerciseIds : [null];
+
   const openDimensions = configuration.dimensions
     .filter((dimension) => !dimension.values || dimension.values.length === 0)
     .map((dimension) => ({ key: dimension.key, label: dimension.label }));
 
-  return configuration.measurementTypeIds.flatMap((measurementTypeId) =>
-    sides.flatMap((side) =>
-      closedCombinations(configuration).map((context) => ({
-        key: `${measurementTypeId}|${side}|${JSON.stringify(context)}`,
-        measurementTypeId,
-        side,
-        context,
-        openDimensions,
-      })),
+  return configuration.measurementTypes.flatMap((entry) =>
+    exerciseIds.flatMap((exerciseId) =>
+      sides.flatMap((side) =>
+        closedCombinations(configuration).map((context) => ({
+          key: `${entry.measurementTypeId}|${exerciseId ?? ''}|${side}|${JSON.stringify(context)}`,
+          measurementTypeId: entry.measurementTypeId,
+          role: entry.role,
+          side,
+          exerciseId,
+          context,
+          openDimensions,
+        })),
+      ),
     ),
   );
 }
@@ -69,6 +87,7 @@ export interface RecordedMeasurement {
   id: string;
   measurementTypeId: string;
   side: string;
+  exerciseId: string | null;
   passIndex: number | null;
   context: unknown;
   numericValue: unknown;
@@ -92,6 +111,7 @@ export function findRecorded<TMeasurement extends RecordedMeasurement>(
   return measurements.find((measurement) => {
     if (measurement.measurementTypeId !== slot.measurementTypeId) return false;
     if (measurement.side !== slot.side) return false;
+    if ((measurement.exerciseId ?? null) !== slot.exerciseId) return false;
     if ((measurement.passIndex ?? null) !== passIndex) return false;
 
     const context = (measurement.context ?? {}) as Record<string, string>;

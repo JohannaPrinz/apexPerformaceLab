@@ -5,12 +5,17 @@ import { scoped, withTenant } from '@apex/database/tenant';
 import {
   canRemove,
   canTransition,
+  configurationChangeViolations,
   findMeasurementTemplate,
   MODULE_CONFIGURATION_VERSION,
   moduleConfigurationSchema,
+  readModuleConfiguration,
+  templateMeasurementKeys,
   type AssessmentModuleStatus,
+  type ConfigurationChangeViolation,
   type ModuleConfiguration,
   type ModuleKey,
+  type RecordedFacts,
 } from '@apex/domain';
 import type { TenantContext } from '@apex/types';
 
@@ -81,15 +86,18 @@ export interface AssessmentRecord {
 /**
  * Parses a stored payload back into a configuration.
  *
- * Returns `null` rather than throwing on a payload that no longer matches its
- * schema. A module written under an older shape must still be *readable* — the
+ * Delegates to `@apex/domain`, which dispatches on the recorded `moduleVersion`
+ * and upgrades a version 1 payload — a flat list of type ids — into the current
+ * shape with every quantity `required`. That is what version 1 already meant,
+ * so no verdict changes.
+ *
+ * Returns `null` rather than throwing on a payload that matches no known shape.
+ * A module written under an older form must still be *readable* — the
  * alternative is that one malformed row makes an athlete's whole history
  * unopenable.
  */
-function readConfiguration(payload: unknown): ModuleConfiguration | null {
-  const parsed = moduleConfigurationSchema.safeParse(payload);
-
-  return parsed.success ? parsed.data : null;
+function readConfiguration(payload: unknown, moduleVersion?: number): ModuleConfiguration | null {
+  return readModuleConfiguration(payload, moduleVersion);
 }
 
 function toRecord(row: {
@@ -116,7 +124,7 @@ function toRecord(row: {
       id: entry.id,
       moduleKey: entry.moduleKey,
       moduleVersion: entry.moduleVersion,
-      configuration: readConfiguration(entry.payload),
+      configuration: readConfiguration(entry.payload, entry.moduleVersion),
       status: entry.status as AssessmentModuleStatus,
       createdByCoachId: entry.createdByCoachId,
       createdAt: entry.createdAt,
@@ -227,7 +235,7 @@ export async function addModule(
     id: created.id,
     moduleKey: created.moduleKey,
     moduleVersion: created.moduleVersion,
-    configuration: readConfiguration(created.payload),
+    configuration: readConfiguration(created.payload, created.moduleVersion),
     status: created.status,
     createdByCoachId: created.createdByCoachId,
     createdAt: created.createdAt,
@@ -250,30 +258,119 @@ async function configurationFromTemplate(
   const template = findMeasurementTemplate(templateKey);
   if (!template) return null;
 
-  const measurementTypeIds = await resolveTemplateTypeIds(template.measurementTypeKeys);
+  const keys = templateMeasurementKeys(template);
+  const measurementTypeIds = await resolveTemplateTypeIds(keys);
   if (measurementTypeIds.length === 0) return null;
 
+  // The template's roles travel with it. Resolution is positional, so a key the
+  // catalogue does not hold would silently shift every role after it — the
+  // length check below refuses that outright rather than storing a
+  // configuration whose roles belong to different quantities.
+  if (measurementTypeIds.length !== keys.length) return null;
+
   return moduleConfigurationSchema.parse({
-    measurementTypeIds,
+    measurementTypes: measurementTypeIds.map((measurementTypeId, index) => ({
+      measurementTypeId,
+      role: template.measurements[index]?.role ?? 'required',
+    })),
+    // A template proposes what is measured, never which movement — that is
+    // chosen per assessment.
+    exerciseIds: [],
     passes: template.passes,
     recordsSide: template.recordsSide,
     dimensions: template.dimensions,
   });
 }
 
-/** Replaces a module's configuration — before the test is performed. */
+export type ConfigurationUpdate =
+  | { ok: true }
+  | { ok: false; reason: 'NOT_FOUND' }
+  | { ok: false; reason: 'UNREADABLE' }
+  | {
+      ok: false;
+      reason: 'WOULD_ALTER_RECORDED_VALUES';
+      violations: readonly ConfigurationChangeViolation[];
+    };
+
+/**
+ * Replaces a module's configuration.
+ *
+ * Free while the test holds nothing — quantities added or removed, roles
+ * changed, passes and sides adjusted, dimensions configured, order rearranged.
+ * Once values exist, a change that would misdescribe them is **refused**, and
+ * the refusal names every obstacle rather than the first.
+ *
+ * The check runs against what was actually recorded, not against the status.
+ * Recording a value does not itself move a module out of `PLANNED`, so a
+ * status-based lock would leave exactly that gap; and there is no transition
+ * back to `PLANNED`, so it would also trap a coach who started a test and
+ * immediately noticed a wrong setting with no data at risk. See
+ * `configuration-change.ts` for the full reasoning.
+ *
+ * **Superseded values count.** A corrected reading is still part of the record
+ * (§13), and a configuration change that made it unreadable would destroy
+ * history just as thoroughly as one that hit the current value.
+ */
 export async function updateModuleConfiguration(
-  db: AssessmentDb,
+  db: AssessmentDb & Pick<PrismaClientInstance, 'measurement'>,
   tenant: Pick<TenantContext, 'organizationId'>,
   moduleId: string,
   configuration: ModuleConfiguration,
-): Promise<boolean> {
-  const { count } = await db.assessmentModule.updateMany({
+): Promise<ConfigurationUpdate> {
+  const current = await db.assessmentModule.findFirst({
+    where: scoped(tenant, { id: moduleId }),
+    select: { id: true, payload: true, moduleVersion: true },
+  });
+
+  if (!current) return { ok: false, reason: 'NOT_FOUND' };
+
+  const existing = readConfiguration(current.payload, current.moduleVersion);
+  if (!existing) return { ok: false, reason: 'UNREADABLE' };
+
+  const recorded = await db.measurement.findMany({
+    where: scoped(tenant, { assessmentModuleId: moduleId }),
+    select: {
+      measurementTypeId: true,
+      exerciseId: true,
+      passIndex: true,
+      side: true,
+      context: true,
+    },
+  });
+
+  const facts: RecordedFacts = {
+    measurementTypeIds: recorded.map((measurement) => measurement.measurementTypeId),
+    exerciseIds: recorded
+      .map((measurement) => measurement.exerciseId)
+      .filter((exerciseId): exerciseId is string => exerciseId !== null),
+    passIndexes: recorded
+      .map((measurement) => measurement.passIndex)
+      .filter((passIndex): passIndex is number => passIndex !== null),
+    sides: recorded.map((measurement) => measurement.side),
+    // `context` is Prisma's `JsonValue`, so the narrowing happens here rather
+    // than at the type boundary: the column is validated on write against the
+    // module's declared dimensions, and anything that is not an object could
+    // only have arrived outside the service.
+    contexts: recorded.flatMap((measurement) => {
+      const context: unknown = measurement.context;
+
+      return context !== null && typeof context === 'object' && !Array.isArray(context)
+        ? [{ ...(context as Record<string, string>) }]
+        : [];
+    }),
+  };
+
+  const violations = configurationChangeViolations(existing, configuration, facts);
+  if (violations.length > 0) {
+    return { ok: false, reason: 'WOULD_ALTER_RECORDED_VALUES', violations };
+  }
+
+  await db.assessmentModule.updateMany({
     where: scoped(tenant, { id: moduleId }),
     data: { payload: configuration, moduleVersion: MODULE_CONFIGURATION_VERSION },
   });
 
-  return count > 0;
+  return { ok: true };
 }
 
 /**
@@ -450,4 +547,30 @@ export async function measurementTypeNames(
   });
 
   return Object.fromEntries(rows.map((row) => [row.id, `${row.name} (${row.unit})`]));
+}
+
+/**
+ * Resolves the exercise ids in a configuration to display names.
+ *
+ * **Deliberately not `scoped()`,** for the same reason as `measurementTypeNames`
+ * above: a system exercise carries `organizationId = null` and every workspace
+ * inherits it, so a strict tenant filter would render every configured movement
+ * as "unknown". The filter is `this workspace OR system-wide`.
+ */
+export async function exerciseNames(
+  db: Pick<PrismaClientInstance, 'exercise'>,
+  organizationId: string,
+  ids: readonly string[],
+): Promise<Record<string, string>> {
+  if (ids.length === 0) return {};
+
+  const rows = await db.exercise.findMany({
+    where: {
+      id: { in: [...ids] },
+      OR: [{ organizationId }, { organizationId: null }],
+    },
+    select: { id: true, name: true },
+  });
+
+  return Object.fromEntries(rows.map((row) => [row.id, row.name]));
 }

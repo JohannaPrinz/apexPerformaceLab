@@ -5,7 +5,7 @@ import { scoped, withTenant } from '@apex/database/tenant';
 import {
   combineReadiness,
   evaluateReadiness,
-  moduleConfigurationSchema,
+  readModuleConfiguration,
   type Readiness,
   type ReadinessLevel,
 } from '@apex/domain';
@@ -185,7 +185,7 @@ export async function reportReadiness(
         select: {
           included: true,
           assessmentModule: {
-            select: { id: true, moduleKey: true, payload: true, status: true },
+            select: { id: true, moduleKey: true, payload: true, moduleVersion: true, status: true },
           },
         },
       },
@@ -207,7 +207,12 @@ export async function reportReadiness(
   });
 
   const modules = report.modules.map((entry) => {
-    const parsed = moduleConfigurationSchema.safeParse(entry.assessmentModule.payload);
+    // Reads any stored version, so an analysis over a module configured before
+    // roles existed still evaluates — and evaluates the way it always did.
+    const configuration = readModuleConfiguration(
+      entry.assessmentModule.payload,
+      entry.assessmentModule.moduleVersion,
+    );
     const own = measurements.filter(
       (measurement) => measurement.assessmentModuleId === entry.assessmentModule.id,
     );
@@ -217,12 +222,13 @@ export async function reportReadiness(
       moduleKey: entry.assessmentModule.moduleKey,
       included: entry.included,
       status: entry.assessmentModule.status,
-      readiness: parsed.success
-        ? evaluateReadiness(parsed.data, own)
+      readiness: configuration
+        ? evaluateReadiness(configuration, own)
         : {
             level: 'INSUFFICIENT' as const,
-            missingTypeIds: [],
-            missingPasses: [],
+            missingTypeIds: [] as readonly string[],
+            missingRecommendedTypeIds: [] as readonly string[],
+            missingPasses: [] as readonly number[],
             expected: 0,
             recorded: 0,
           },

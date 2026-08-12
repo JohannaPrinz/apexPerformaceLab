@@ -72,6 +72,7 @@ export default async function AssessmentPage({
                 module={module}
                 assessmentId={assessment.id}
                 typeNames={assessment.measurementTypeNames}
+                exerciseNames={assessment.exerciseNames}
               />
             ))}
           </div>

@@ -5,17 +5,22 @@ import { moduleConfigurationSchema } from '@apex/domain';
 import { findRecorded, isPassEmpty, passesOf, passProgress, slotsForPass } from './slots';
 
 const configure = (overrides: Record<string, unknown> = {}) =>
-  moduleConfigurationSchema.parse({ measurementTypeIds: ['lac', 'hr'], ...overrides });
+  moduleConfigurationSchema.parse({
+    measurementTypes: [{ measurementTypeId: 'lac' }, { measurementTypeId: 'hr' }],
+    ...overrides,
+  });
 
 const recorded = (
   measurementTypeId: string,
   passIndex: number | null,
   side = 'BILATERAL',
   context: unknown = null,
+  exerciseId: string | null = null,
 ) => ({
   id: `m_${measurementTypeId}_${String(passIndex)}_${side}`,
   measurementTypeId,
   side,
+  exerciseId,
   passIndex,
   context,
   numericValue: 1,
@@ -42,7 +47,9 @@ describe('slots from a configuration', () => {
   });
 
   it('doubles the cells for a two-sided test', () => {
-    const slots = slotsForPass(configure({ measurementTypeIds: ['grip'], recordsSide: true }));
+    const slots = slotsForPass(
+      configure({ measurementTypes: [{ measurementTypeId: 'grip' }], recordsSide: true }),
+    );
 
     expect(slots.map((slot) => slot.side)).toEqual(['LEFT', 'RIGHT']);
   });
@@ -50,7 +57,7 @@ describe('slots from a configuration', () => {
   it('multiplies out a dimension that declares its values', () => {
     const slots = slotsForPass(
       configure({
-        measurementTypeIds: ['rom'],
+        measurementTypes: [{ measurementTypeId: 'rom' }],
         recordsSide: true,
         dimensions: [{ key: 'joint', label: 'Joint', values: ['knee', 'hip'] }],
       }),
@@ -71,7 +78,10 @@ describe('slots from a configuration', () => {
    */
   it('creates no fixed cell for an open dimension', () => {
     const slots = slotsForPass(
-      configure({ measurementTypeIds: ['emg'], dimensions: [{ key: 'site', label: 'Site' }] }),
+      configure({
+        measurementTypes: [{ measurementTypeId: 'emg' }],
+        dimensions: [{ key: 'site', label: 'Site' }],
+      }),
     );
 
     expect(slots).toHaveLength(1);
@@ -81,7 +91,7 @@ describe('slots from a configuration', () => {
   it('gives every cell a distinct key', () => {
     const slots = slotsForPass(
       configure({
-        measurementTypeIds: ['a', 'b'],
+        measurementTypes: [{ measurementTypeId: 'a' }, { measurementTypeId: 'b' }],
         recordsSide: true,
         dimensions: [{ key: 'joint', label: 'Joint', values: ['knee', 'hip'] }],
       }),
@@ -102,7 +112,9 @@ describe('matching recorded values to cells', () => {
   });
 
   it('keeps left and right apart', () => {
-    const slots = slotsForPass(configure({ measurementTypeIds: ['grip'], recordsSide: true }));
+    const slots = slotsForPass(
+      configure({ measurementTypes: [{ measurementTypeId: 'grip' }], recordsSide: true }),
+    );
     const measurements = [recorded('grip', null, 'LEFT')];
 
     expect(findRecorded(measurements, slots[0]!, null)?.side).toBe('LEFT');
@@ -111,7 +123,7 @@ describe('matching recorded values to cells', () => {
 
   it('matches the closed dimension a cell stands for', () => {
     const configuration = configure({
-      measurementTypeIds: ['rom'],
+      measurementTypes: [{ measurementTypeId: 'rom' }],
       dimensions: [{ key: 'joint', label: 'Joint', values: ['knee', 'hip'] }],
     });
     const slots = slotsForPass(configuration);
@@ -137,5 +149,55 @@ describe('what the coach sees about a pass', () => {
     expect(passProgress(configuration, measurements, 1)).toEqual({ filled: 2, expected: 2 });
     expect(passProgress(configuration, measurements, 2)).toEqual({ filled: 1, expected: 2 });
     expect(passProgress(configuration, measurements, 3)).toEqual({ filled: 0, expected: 2 });
+  });
+});
+
+/**
+ * A strength test covering two lifts records the whole set of quantities for
+ * each. The exercise is another axis of the grid, exactly like a side or a
+ * declared dimension — which is what keeps the entry screen free of a
+ * per-movement special case.
+ */
+describe('exercises as an axis', () => {
+  const twoLifts = configure({
+    measurementTypes: [{ measurementTypeId: 'load' }, { measurementTypeId: 'reps' }],
+    exerciseIds: ['ex_bench', 'ex_deadlift'],
+  });
+
+  it('gives every quantity a cell per exercise', () => {
+    const slots = slotsForPass(twoLifts);
+
+    expect(slots).toHaveLength(4);
+    expect(slots.map((slot) => `${slot.measurementTypeId}@${slot.exerciseId ?? '-'}`)).toEqual([
+      'load@ex_bench',
+      'load@ex_deadlift',
+      'reps@ex_bench',
+      'reps@ex_deadlift',
+    ]);
+  });
+
+  it('leaves the exercise null when the test covers none', () => {
+    expect(slotsForPass(configure()).every((slot) => slot.exerciseId === null)).toBe(true);
+  });
+
+  it('does not put one lift’s value in the other lift’s cell', () => {
+    const slots = slotsForPass(twoLifts);
+    const measurements = [recorded('load', null, 'BILATERAL', null, 'ex_deadlift')];
+
+    expect(findRecorded(measurements, slots[0]!, null)).toBeUndefined();
+    expect(findRecorded(measurements, slots[1]!, null)?.exerciseId).toBe('ex_deadlift');
+  });
+
+  it('carries the role onto the cell so the grid can show what is owed', () => {
+    const slots = slotsForPass(
+      configure({
+        measurementTypes: [
+          { measurementTypeId: 'lac', role: 'required' },
+          { measurementTypeId: 'weight', role: 'optional' },
+        ],
+      }),
+    );
+
+    expect(slots.map((slot) => slot.role)).toEqual(['required', 'optional']);
   });
 });

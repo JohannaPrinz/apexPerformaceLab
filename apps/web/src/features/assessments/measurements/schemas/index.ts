@@ -25,6 +25,16 @@ export const recordMeasurementSchema = z.object({
   /** Mapped to the column the type's `valueType` names. */
   value: z.union([z.number(), z.string(), z.boolean()]),
   side: bodySideSchema.default('BILATERAL'),
+  /**
+   * Which movement this value was taken during.
+   *
+   * Required exactly when the module's configuration declares exercises, and
+   * refused when it declares none — validated in the service against that
+   * configuration, never trusted from the request. An **id**, never a name: free
+   * text would make the catalogue decorative and defeat the foreign key that
+   * stops a used exercise being deleted.
+   */
+  exerciseId: z.string().min(1).nullish(),
   /** 1-based; required exactly when the module records several passes. */
   passIndex: z.number().int().min(1).nullish(),
   /** Validated against the dimensions the module's configuration declares. */
