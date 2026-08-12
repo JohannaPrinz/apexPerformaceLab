@@ -659,6 +659,94 @@ ambiguous.
 
 Presets are configuration, not entities. They may later become user-definable.
 
+### Template, Module, Type, Measurement
+
+Four things sit close together and must not be confused:
+
+| Concept               | What it is                                    | Lives           |
+| --------------------- | --------------------------------------------- | --------------- |
+| **Template**          | a global professional starting point          | code registry   |
+| **Assessment Module** | one concrete test, with its own configuration | a database row  |
+| **Measurement Type**  | a quantity that _may_ be recorded             | catalogue (§12) |
+| **Measurement**       | a value that _was_ recorded                   | a database row  |
+
+A template proposes a configuration. Applying it **copies** that configuration
+into the Module, and **no reference to the template is stored**.
+
+> **Changing a global template never changes an Assessment that already exists.**
+
+That is a structural property, not a rule anyone has to remember: there is no
+path back from a Module to the template it came from. Readiness, the entry grid
+and the analysis all read the Module's own stored configuration.
+
+### Required, recommended, optional
+
+A Module's configuration records, per measurement type, what it is worth to the
+test:
+
+| Role          | Meaning                                  | Missing entirely | Effect on evaluability |
+| ------------- | ---------------------------------------- | ---------------- | ---------------------- |
+| `required`    | needed for the test to count as complete | `INSUFFICIENT`   | sinks the test         |
+| `recommended` | proposed, not compulsory                 | `PARTIAL`        | incomplete, evaluable  |
+| `optional`    | recorded when the coach wants it         | no effect        | never counted          |
+
+The role belongs to the **concrete test**, not to the type: lactate is required
+in a step test and optional in a strength test, and the type itself has no
+opinion about either. `required` is the default — a configuration that says
+nothing has not expressed an opinion about lowering the bar.
+
+#### Why `body_fat_measurement` recommends `weight`
+
+The shipped body-composition template proposes two quantities:
+
+| Quantity   | Role          |
+| ---------- | ------------- |
+| `body_fat` | `required`    |
+| `weight`   | `recommended` |
+
+Body fat is a **percentage**. On its own it is a valid reading and the test does
+not need anything else to be evaluable — which is why the body weight is
+`recommended` and not `required`. But the percentage becomes far more useful in
+interpretation when the body weight it refers to is known: the two together
+support a comparison over time that the percentage alone does not.
+
+`recommended` is exactly the role for that: proposed, never blocking. A missing
+body weight leaves the test `PARTIAL` — evaluable, not complete — and the coach
+decides whether that is enough. Making it `required` would refuse an analysis
+over a perfectly valid body-fat reading; making it `optional` would stop
+proposing it at all.
+
+The `weight` here is the **athlete's body weight** (§12). It is never the load
+moved in a test — that is `external_load`.
+
+### Changing a configuration
+
+Free while the test holds no values: quantities added or removed, roles changed,
+passes and sides adjusted, dimensions configured, exercises chosen, order
+rearranged.
+
+**Once values exist, a change that would alter what those values mean is
+refused:**
+
+- removing a quantity, or an exercise, that has been recorded
+- reducing the passes below a stage that holds values
+- switching per-side recording
+- removing a dimension, or narrowing it past a value already recorded
+
+Still allowed, because they only concern what the test expects next: adding a
+quantity, adding an exercise, raising the pass count, reordering, and changing
+any role.
+
+The rule is stated against **what was recorded**, not against the status.
+Recording a value does not itself move a Module out of `PLANNED`, so a
+status-based lock would leave exactly that gap; and there is no transition back
+to `PLANNED`, so it would also trap a coach who started a test and immediately
+noticed a wrong setting with no data at risk.
+
+Superseded values count. A corrected reading is still part of the record (§13),
+and a configuration change that made it unreadable would destroy history just as
+thoroughly.
+
 ### Video is not a Module
 
 Video is a domain object of its own (§18), not a module.
@@ -703,6 +791,168 @@ Measurement Type: Grip Strength
 Side is **not** part of the Measurement Type. The type _Grip Strength_ is the
 same on both sides; only the recorded value differs. Side belongs to the
 Measurement (§13).
+
+### Categories are independent of Modules
+
+A Measurement Type is **not bound to a Module**. Category classifies the type by
+professional area; the Module is the concrete test. A coach running a `lactate`
+module may record a heart rate, and a `strength` module may include a jump
+height. The catalogue is _filtered_ by category and _restricted_ by nothing.
+
+This matters for the assessment builder: any test may combine any types that fit
+the question it answers. A catalogue wired to modules would make every new test
+configuration a code change.
+
+Several category keys also exist as module keys — `strength`, `mobility`,
+`body_composition`. That overlap is expected. Modules and categories are separate
+namespaces describing different things; §11's naming rule constrains _presets_
+against _modules_ and nothing else.
+
+### System and Workspace types
+
+A type with no Workspace is a **system type**: provided by Apex OS, inherited by
+every Workspace, editable by none. A Workspace may define its own, including
+under a key a system type already uses — its own definition is the more specific
+one and wins when a template is resolved.
+
+### Body weight, external load and repetitions are three things
+
+Three types are easy to confuse and are deliberately kept apart. The builder and
+every later analysis depend on the distinction:
+
+| Key             | Means                            | Unit          | Category           |
+| --------------- | -------------------------------- | ------------- | ------------------ |
+| `weight`        | the **athlete's body weight**    | `kg`          | `body_composition` |
+| `external_load` | the **load moved** in an attempt | `kg`          | `strength`         |
+| `repetitions`   | how many times it was moved      | `repetitions` | `strength`         |
+
+`weight` and `external_load` share a unit and nothing else: one describes the
+person, the other what they moved. Reusing `weight` for a bar load would make
+"weight over time" a chart of two different quantities, and no later query could
+separate them again. **`weight` is never used for a training or test load.**
+
+Which movement a load belongs to is **not** part of the type — it is the
+Exercise on the Measurement (§12a). "Bench press load" as a type would mean one
+type per movement, and the catalogue would grow with the exercise catalogue
+instead of alongside it.
+
+A maximal-strength attempt is therefore three separate facts:
+
+```
+Module  strength
+  Exercise        Bench Press          ← reference on the Measurement
+  External Load   100 kg               ← Measurement
+  Repetitions     1                    ← Measurement
+```
+
+Neither type carries a reference range, for the reason the rest of the catalogue
+does not: a global range identical for every athlete produces "outside normal"
+markers that do not hold up.
+
+### `force` — two ways to test strength, not two spellings
+
+A strength test is recorded one of **two ways**, and which one applies is not a
+preference but a fact about the test that was performed:
+
+|             | `force`                                 | `external_load` + `repetitions` |
+| ----------- | --------------------------------------- | ------------------------------- |
+| Instrument  | dynamometer, force plate, isometric rig | barbell, machine                |
+| Unit        | `N`                                     | `kg` × count                    |
+| Repetitions | do not exist                            | are the point                   |
+| Sides       | measured separately                     | lifted together                 |
+| Exercise    | usually a fixed position                | a real Exercise (§12a)          |
+
+Neither converts into the other: a newton reading has no repetition count, and a
+lifted load has no newton value. Both types therefore stay in the catalogue, and
+two templates offer them — `force_measurement` and `max_strength_test`.
+
+Nothing binds either set to the `strength` module. §12 keeps types independent of
+modules, so a coach may combine them freely; the templates only propose.
+
+> **Provenance.** `force` did not come from this document. It entered with the
+> system catalogue in the measurement slice and was reported but never derived
+> from a stated source — unlike Grip Strength, Lactate or Range of Motion, which
+> §13 names. It is kept **as a decision taken here**, not as something that was
+> always intended: instrument-based force testing is a real method that the
+> load/repetition pair cannot express, and dropping it would make isometric and
+> force-plate testing unrecordable.
+
+---
+
+## 12a. Exercises
+
+An Exercise is a **movement** — bench press, squat, deadlift.
+
+### An Exercise is not a Measurement Type
+
+This distinction carries the whole design:
+
+| Concept          | Answers          | Example            |
+| ---------------- | ---------------- | ------------------ |
+| Measurement Type | what is measured | `Maximal strength` |
+| Exercise         | what was done    | `Bench press`      |
+
+A maximal-strength test of the bench press records a load and a repetition
+count; the Exercise is the context those numbers need in order to mean anything.
+Folding the movement into the type would produce one type per movement per
+quantity, and the catalogue would grow multiplicatively while saying nothing new.
+
+### An Exercise is not a Module
+
+A Module is a test inside an Assessment (§11). An Exercise is what that test
+covers.
+
+```
+Assessment
+└─ Module  strength
+   ├─ configuration  measurement types: Load, Repetitions
+   └─ configuration  exercises: Bench press, Deadlift
+```
+
+A lactate step test names no Exercise at all, and an empty list says exactly
+that rather than forcing a placeholder.
+
+### Never free text
+
+Where an Exercise reference is available it is used. `Measurement.exerciseId` is
+a real foreign key, not a name in the context JSON — free text would make the
+catalogue decorative and every later analysis a string comparison. It is also
+what lets the database refuse to delete a movement that has been used.
+
+### System and Workspace exercises
+
+Exactly the arrangement §12 describes for Measurement Types: an Exercise with no
+Workspace is a system exercise, inherited by all and editable by none. A
+Workspace may add and manage its own.
+
+An Exercise records a name, how it is performed, and the muscle groups it
+affects. **Muscle groups are free text.** Naming the muscle groups of the human
+body in a fixed list is a professional decision that has not been taken, and the
+same restraint applies here as to reference ranges.
+
+### Archive instead of delete, once used
+
+| Situation                         | Allowed        |
+| --------------------------------- | -------------- |
+| System exercise                   | never deleted  |
+| Workspace exercise, never used    | may be deleted |
+| Workspace exercise, used anywhere | archived only  |
+
+"Used" means used in **history** — a Measurement, a training plan, a
+recommendation, a report. A measurement taken during a bench press does not stop
+having been taken, so the movement it names must remain resolvable. Archiving
+removes it from selection and leaves every past reference intact.
+
+This is enforced twice: by the rule in `packages/domain`, which produces an
+explanation, and by `onDelete: Restrict` on the Measurement relation, which holds
+even if the application layer forgets to ask.
+
+### One catalogue, not one per feature
+
+The Exercise catalogue is a central domain resource. Training plans, training
+recommendations, reports and assessments are meant to reference the same rows.
+There is deliberately no `StrengthExercise`: a catalogue built for one feature
+would have to be rebuilt for the next.
 
 ---
 
@@ -1475,3 +1725,21 @@ read-only state begins only when the last collaboration ends (§21).
 28. The architecture must remain modular and extensible.
 
 29. If two terms describe one thing, it is one object with a status.
+
+30. A template is a starting point. Applying it copies the configuration; no
+    reference to the template is kept, and changing a template never changes an
+    Assessment that already exists (§11).
+
+31. A configuration may not be changed in a way that alters the meaning of
+    values already recorded (§11).
+
+32. An Exercise is context, never a Measurement Type and never a Module (§12a).
+
+33. A Measurement Type's category is independent of the Module a value is
+    recorded in (§12).
+
+34. An Exercise that has been used is archived, never deleted. A system Exercise
+    is never deleted at all (§12a).
+
+35. `weight` is the athlete's body weight. The load moved in a test is
+    `external_load`, and the two are never interchanged (§12).

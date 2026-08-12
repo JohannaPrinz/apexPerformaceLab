@@ -283,6 +283,30 @@ Authentication and Domain Models are separated.
 
 A User Account never replaces an Athlete.
 
+### A template is copied, never referenced
+
+A measurement template is a global professional starting point. Applying it
+copies its configuration into the Assessment Module; **no reference to the
+template is kept**.
+
+That is one source of truth, not two: the Module's own configuration is the only
+thing readiness, the entry grid and the analysis ever read. It also means
+changing a global template cannot reach an Assessment that already exists — a
+structural property rather than a rule to remember.
+
+The corollary: once values have been recorded, the configuration may not change
+in a way that alters what those values mean.
+
+### An Exercise is context, not a Measurement Type
+
+`Maximal strength` is what is measured; `Bench press` is what was done. Where an
+Exercise reference is available it is used, never a free-text name — otherwise
+the catalogue is decorative and every later analysis becomes a string
+comparison.
+
+An Exercise that has been used is archived, never deleted. A measurement taken
+during a bench press does not stop having been taken.
+
 ---
 
 ## 16. User Accounts are Optional

@@ -339,6 +339,46 @@ sich in der Oberfläche einen Namensraum; gleiche Namen würden „wähle
 Presets sind Konfiguration, keine Objekte. Sie können später
 benutzerdefinierbar werden.
 
+### Vorlage und Modulkonfiguration
+
+Eine Vorlage ist ein **Startpunkt**, kein Objekt und keine Ebene der Hierarchie.
+Wird sie verwendet, wird ihre Konfiguration in das Modul **kopiert**; eine
+Referenz auf die Vorlage wird **nicht** gespeichert.
+
+> Eine spätere Änderung an einer globalen Vorlage verändert niemals ein bereits
+> angelegtes Assessment.
+
+Das ist eine strukturelle Eigenschaft, keine Regel zum Merken: Es gibt keinen Weg
+vom Modul zurück zur Vorlage. Readiness, Erfassungsmaske und Auswertung lesen
+ausschließlich die gespeicherte Konfiguration des Moduls.
+
+### Pflicht, empfohlen, optional
+
+Die Konfiguration hält je Messgröße fest, was sie für den Test bedeutet:
+
+| Rolle         | Bedeutung                          | Fehlt ganz     |
+| ------------- | ---------------------------------- | -------------- |
+| `required`    | für einen vollständigen Test nötig | `INSUFFICIENT` |
+| `recommended` | vorgeschlagen, nicht zwingend      | `PARTIAL`      |
+| `optional`    | nach Bedarf erfassbar              | ohne Wirkung   |
+
+Die Rolle gehört zum **konkreten Test**, nicht zum Typ: Laktat ist im
+Stufentest Pflicht und im Krafttest optional.
+
+### Änderungen nach Testbeginn
+
+Solange keine Werte vorliegen, ist alles änderbar. Sobald Werte existieren, wird
+jede Änderung abgelehnt, die deren Bedeutung verschieben würde — eine erfasste
+Messgröße oder Übung entfernen, die Durchläufe unter eine belegte Stufe senken,
+die Seitigkeit umschalten, eine Dimension entfernen oder enger fassen.
+
+Erlaubt bleibt, was nur die Zukunft betrifft: hinzufügen, Durchläufe erhöhen,
+umsortieren, Rollen ändern.
+
+Die Regel richtet sich nach **dem, was erfasst wurde**, nicht nach dem Status —
+das Erfassen eines Werts verschiebt den Status nicht, und aus `IN_PROGRESS`
+führt kein Weg zurück nach `PLANNED`.
+
 ### Video ist kein Modul
 
 Video ist ein eigenständiges Domänenobjekt, kein Analysebereich.
@@ -373,6 +413,119 @@ Jeder Messwert verweist auf genau einen Measurement Type.
 Die **Seitigkeit gehört nicht zum Measurement Type**. Der Typ „Griffkraft" ist
 links wie rechts derselbe; nur der erfasste Wert unterscheidet sich. Die
 Seitigkeit steht am Measurement.
+
+Die **Kategorie ist unabhängig vom Modul**. Ein Typ ist an kein Modul gebunden:
+In einem `lactate`-Modul darf eine Herzfrequenz erfasst werden, in einem
+`strength`-Modul eine Sprunghöhe. Der Katalog wird nach Kategorie _gefiltert_
+und durch nichts _eingeschränkt_ — Voraussetzung dafür, dass ein Coach seine
+Tests später frei zusammenstellen kann.
+
+### Körpergewicht, Last und Wiederholungen sind drei Dinge
+
+Drei Typen werden leicht verwechselt und bleiben deshalb bewusst getrennt:
+
+| Schlüssel       | Bedeutung                           | Einheit       | Kategorie          |
+| --------------- | ----------------------------------- | ------------- | ------------------ |
+| `weight`        | das **Körpergewicht des Athleten**  | `kg`          | `body_composition` |
+| `external_load` | die **bewegte Last** eines Versuchs | `kg`          | `strength`         |
+| `repetitions`   | die Anzahl der Wiederholungen       | `repetitions` | `strength`         |
+
+`weight` und `external_load` teilen sich die Einheit und sonst nichts: Das eine
+beschreibt die Person, das andere, was sie bewegt hat. Würde `weight` für eine
+Hantellast mitbenutzt, wäre „Gewichtsverlauf" ein Diagramm aus zwei
+verschiedenen Größen, und keine spätere Abfrage könnte sie wieder trennen.
+**`weight` wird nie für eine Trainings- oder Testlast verwendet.**
+
+Zu welcher Übung eine Last gehört, steht **nicht** im Typ, sondern als Exercise
+am Messwert. „Bankdrück-Last" als Typ hieße ein Typ pro Übung — der Katalog
+wüchse mit dem Übungskatalog mit, statt neben ihm.
+
+Eine Maximalkraftmessung besteht damit aus drei getrennten Angaben:
+
+```
+Modul  strength
+  Exercise        Bankdrücken     ← Referenz am Messwert
+  External Load   100 kg          ← Messwert
+  Repetitions     1               ← Messwert
+```
+
+### Zwei Wege, Kraft zu messen
+
+Ein Krafttest wird auf **eine von zwei Arten** erfasst. Welche gilt, ist keine
+Vorliebe, sondern eine Tatsache über den durchgeführten Test:
+
+|                | `force`                                   | `external_load` + `repetitions` |
+| -------------- | ----------------------------------------- | ------------------------------- |
+| Gerät          | Dynamometer, Kraftmessplatte, isometrisch | Hantel, Maschine                |
+| Einheit        | `N`                                       | `kg` × Anzahl                   |
+| Wiederholungen | gibt es nicht                             | sind der Kern                   |
+| Seiten         | einzeln gemessen                          | gemeinsam gehoben               |
+| Übungsbezug    | meist feste Position                      | eine echte Exercise             |
+
+Keines lässt sich in das andere umrechnen: Ein Newton-Wert hat keine
+Wiederholungszahl, eine gehobene Last keinen Newton-Wert. Deshalb bleiben beide
+Typen im Katalog, und zwei Vorlagen bieten sie an — `force_measurement` und
+`max_strength_test`.
+
+An das Modul gebunden ist keines von beiden. Ein Coach darf sie im Builder frei
+kombinieren; die Vorlagen schlagen nur vor.
+
+---
+
+## Exercise
+
+Eine Exercise ist eine **Übung** — Bankdrücken, Kniebeuge, Kreuzheben.
+
+**Eine Übung ist kein Measurement Type.** `Maximalkraft` beschreibt, _was_
+gemessen wird; `Bankdrücken` beschreibt, _was ausgeführt_ wurde. Würde die
+Übung im Typ aufgehen, entstünde ein Typ pro Übung pro Messgröße, und der
+Katalog wüchse multiplikativ, ohne Neues auszusagen.
+
+**Eine Übung ist auch kein Modul.** Das Modul ist der Test; die Übung ist das,
+worauf er sich bezieht:
+
+```
+Assessment
+└─ Modul  strength
+   ├─ Konfiguration  Measurement Types: Last, Wiederholungen
+   └─ Konfiguration  Exercises: Bankdrücken, Kreuzheben
+```
+
+Ein Laktatstufentest nennt keine Übung. Die leere Liste sagt genau das, statt
+einen Platzhalter zu erzwingen.
+
+Die Referenz steht am Messwert als echter Fremdschlüssel, **nie als Freitext**.
+Sonst wäre der Katalog Zierde und jede spätere Auswertung ein Stringvergleich.
+
+### System- und Workspace-Übungen
+
+Dieselbe Anordnung wie beim Measurement Type: Eine Übung ohne Workspace ist eine
+Systemübung, die jeder Workspace erbt und niemand ändert. Ein Workspace darf
+eigene anlegen und verwalten.
+
+Erfasst werden Name, Ausführung und betroffene Muskelgruppen. Die
+**Muskelgruppen sind Freitext** — eine feste anatomische Werteliste ist eine
+fachliche Entscheidung, die nicht getroffen wurde.
+
+### Archivieren statt löschen
+
+| Fall                                | Erlaubt         |
+| ----------------------------------- | --------------- |
+| Systemübung                         | nie löschen     |
+| Workspace-Übung, nie verwendet      | löschen         |
+| Workspace-Übung, irgendwo verwendet | nur archivieren |
+
+„Verwendet" heißt historisch verwendet — in einem Messwert, Trainingsplan, einer
+Empfehlung oder einem Report. Ein Messwert, der beim Bankdrücken erfasst wurde,
+hört nicht auf, erfasst worden zu sein. Archivieren nimmt die Übung aus der
+Auswahl und lässt jede vergangene Referenz unberührt.
+
+Der Fremdschlüssel ist `Restrict` — die Regel gilt auch dann, wenn die
+Anwendungsschicht sie einmal nicht prüft.
+
+Die Übung ist eine **zentrale Domänenressource**: Trainingspläne, Empfehlungen,
+Reports und Assessments sollen dieselben Datensätze referenzieren. Ein eigenes
+„StrengthExercise" wäre ein Katalog, den das nächste Feature neu bauen müsste.
 
 ---
 
