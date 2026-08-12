@@ -1,4 +1,4 @@
-import type { ModuleConfiguration } from './configuration';
+import { countedMeasurements, type ModuleConfiguration } from './configuration';
 
 /**
  * Whether the data present supports an analysis.
@@ -11,6 +11,21 @@ import type { ModuleConfiguration } from './configuration';
  * Nothing is filled in. A missing value stays missing; the result says so and
  * names what is absent, which is the only honest thing a scientific record can
  * do with a gap.
+ *
+ * ## What each role means here
+ *
+ * | Role          | Missing entirely | Partially recorded |
+ * | ------------- | ---------------- | ------------------ |
+ * | `required`    | `INSUFFICIENT`   | `PARTIAL`          |
+ * | `recommended` | `PARTIAL`        | `PARTIAL`          |
+ * | `optional`    | no effect        | no effect          |
+ *
+ * A required quantity with no value at all sinks the test: without lactate
+ * there is no lactate curve, however many heart rates were taken. A
+ * recommended one that is absent leaves the test evaluable but not complete —
+ * which is the distinction that makes `recommended` more than a synonym for
+ * `optional`. An optional quantity never counts: a coach who records it adds
+ * information, and one who does not has left nothing out.
  */
 
 export type ReadinessLevel = 'COMPLETE' | 'PARTIAL' | 'INSUFFICIENT';
@@ -24,8 +39,10 @@ export interface ReadinessInput {
 
 export interface Readiness {
   readonly level: ReadinessLevel;
-  /** Configured types with no measurement at all. */
+  /** Required quantities with no measurement at all — the reason for `INSUFFICIENT`. */
   readonly missingTypeIds: readonly string[];
+  /** Recommended quantities with no measurement at all. Never sink the test. */
+  readonly missingRecommendedTypeIds: readonly string[];
   /** Passes that are configured but hold nothing. */
   readonly missingPasses: readonly number[];
   /** Slots configured, slots filled — for a progress indicator. */
@@ -38,17 +55,20 @@ export interface Readiness {
  *
  * The rules, in the order they decide:
  *
- * 1. **A configured quantity with no value at all → `INSUFFICIENT`.** Without
- *    lactate there is no lactate curve, however many heart rates were taken.
- * 2. **Every configured slot filled → `COMPLETE`.**
- * 3. **Otherwise `PARTIAL`** — some stages are missing, and an analysis over
- *    what exists may still be worth writing. That call belongs to the coach;
- *    this only reports the state.
+ * 1. **A required quantity with no value at all → `INSUFFICIENT`.**
+ * 2. **Every counted slot filled → `COMPLETE`.**
+ * 3. **Otherwise `PARTIAL`** — some stages or recommended values are missing,
+ *    and an analysis over what exists may still be worth writing. That call
+ *    belongs to the coach; this only reports the state.
  *
  * Open dimensions — a site the coach names as they go — cannot be enumerated in
  * advance and therefore contribute nothing to the expected count. A test whose
  * only incompleteness is "maybe more sites could have been measured" reads as
  * complete, which is the correct answer: there was never a target number.
+ *
+ * The configuration passed in is always the module's **own stored**
+ * configuration, never a template — which is why a template edited later cannot
+ * change the verdict on a test performed months ago.
  */
 export function evaluateReadiness(
   configuration: ModuleConfiguration,
@@ -62,18 +82,26 @@ export function evaluateReadiness(
       : [null];
 
   const sides = configuration.recordsSide ? 2 : 1;
+  const exercises = Math.max(configuration.exerciseIds.length, 1);
   const closedDimensions = configuration.dimensions.reduce(
     (total, dimension) => total * Math.max(dimension.values?.length ?? 1, 1),
     1,
   );
 
-  const expectedPerSlot = sides * closedDimensions;
-  const expected =
-    configuration.measurementTypeIds.length * configuredPasses.length * expectedPerSlot;
+  const counted = countedMeasurements(configuration);
+  const expectedPerSlot = sides * exercises * closedDimensions;
+  const expected = counted.length * configuredPasses.length * expectedPerSlot;
 
-  const missingTypeIds = configuration.measurementTypeIds.filter(
-    (typeId) => !current.some((measurement) => measurement.measurementTypeId === typeId),
-  );
+  const hasAnyValue = (typeId: string) =>
+    current.some((measurement) => measurement.measurementTypeId === typeId);
+
+  const missingTypeIds = configuration.measurementTypes
+    .filter((entry) => entry.role === 'required' && !hasAnyValue(entry.measurementTypeId))
+    .map((entry) => entry.measurementTypeId);
+
+  const missingRecommendedTypeIds = configuration.measurementTypes
+    .filter((entry) => entry.role === 'recommended' && !hasAnyValue(entry.measurementTypeId))
+    .map((entry) => entry.measurementTypeId);
 
   const missingPasses = configuredPasses
     .filter(
@@ -82,19 +110,29 @@ export function evaluateReadiness(
     .map((pass) => pass!);
 
   // Count only the slots the configuration actually asks for. A measurement
-  // recorded for a type that is no longer configured is kept — it happened —
-  // but it does not make the test look more complete than it is.
+  // recorded for a type that is no longer configured, or for an optional one,
+  // is kept — it happened — but it does not make the test look more complete
+  // than it is.
+  const countedTypeIds = new Set(counted.map((entry) => entry.measurementTypeId));
   const recorded = current.filter((measurement) =>
-    configuration.measurementTypeIds.includes(measurement.measurementTypeId),
+    countedTypeIds.has(measurement.measurementTypeId),
   ).length;
 
   if (missingTypeIds.length > 0) {
-    return { level: 'INSUFFICIENT', missingTypeIds, missingPasses, expected, recorded };
+    return {
+      level: 'INSUFFICIENT',
+      missingTypeIds,
+      missingRecommendedTypeIds,
+      missingPasses,
+      expected,
+      recorded,
+    };
   }
 
   return {
     level: recorded >= expected ? 'COMPLETE' : 'PARTIAL',
     missingTypeIds,
+    missingRecommendedTypeIds,
     missingPasses,
     expected,
     recorded,

@@ -4,7 +4,10 @@ import { moduleConfigurationSchema } from './configuration';
 import { combineReadiness, evaluateReadiness, type ReadinessInput } from './readiness';
 
 const configure = (overrides: Record<string, unknown> = {}) =>
-  moduleConfigurationSchema.parse({ measurementTypeIds: ['lac', 'hr'], ...overrides });
+  moduleConfigurationSchema.parse({
+    measurementTypes: [{ measurementTypeId: 'lac' }, { measurementTypeId: 'hr' }],
+    ...overrides,
+  });
 
 const measured = (
   measurementTypeId: string,
@@ -61,7 +64,7 @@ describe('evaluateReadiness', () => {
   });
 
   it('ignores superseded values — the correction replaced them (§13)', () => {
-    const configuration = configure({ measurementTypeIds: ['lac'] });
+    const configuration = configure({ measurementTypes: [{ measurementTypeId: 'lac' }] });
 
     const stillInsufficient = evaluateReadiness(configuration, [
       measured('lac', null, 'measurement_that_replaced_it'),
@@ -78,7 +81,10 @@ describe('evaluateReadiness', () => {
   });
 
   it('counts both sides when the test records them', () => {
-    const configuration = configure({ measurementTypeIds: ['grip'], recordsSide: true });
+    const configuration = configure({
+      measurementTypes: [{ measurementTypeId: 'grip' }],
+      recordsSide: true,
+    });
 
     expect(evaluateReadiness(configuration, [measured('grip')]).level).toBe('PARTIAL');
     expect(evaluateReadiness(configuration, [measured('grip'), measured('grip')]).level).toBe(
@@ -88,7 +94,7 @@ describe('evaluateReadiness', () => {
 
   it('multiplies by a dimension that declares its values', () => {
     const configuration = configure({
-      measurementTypeIds: ['rom'],
+      measurementTypes: [{ measurementTypeId: 'rom' }],
       dimensions: [{ key: 'joint', label: 'Joint', values: ['knee', 'hip'] }],
     });
 
@@ -101,7 +107,7 @@ describe('evaluateReadiness', () => {
    */
   it('expects nothing extra from an open dimension', () => {
     const configuration = configure({
-      measurementTypeIds: ['emg'],
+      measurementTypes: [{ measurementTypeId: 'emg' }],
       dimensions: [{ key: 'site', label: 'Site' }],
     });
 
@@ -109,7 +115,7 @@ describe('evaluateReadiness', () => {
   });
 
   it('does not let a value of an unconfigured type inflate progress', () => {
-    const configuration = configure({ measurementTypeIds: ['lac'] });
+    const configuration = configure({ measurementTypes: [{ measurementTypeId: 'lac' }] });
 
     const result = evaluateReadiness(configuration, [measured('lac'), measured('something_else')]);
 
@@ -136,6 +142,7 @@ describe('combineReadiness — an analysis is as good as its weakest included te
   const asReadiness = (level: { level: 'COMPLETE' | 'PARTIAL' | 'INSUFFICIENT' }) => ({
     ...level,
     missingTypeIds: [],
+    missingRecommendedTypeIds: [],
     missingPasses: [],
     expected: 0,
     recorded: 0,
@@ -155,5 +162,78 @@ describe('combineReadiness — an analysis is as good as its weakest included te
 
   it('is complete only when every included test is', () => {
     expect(combineReadiness([complete, complete].map(asReadiness))).toBe('COMPLETE');
+  });
+});
+
+/**
+ * The three roles are what make a template more than a checklist. These tests
+ * pin the difference between them, which is precisely the difference between
+ * "the test cannot be evaluated" and "the test is evaluable but not complete".
+ */
+describe('evaluateReadiness — roles', () => {
+  const roled = (...entries: [string, 'required' | 'recommended' | 'optional'][]) =>
+    moduleConfigurationSchema.parse({
+      measurementTypes: entries.map(([measurementTypeId, role]) => ({ measurementTypeId, role })),
+    });
+
+  it('sinks the test when a required quantity is missing entirely', () => {
+    const result = evaluateReadiness(roled(['lac', 'required'], ['hr', 'recommended']), [
+      measured('hr'),
+    ]);
+
+    expect(result.level).toBe('INSUFFICIENT');
+    expect(result.missingTypeIds).toEqual(['lac']);
+  });
+
+  it('leaves the test evaluable but incomplete when a recommended one is missing', () => {
+    const result = evaluateReadiness(roled(['lac', 'required'], ['hr', 'recommended']), [
+      measured('lac'),
+    ]);
+
+    expect(result.level).toBe('PARTIAL');
+    expect(result.missingTypeIds).toEqual([]);
+    expect(result.missingRecommendedTypeIds).toEqual(['hr']);
+  });
+
+  it('is unaffected by a missing optional quantity', () => {
+    const result = evaluateReadiness(roled(['lac', 'required'], ['weight', 'optional']), [
+      measured('lac'),
+    ]);
+
+    expect(result.level).toBe('COMPLETE');
+    expect(result.expected).toBe(1);
+  });
+
+  it('does not let an optional value inflate progress past the expected count', () => {
+    const result = evaluateReadiness(roled(['lac', 'required'], ['weight', 'optional']), [
+      measured('lac'),
+      measured('weight'),
+    ]);
+
+    expect(result.recorded).toBe(1);
+    expect(result.expected).toBe(1);
+  });
+
+  /**
+   * A test whose every quantity is optional owes nothing and is complete with
+   * no values at all. That is the honest reading — nothing was ever demanded —
+   * and it is the reason `optional` must not be the default role.
+   */
+  it('is complete for an all-optional test with nothing recorded', () => {
+    expect(evaluateReadiness(roled(['weight', 'optional']), []).level).toBe('COMPLETE');
+  });
+});
+
+describe('evaluateReadiness — exercises', () => {
+  it('expects every quantity once per exercise the test covers', () => {
+    const configuration = moduleConfigurationSchema.parse({
+      measurementTypes: [{ measurementTypeId: 'load' }, { measurementTypeId: 'reps' }],
+      exerciseIds: ['ex_bench', 'ex_deadlift'],
+    });
+
+    const result = evaluateReadiness(configuration, [measured('load'), measured('reps')]);
+
+    expect(result.expected).toBe(4);
+    expect(result.level).toBe('PARTIAL');
   });
 });

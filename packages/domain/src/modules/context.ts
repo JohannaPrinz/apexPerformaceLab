@@ -68,7 +68,14 @@ export function measurementContextSchema(
   moduleVersion: number = MODULE_CONFIGURATION_VERSION,
 ): z.ZodType<MeasurementContext> {
   switch (moduleVersion) {
+    // Versions 1 and 2 derive the context identically: version 2 added roles
+    // and exercises, and neither is a context dimension. The exercise in
+    // particular is a **typed reference on the Measurement**, not a JSON key —
+    // which is what lets a foreign key refuse to delete a used exercise. Listing
+    // the versions separately rather than defaulting keeps the next shape
+    // change a deliberate decision instead of a silent inheritance.
     case 1:
+    case 2:
       return contextSchemaV1(configuration);
     default:
       throw new Error(`No context schema defined for module version ${String(moduleVersion)}.`);

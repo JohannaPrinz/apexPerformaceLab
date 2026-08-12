@@ -4,7 +4,10 @@ import { moduleConfigurationSchema } from './configuration';
 import { measurementContextSchema, validateMeasurementContext, validatePassIndex } from './context';
 
 const configure = (overrides: Record<string, unknown> = {}) =>
-  moduleConfigurationSchema.parse({ measurementTypeIds: ['mt_1'], ...overrides });
+  moduleConfigurationSchema.parse({
+    measurementTypes: [{ measurementTypeId: 'mt_1' }],
+    ...overrides,
+  });
 
 /**
  * `Measurement.context` is a JSON column, which would ordinarily mean anything
