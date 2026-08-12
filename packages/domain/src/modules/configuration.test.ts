@@ -223,6 +223,23 @@ describe('expectedMeasurementCount', () => {
     expect(expectedMeasurementCount(configuration)).toBe(4);
   });
 
+  /**
+   * Three attempts at each of two lifts, recording a load and a repetition
+   * count each time. All of it is **one** module: the exercise is an axis
+   * inside the test, never a reason to create a second one — which matters,
+   * because an assessment holds each module exactly once.
+   */
+  it('multiplies passes and exercises together', () => {
+    const configuration = moduleConfigurationSchema.parse({
+      measurementTypes: [{ measurementTypeId: 'load' }, { measurementTypeId: 'reps' }],
+      exerciseIds: ['ex_bench_press', 'ex_deadlift'],
+      passes: 3,
+    });
+
+    // 2 quantities × 3 attempts × 2 lifts.
+    expect(expectedMeasurementCount(configuration)).toBe(12);
+  });
+
   it('ignores optional quantities — they are never owed', () => {
     const configuration = moduleConfigurationSchema.parse({
       measurementTypes: [
