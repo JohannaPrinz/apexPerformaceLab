@@ -7,6 +7,7 @@ import {
   canTransition,
   configurationChangeViolations,
   findMeasurementTemplate,
+  measurementTypeIdsOf,
   MODULE_CONFIGURATION_VERSION,
   moduleConfigurationSchema,
   readModuleConfiguration,
@@ -41,6 +42,9 @@ type AssessmentDb = Pick<
   'assessment' | 'assessmentModule' | 'performanceCase' | 'athlete'
 >;
 
+/** The catalogues the builder offers and validates a submitted configuration against. */
+type CatalogueDb = Pick<PrismaClientInstance, 'measurementType' | 'exercise'>;
+
 const moduleSelect = {
   id: true,
   moduleKey: true,
@@ -58,6 +62,10 @@ const assessmentSelect = {
   performedAt: true,
   createdAt: true,
   caseId: true,
+  // The athlete is reached through the Case and never stored twice (§26.4).
+  // Selected here so a screen can offer this athlete's other assessments — for
+  // instance as the target of a copied test.
+  case: { select: { athleteId: true } },
   modules: { select: moduleSelect, orderBy: { createdAt: 'asc' } },
 } as const;
 
@@ -80,6 +88,8 @@ export interface AssessmentRecord {
   performedAt: Date;
   createdAt: Date;
   caseId: string;
+  /** Derived through the Case, never a second column on the Assessment. */
+  athleteId: string;
   modules: AssessmentModuleRecord[];
 }
 
@@ -107,6 +117,7 @@ function toRecord(row: {
   performedAt: Date;
   createdAt: Date;
   caseId: string;
+  case: { athleteId: string };
   modules: {
     id: string;
     moduleKey: string;
@@ -120,6 +131,7 @@ function toRecord(row: {
   return {
     ...row,
     type: row.type as AssessmentRecord['type'],
+    athleteId: row.case.athleteId,
     modules: row.modules.map((entry) => ({
       id: entry.id,
       moduleKey: entry.moduleKey,
@@ -201,24 +213,40 @@ export async function createAssessment(
  *
  * Returns `null` when the assessment is not in this workspace.
  */
+export type ModuleCreation =
+  | { ok: true; module: AssessmentModuleRecord }
+  // Each reason is its own member so a caller that handles one can narrow to
+  // the rest — a shared `reason: 'A' | 'B'` member would keep the whole variant
+  // alive after both are checked.
+  | { ok: false; reason: 'ASSESSMENT_NOT_FOUND' }
+  | { ok: false; reason: 'NO_CONFIGURATION' }
+  | { ok: false; reason: 'UNAVAILABLE_REFERENCES'; unavailable: UnavailableReferences };
+
 export async function addModule(
-  db: AssessmentDb,
+  db: AssessmentDb & CatalogueDb,
   tenant: Pick<TenantContext, 'organizationId'>,
   createdByCoachId: string,
   { assessmentId, moduleKey, templateKey, configuration }: AddModuleInput,
   resolveTemplateTypeIds: (keys: readonly string[]) => Promise<string[]>,
-): Promise<AssessmentModuleRecord | null> {
+): Promise<ModuleCreation> {
   const assessment = await db.assessment.findFirst({
     where: scoped(tenant, { id: assessmentId }),
     select: { id: true },
   });
 
-  if (!assessment) return null;
+  if (!assessment) return { ok: false, reason: 'ASSESSMENT_NOT_FOUND' };
 
   const resolved =
     configuration ?? (await configurationFromTemplate(templateKey, resolveTemplateTypeIds));
 
-  if (!resolved) return null;
+  if (!resolved) return { ok: false, reason: 'NO_CONFIGURATION' };
+
+  // A configuration assembled in the browser names ids. They are verified here
+  // against this workspace's catalogues — a type or exercise belonging to
+  // another tenant must not become part of a test, and the client is not the
+  // place that decides it (docs/SECURITY.md §4).
+  const unavailable = await unavailableReferences(db, tenant, resolved);
+  if (unavailable) return { ok: false, reason: 'UNAVAILABLE_REFERENCES', unavailable };
 
   const created = await db.assessmentModule.create({
     data: withTenant(tenant, {
@@ -231,14 +259,26 @@ export async function addModule(
     select: moduleSelect,
   });
 
+  return { ok: true, module: toModuleRecord(created) };
+}
+
+function toModuleRecord(row: {
+  id: string;
+  moduleKey: string;
+  moduleVersion: number;
+  payload: unknown;
+  status: string;
+  createdByCoachId: string;
+  createdAt: Date;
+}): AssessmentModuleRecord {
   return {
-    id: created.id,
-    moduleKey: created.moduleKey,
-    moduleVersion: created.moduleVersion,
-    configuration: readConfiguration(created.payload, created.moduleVersion),
-    status: created.status,
-    createdByCoachId: created.createdByCoachId,
-    createdAt: created.createdAt,
+    id: row.id,
+    moduleKey: row.moduleKey,
+    moduleVersion: row.moduleVersion,
+    configuration: readConfiguration(row.payload, row.moduleVersion),
+    status: row.status as AssessmentModuleStatus,
+    createdByCoachId: row.createdByCoachId,
+    createdAt: row.createdAt,
   };
 }
 
@@ -286,6 +326,7 @@ export type ConfigurationUpdate =
   | { ok: true }
   | { ok: false; reason: 'NOT_FOUND' }
   | { ok: false; reason: 'UNREADABLE' }
+  | { ok: false; reason: 'UNAVAILABLE_REFERENCES'; unavailable: UnavailableReferences }
   | {
       ok: false;
       reason: 'WOULD_ALTER_RECORDED_VALUES';
@@ -312,7 +353,7 @@ export type ConfigurationUpdate =
  * history just as thoroughly as one that hit the current value.
  */
 export async function updateModuleConfiguration(
-  db: AssessmentDb & Pick<PrismaClientInstance, 'measurement'>,
+  db: AssessmentDb & CatalogueDb & Pick<PrismaClientInstance, 'measurement'>,
   tenant: Pick<TenantContext, 'organizationId'>,
   moduleId: string,
   configuration: ModuleConfiguration,
@@ -326,6 +367,17 @@ export async function updateModuleConfiguration(
 
   const existing = readConfiguration(current.payload, current.moduleVersion);
   if (!existing) return { ok: false, reason: 'UNREADABLE' };
+
+  // Ids arrive from the browser and are verified here, exactly as on creation.
+  // Types and exercises the test **already** names stay permitted even if they
+  // were archived meanwhile — otherwise archiving one would freeze every test
+  // that uses it, which is the opposite of what archiving is for.
+  const unavailable = await unavailableReferences(db, tenant, configuration, [
+    ...measurementTypeIdsOf(existing),
+    ...existing.exerciseIds,
+  ]);
+
+  if (unavailable) return { ok: false, reason: 'UNAVAILABLE_REFERENCES', unavailable };
 
   const recorded = await db.measurement.findMany({
     where: scoped(tenant, { assessmentModuleId: moduleId }),
@@ -472,7 +524,7 @@ export async function copyAssessment(
 ): Promise<AssessmentRecord | null> {
   const source = await db.assessment.findFirst({
     where: scoped(tenant, { id: assessmentId }),
-    select: { ...assessmentSelect, case: { select: { athleteId: true } } },
+    select: assessmentSelect,
   });
 
   if (!source) return null;
@@ -573,4 +625,198 @@ export async function exerciseNames(
   });
 
   return Object.fromEntries(rows.map((row) => [row.id, row.name]));
+}
+
+/**
+ * The measurement types a workspace may configure a test with.
+ *
+ * **`this workspace OR system-wide`, not `scoped()`** — the catalogue rule §12
+ * prescribes: a system type carries `organizationId = null` and every workspace
+ * inherits it. A strict tenant filter would return an empty catalogue and the
+ * builder would have nothing to offer.
+ *
+ * Archived types are excluded: they stay resolvable for tests that already
+ * reference them, but a coach must not add one to a new test.
+ *
+ * A workspace type wins over the system type of the same key — the coach's own
+ * definition is the more specific one, and the partial unique index permits the
+ * pair to exist precisely so it can.
+ */
+export interface MeasurementTypeOption {
+  id: string;
+  key: string;
+  name: string;
+  unit: string;
+  valueType: string;
+  category: string;
+  /** True when this workspace defined it; false for the system catalogue. */
+  ownedByWorkspace: boolean;
+}
+
+export async function availableMeasurementTypes(
+  db: Pick<PrismaClientInstance, 'measurementType'>,
+  organizationId: string,
+): Promise<MeasurementTypeOption[]> {
+  const rows = await db.measurementType.findMany({
+    where: {
+      archivedAt: null,
+      OR: [{ organizationId }, { organizationId: null }],
+    },
+    select: {
+      id: true,
+      key: true,
+      name: true,
+      unit: true,
+      valueType: true,
+      category: true,
+      organizationId: true,
+    },
+    orderBy: [{ category: 'asc' }, { name: 'asc' }],
+  });
+
+  const byKey = new Map<string, (typeof rows)[number]>();
+  for (const row of rows) {
+    const existing = byKey.get(row.key);
+    // The workspace's own definition wins over the system one.
+    if (!existing || row.organizationId !== null) byKey.set(row.key, row);
+  }
+
+  return [...byKey.values()].map((row) => ({
+    id: row.id,
+    key: row.key,
+    name: row.name,
+    unit: row.unit,
+    valueType: row.valueType,
+    category: row.category,
+    ownedByWorkspace: row.organizationId !== null,
+  }));
+}
+
+export interface UnavailableReferences {
+  readonly measurementTypeIds: readonly string[];
+  readonly exerciseIds: readonly string[];
+}
+
+/**
+ * Checks that every id a configuration names is available to this workspace.
+ *
+ * Returns `null` when everything resolves. The check exists because a
+ * configuration is assembled in the browser and arrives as ids: without it, a
+ * request could hang another tenant's measurement type or exercise off a test —
+ * the module row itself would be correctly scoped and the leak would be the
+ * *reference*, which no column constraint catches. Same shape of hole the cases
+ * service closes for its athlete.
+ *
+ * Archived rows count as unavailable for a new configuration, and as available
+ * for one that already names them — which is why the caller passes the
+ * configuration being written, not the one being replaced.
+ */
+export async function unavailableReferences(
+  db: CatalogueDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  configuration: ModuleConfiguration,
+  allowArchived: readonly string[] = [],
+): Promise<UnavailableReferences | null> {
+  const wantedTypes = [...new Set(measurementTypeIdsOf(configuration))];
+  const wantedExercises = [...new Set(configuration.exerciseIds)];
+
+  const [types, exercises] = await Promise.all([
+    wantedTypes.length === 0
+      ? Promise.resolve([])
+      : db.measurementType.findMany({
+          where: {
+            id: { in: wantedTypes },
+            OR: [{ organizationId: tenant.organizationId }, { organizationId: null }],
+          },
+          select: { id: true, archivedAt: true },
+        }),
+    wantedExercises.length === 0
+      ? Promise.resolve([])
+      : db.exercise.findMany({
+          where: {
+            id: { in: wantedExercises },
+            OR: [{ organizationId: tenant.organizationId }, { organizationId: null }],
+          },
+          select: { id: true, archivedAt: true },
+        }),
+  ]);
+
+  const usable = (rows: { id: string; archivedAt: Date | null }[], id: string): boolean => {
+    const row = rows.find((entry) => entry.id === id);
+
+    return Boolean(row) && (row?.archivedAt === null || allowArchived.includes(id));
+  };
+
+  const measurementTypeIds = wantedTypes.filter((id) => !usable(types, id));
+  const exerciseIds = wantedExercises.filter((id) => !usable(exercises, id));
+
+  return measurementTypeIds.length > 0 || exerciseIds.length > 0
+    ? { measurementTypeIds, exerciseIds }
+    : null;
+}
+
+/**
+ * Copies one test inside its assessment.
+ *
+ * **Configuration only.** `moduleKey`, `moduleVersion` and `payload` are carried
+ * across; no Measurement is. The copy starts `PLANNED` and belongs to the coach
+ * making it — carrying the source's status or author would claim work that has
+ * not happened.
+ *
+ * That this is a copy of one JSON column rather than a filtered deep clone is
+ * the whole point of keeping the configuration out of the measurements.
+ *
+ * A copy into the **same** assessment collides with `@@unique([assessmentId,
+ * moduleKey])`, which is deliberate: an assessment holds each module once. The
+ * copy therefore targets another assessment in the same workspace, and the
+ * caller says which.
+ */
+export type ModuleCopy =
+  | { ok: true; module: AssessmentModuleRecord }
+  | { ok: false; reason: 'NOT_FOUND' | 'TARGET_NOT_FOUND' | 'ALREADY_PRESENT' };
+
+export async function copyModule(
+  db: AssessmentDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  createdByCoachId: string,
+  moduleId: string,
+  targetAssessmentId?: string,
+): Promise<ModuleCopy> {
+  const source = await db.assessmentModule.findFirst({
+    where: scoped(tenant, { id: moduleId }),
+    select: { ...moduleSelect, assessmentId: true },
+  });
+
+  if (!source) return { ok: false, reason: 'NOT_FOUND' };
+
+  const assessmentId = targetAssessmentId ?? source.assessmentId;
+
+  const target = await db.assessment.findFirst({
+    where: scoped(tenant, { id: assessmentId }),
+    select: { id: true },
+  });
+
+  if (!target) return { ok: false, reason: 'TARGET_NOT_FOUND' };
+
+  const clash = await db.assessmentModule.findFirst({
+    where: scoped(tenant, { assessmentId, moduleKey: source.moduleKey }),
+    select: { id: true },
+  });
+
+  // Reported rather than left to the unique constraint, so the coach reads a
+  // sentence instead of a database error.
+  if (clash) return { ok: false, reason: 'ALREADY_PRESENT' };
+
+  const created = await db.assessmentModule.create({
+    data: withTenant(tenant, {
+      assessmentId,
+      moduleKey: source.moduleKey,
+      moduleVersion: source.moduleVersion,
+      payload: source.payload ?? undefined,
+      createdByCoachId,
+    }),
+    select: moduleSelect,
+  });
+
+  return { ok: true, module: toModuleRecord(created) };
 }

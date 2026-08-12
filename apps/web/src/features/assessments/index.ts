@@ -7,7 +7,19 @@
 export { AddModuleForm } from './components/add-module-form';
 export { AssessmentForm } from './components/assessment-form';
 export { CopyAssessmentButton } from './components/copy-assessment-button';
+export { CopyModuleButton, type CopyTarget } from './components/copy-module-button';
 export { ModuleCard, type ModuleCardData } from './components/module-card';
+export { TestBuilder } from './components/builder/test-builder';
+export {
+  BUILDER_STEPS,
+  draftFromConfiguration,
+  draftFromTemplateKey,
+  emptyDraft,
+  summarise,
+  toConfiguration,
+  type BuilderDraft,
+  type BuilderStep,
+} from './components/builder/draft';
 export { MeasurementCell } from './measurements/components/measurement-cell';
 export { TestRunner } from './measurements/components/test-runner';
 export {
@@ -34,6 +46,7 @@ export {
   assessmentIdSchema,
   assessmentTypeSchema,
   copyAssessmentSchema,
+  copyModuleSchema,
   createAssessmentSchema,
   listAssessmentsSchema,
   moduleIdSchema,
@@ -42,6 +55,7 @@ export {
   type AssessmentIdInput,
   type AssessmentTypeInput,
   type CopyAssessmentInput,
+  type CopyModuleInput,
   type CreateAssessmentInput,
   type ListAssessmentsInput,
   type ModuleIdInput,

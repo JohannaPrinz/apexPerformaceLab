@@ -4,6 +4,8 @@ import type { PrismaClientInstance } from '@apex/database';
 
 import {
   addModule,
+  availableMeasurementTypes,
+  copyModule,
   setModuleStatus,
   copyAssessment,
   createAssessment,
@@ -62,6 +64,8 @@ function fakeDb(overrides: { sourceModules?: unknown[] } = {}) {
       performedAt: new Date(),
       createdAt: new Date(),
       caseId: 'case_1',
+      // Derived through the Case, never a second column (§26.4).
+      case: { athleteId: 'ath_1' },
       modules: [],
     }),
   };
@@ -108,16 +112,53 @@ function fakeDb(overrides: { sourceModules?: unknown[] } = {}) {
     findMany: vi.fn<(args: QueryArgs) => Promise<unknown[]>>().mockResolvedValue([]),
   };
 
+  /**
+   * The catalogues, echoing back whatever ids are asked for as available.
+   *
+   * That models the ordinary case — everything the configuration names exists in
+   * this workspace — so a test that wants the opposite overrides the mock and
+   * says so explicitly.
+   */
+  const echoCatalogue = (args: QueryArgs) => {
+    const filter = args.where['id'] as { in?: string[] } | undefined;
+
+    return Promise.resolve((filter?.in ?? []).map((id) => ({ id, archivedAt: null })));
+  };
+
+  const measurementType = {
+    findMany: vi.fn<(args: QueryArgs) => Promise<unknown[]>>().mockImplementation(echoCatalogue),
+  };
+
+  const exercise = {
+    findMany: vi.fn<(args: QueryArgs) => Promise<unknown[]>>().mockImplementation(echoCatalogue),
+  };
+
   return {
-    db: { assessment, assessmentModule, performanceCase, athlete, measurement } as unknown as Pick<
+    db: {
+      assessment,
+      assessmentModule,
+      performanceCase,
+      athlete,
+      measurement,
+      measurementType,
+      exercise,
+    } as unknown as Pick<
       PrismaClientInstance,
-      'assessment' | 'assessmentModule' | 'performanceCase' | 'athlete' | 'measurement'
+      | 'assessment'
+      | 'assessmentModule'
+      | 'performanceCase'
+      | 'athlete'
+      | 'measurement'
+      | 'measurementType'
+      | 'exercise'
     >,
     assessment,
     assessmentModule,
     performanceCase,
     athlete,
     measurement,
+    measurementType,
+    exercise,
   };
 }
 
@@ -270,7 +311,7 @@ describe('adding a module', () => {
       () => Promise.resolve([]),
     );
 
-    expect(result).toBeNull();
+    expect(result).toEqual({ ok: false, reason: 'ASSESSMENT_NOT_FOUND' });
     expect(assessmentModule.create).not.toHaveBeenCalled();
   });
 
@@ -575,7 +616,244 @@ describe('a template’s roles travel with it', () => {
       () => Promise.resolve(['mt_body_fat']),
     );
 
-    expect(result).toBeNull();
+    expect(result).toEqual({ ok: false, reason: 'NO_CONFIGURATION' });
     expect(assessmentModule.create).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A configuration is assembled in the browser and arrives as ids. Without a
+ * server-side check, a request could hang another tenant's measurement type or
+ * exercise off a test: the module row itself would be correctly scoped, and the
+ * leak would be the *reference* — which no column constraint catches.
+ */
+describe('a configuration may only name what this workspace can use', () => {
+  it('looks the ids up as this workspace or system-wide', async () => {
+    const { db, measurementType } = fakeDb();
+
+    await addModule(
+      db,
+      TENANT,
+      'coach_1',
+      { assessmentId: 'as_1', moduleKey: 'lactate', configuration },
+      () => Promise.resolve([]),
+    );
+
+    expect(argsOf(measurementType.findMany).where).toMatchObject({
+      OR: [{ organizationId: 'org_a' }, { organizationId: null }],
+    });
+  });
+
+  it('refuses a measurement type this workspace cannot reach', async () => {
+    const { db, assessmentModule, measurementType } = fakeDb();
+    measurementType.findMany.mockResolvedValue([{ id: 'mt_lactate', archivedAt: null }]);
+
+    const result = await addModule(
+      db,
+      TENANT,
+      'coach_1',
+      { assessmentId: 'as_1', moduleKey: 'lactate', configuration },
+      () => Promise.resolve([]),
+    );
+
+    expect(result).toMatchObject({ ok: false, reason: 'UNAVAILABLE_REFERENCES' });
+    expect(assessmentModule.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses an exercise this workspace cannot reach', async () => {
+    const { db, assessmentModule, exercise } = fakeDb();
+    exercise.findMany.mockResolvedValue([]);
+
+    const result = await addModule(
+      db,
+      TENANT,
+      'coach_1',
+      {
+        assessmentId: 'as_1',
+        moduleKey: 'strength',
+        configuration: { ...configuration, exerciseIds: ['ex_from_another_workspace'] },
+      },
+      () => Promise.resolve([]),
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'UNAVAILABLE_REFERENCES',
+      unavailable: { exerciseIds: ['ex_from_another_workspace'] },
+    });
+    expect(assessmentModule.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses an archived measurement type for a new test', async () => {
+    const { db, measurementType } = fakeDb();
+    measurementType.findMany.mockResolvedValue([
+      { id: 'mt_lactate', archivedAt: null },
+      { id: 'mt_hr', archivedAt: new Date() },
+    ]);
+
+    const result = await addModule(
+      db,
+      TENANT,
+      'coach_1',
+      { assessmentId: 'as_1', moduleKey: 'lactate', configuration },
+      () => Promise.resolve([]),
+    );
+
+    expect(result).toMatchObject({ ok: false, unavailable: { measurementTypeIds: ['mt_hr'] } });
+  });
+
+  /**
+   * Archiving must not freeze every test that already uses the type — that is
+   * the opposite of what archiving is for.
+   */
+  it('keeps an archived type usable in a test that already names it', async () => {
+    const { db, measurementType, assessmentModule } = fakeDb();
+    measurementType.findMany.mockResolvedValue([
+      { id: 'mt_lactate', archivedAt: null },
+      { id: 'mt_hr', archivedAt: new Date() },
+    ]);
+
+    const result = await updateModuleConfiguration(db, TENANT, 'mod_1', configuration);
+
+    expect(result).toEqual({ ok: true });
+    expect(assessmentModule.updateMany).toHaveBeenCalled();
+  });
+});
+
+describe('copying one test', () => {
+  const sourceRow = {
+    id: 'mod_1',
+    assessmentId: 'as_1',
+    moduleKey: 'lactate',
+    moduleVersion: 2,
+    payload: configuration,
+    status: 'COMPLETED',
+    createdByCoachId: 'coach_original',
+    createdAt: new Date(),
+  };
+
+  /** Source found, then no clash in the target assessment. */
+  const withSource = () => {
+    const harness = fakeDb();
+    harness.assessmentModule.findFirst.mockResolvedValueOnce(sourceRow).mockResolvedValueOnce(null);
+
+    return harness;
+  };
+
+  it('carries the configuration and starts the copy under the copying coach', async () => {
+    const { db, assessmentModule } = withSource();
+
+    await copyModule(db, TENANT, 'coach_2', 'mod_1', 'as_2');
+
+    const written = argsOf(assessmentModule.create).data;
+    expect(written).toMatchObject({
+      organizationId: 'org_a',
+      assessmentId: 'as_2',
+      moduleKey: 'lactate',
+      moduleVersion: 2,
+      payload: configuration,
+      createdByCoachId: 'coach_2',
+    });
+  });
+
+  /**
+   * The copy has not been performed, so it must not claim the source's status.
+   * Leaving the column unset lets the schema default apply — PLANNED.
+   */
+  it('does not carry the source status across', async () => {
+    const { db, assessmentModule } = withSource();
+
+    await copyModule(db, TENANT, 'coach_2', 'mod_1', 'as_2');
+
+    expect(argsOf(assessmentModule.create).data).not.toHaveProperty('status');
+  });
+
+  it('copies no measurement', async () => {
+    const { db, measurement, assessmentModule } = withSource();
+
+    await copyModule(db, TENANT, 'coach_2', 'mod_1', 'as_2');
+
+    expect(measurement.findMany).not.toHaveBeenCalled();
+    expect(JSON.stringify(argsOf(assessmentModule.create).data)).not.toContain('numericValue');
+  });
+
+  it('scopes the source lookup', async () => {
+    const { db, assessmentModule } = withSource();
+
+    await copyModule(db, TENANT, 'coach_2', 'mod_1', 'as_2');
+
+    expect(argsOf(assessmentModule.findFirst).where).toMatchObject({
+      organizationId: 'org_a',
+      id: 'mod_1',
+    });
+  });
+
+  it('reports a module outside the workspace as not found', async () => {
+    const { db, assessmentModule } = fakeDb();
+    assessmentModule.findFirst.mockResolvedValue(null);
+
+    expect(await copyModule(db, TENANT, 'coach_2', 'mod_elsewhere')).toEqual({
+      ok: false,
+      reason: 'NOT_FOUND',
+    });
+  });
+
+  /**
+   * An assessment records each test once. Reported as a sentence rather than
+   * left to the unique constraint.
+   */
+  it('refuses a copy into an assessment that already holds the test', async () => {
+    const { db, assessmentModule } = fakeDb();
+    assessmentModule.findFirst.mockResolvedValue(sourceRow);
+
+    const result = await copyModule(db, TENANT, 'coach_2', 'mod_1', 'as_1');
+
+    expect(result).toEqual({ ok: false, reason: 'ALREADY_PRESENT' });
+    expect(assessmentModule.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('the catalogue the builder offers', () => {
+  it('offers this workspace and the system catalogue, never another tenant', async () => {
+    const { db, measurementType } = fakeDb();
+    measurementType.findMany.mockResolvedValue([]);
+
+    await availableMeasurementTypes(db, 'org_a');
+
+    const where = argsOf(measurementType.findMany).where;
+    expect(where).toMatchObject({
+      archivedAt: null,
+      OR: [{ organizationId: 'org_a' }, { organizationId: null }],
+    });
+    expect(JSON.stringify(where)).not.toContain('org_b');
+  });
+
+  it('lets a workspace type win over the system type of the same key', async () => {
+    const { db, measurementType } = fakeDb();
+    measurementType.findMany.mockResolvedValue([
+      {
+        id: 'mt_system',
+        key: 'grip_strength',
+        name: 'Grip Strength',
+        unit: 'kg',
+        valueType: 'NUMERIC',
+        category: 'strength',
+        organizationId: null,
+      },
+      {
+        id: 'mt_own',
+        key: 'grip_strength',
+        name: 'Grip Strength, our protocol',
+        unit: 'kg',
+        valueType: 'NUMERIC',
+        category: 'strength',
+        organizationId: 'org_a',
+      },
+    ]);
+
+    const options = await availableMeasurementTypes(db, 'org_a');
+
+    expect(options).toHaveLength(1);
+    expect(options[0]).toMatchObject({ id: 'mt_own', ownedByWorkspace: true });
   });
 });

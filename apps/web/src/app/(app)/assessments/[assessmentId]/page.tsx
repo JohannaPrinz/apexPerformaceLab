@@ -3,9 +3,9 @@ import { notFound } from 'next/navigation';
 
 import { TRPCError } from '@trpc/server';
 
-import { Badge } from '@apex/ui';
+import { Badge, Button } from '@apex/ui';
 
-import { AddModuleForm, CopyAssessmentButton, ModuleCard } from '@/features/assessments';
+import { CopyAssessmentButton, ModuleCard } from '@/features/assessments';
 import { api } from '@/trpc/server';
 
 import type { Metadata } from 'next';
@@ -33,6 +33,18 @@ export default async function AssessmentPage({
     if (error instanceof TRPCError && error.code === 'NOT_FOUND') notFound();
     throw error;
   });
+
+  // A configured test is copied into another assessment of the same athlete —
+  // an assessment records each test once, so a copy alongside the original is
+  // not something the model permits.
+  const siblings = await api.assessments.listForAthlete({ athleteId: assessment.athleteId });
+  const copyTargets = siblings
+    .filter((entry) => entry.id !== assessment.id)
+    .map((entry) => ({
+      id: entry.id,
+      question: entry.question,
+      moduleKeys: entry.modules.map((entry_) => entry_.moduleKey),
+    }));
 
   return (
     <main className="mx-auto flex w-full max-w-content flex-col gap-8 px-6 py-12">
@@ -73,16 +85,20 @@ export default async function AssessmentPage({
                 assessmentId={assessment.id}
                 typeNames={assessment.measurementTypeNames}
                 exerciseNames={assessment.exerciseNames}
+                copyTargets={copyTargets}
               />
             ))}
           </div>
         )}
 
-        <AddModuleForm assessmentId={assessment.id} />
+        <div>
+          <Button variant="accent" size="sm" asChild>
+            <Link href={`/assessments/${assessment.id}/tests/new`}>Add a test</Link>
+          </Button>
+        </div>
       </section>
 
       <p className="text-sm text-muted-foreground">
-        Recording measurements arrives in the next step.{' '}
         <Link href="/athletes" className="text-accent underline-offset-4 hover:underline">
           Back to athletes
         </Link>

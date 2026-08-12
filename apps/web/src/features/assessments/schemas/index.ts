@@ -103,3 +103,21 @@ export const copyAssessmentSchema = z.object({
 });
 
 export type CopyAssessmentInput = z.infer<typeof copyAssessmentSchema>;
+
+/**
+ * Copying one test inside its assessment.
+ *
+ * The copy takes `moduleKey`, `moduleVersion` and the configuration, and **no
+ * measurement** — it is a fresh test, not a duplicated record.
+ *
+ * `targetAssessmentId` defaults to the source's own assessment. An assessment
+ * holds each module once (`@@unique([assessmentId, moduleKey])`), so copying
+ * within one assessment is refused with a sentence rather than a constraint
+ * error; the field exists to copy a configured test into a *different*
+ * assessment, which is the case that motivates copying at all.
+ */
+export const copyModuleSchema = moduleIdSchema.extend({
+  targetAssessmentId: z.string().min(1).optional(),
+});
+
+export type CopyModuleInput = z.infer<typeof copyModuleSchema>;

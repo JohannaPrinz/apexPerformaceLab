@@ -17,6 +17,7 @@ import {
   addModuleSchema,
   assessmentIdSchema,
   copyAssessmentSchema,
+  copyModuleSchema,
   createAssessmentSchema,
   listAssessmentsSchema,
   moduleIdSchema,
@@ -25,7 +26,9 @@ import {
 
 import {
   addModule,
+  availableMeasurementTypes,
   copyAssessment,
+  copyModule,
   createAssessment,
   exerciseNames,
   getAssessment,
@@ -34,7 +37,24 @@ import {
   removeModule,
   setModuleStatus,
   updateModuleConfiguration,
+  type UnavailableReferences,
 } from './service';
+
+/**
+ * A configuration naming something this workspace cannot use.
+ *
+ * `BAD_REQUEST`, not `FORBIDDEN`: the ids may belong to another tenant, and
+ * confirming that they exist would leak the id space (docs/SECURITY.md §4). The
+ * message says the reference is unavailable, never that it belongs elsewhere.
+ */
+const unavailableError = (unavailable: UnavailableReferences) =>
+  new TRPCError({
+    code: 'BAD_REQUEST',
+    message:
+      unavailable.measurementTypeIds.length > 0
+        ? 'This test names a measurement that is not available in this workspace.'
+        : 'This test names an exercise that is not available in this workspace.',
+  });
 
 const notFound = (resource: string) =>
   new TRPCError({
@@ -96,16 +116,62 @@ export const assessmentsRouter = createTRPCRouter({
       return assessment;
     }),
 
+  /**
+   * The measurement types this workspace may configure a test with — the
+   * builder's catalogue. System and workspace types together (§12).
+   */
+  measurementTypes: withPermission('assessment:read').query(({ ctx }) =>
+    availableMeasurementTypes(ctx.db, ctx.tenant.organizationId),
+  ),
+
   addModule: withCoachPermission('assessment:write')
     .input(addModuleSchema)
     .mutation(async ({ ctx, input }) => {
-      const assessmentModule = await addModule(ctx.db, ctx.tenant, ctx.coach.id, input, (keys) =>
+      const result = await addModule(ctx.db, ctx.tenant, ctx.coach.id, input, (keys) =>
         resolveMeasurementTypeIds(ctx.db, ctx.tenant.organizationId, keys),
       );
 
-      if (!assessmentModule) throw notFound('Assessment');
+      if (!result.ok) {
+        if (result.reason === 'ASSESSMENT_NOT_FOUND') throw notFound('Assessment');
+        if (result.reason === 'NO_CONFIGURATION') {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Choose a template or configure the test.',
+          });
+        }
 
-      return assessmentModule;
+        throw unavailableError(result.unavailable);
+      }
+
+      return result.module;
+    }),
+
+  /**
+   * Copies a configured test. No measurement travels with it (§13).
+   */
+  copyModule: withCoachPermission('assessment:write')
+    .input(copyModuleSchema)
+    .mutation(async ({ ctx, input }) => {
+      const result = await copyModule(
+        ctx.db,
+        ctx.tenant,
+        ctx.coach.id,
+        input.moduleId,
+        input.targetAssessmentId,
+      );
+
+      if (!result.ok) {
+        if (result.reason === 'NOT_FOUND') throw notFound('Test');
+        if (result.reason === 'TARGET_NOT_FOUND') throw notFound('Assessment');
+
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message:
+            'That assessment already holds this test. An assessment records each test once — copy it into another assessment instead.',
+        });
+      }
+
+      return result.module;
     }),
 
   updateModuleConfiguration: withPermission('assessment:write')
@@ -120,6 +186,8 @@ export const assessmentsRouter = createTRPCRouter({
 
       if (!updated.ok) {
         if (updated.reason === 'NOT_FOUND') throw notFound('Test');
+        if (updated.reason === 'UNAVAILABLE_REFERENCES')
+          throw unavailableError(updated.unavailable);
         if (updated.reason === 'UNREADABLE') {
           throw new TRPCError({
             code: 'BAD_REQUEST',

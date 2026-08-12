@@ -17,6 +17,8 @@ import { Badge, Button } from '@apex/ui';
 
 import { removeModuleAction } from '../server/actions';
 
+import { CopyModuleButton, type CopyTarget } from './copy-module-button';
+
 export interface ModuleCardData {
   id: string;
   moduleKey: string;
@@ -45,11 +47,14 @@ export function ModuleCard({
   assessmentId,
   typeNames,
   exerciseNames,
+  copyTargets,
 }: {
   module: ModuleCardData;
   assessmentId: string;
   typeNames: Record<string, string>;
   exerciseNames: Record<string, string>;
+  /** The athlete's other assessments — a test is copied into one of those. */
+  copyTargets: readonly CopyTarget[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -74,6 +79,17 @@ export function ModuleCard({
           <Button variant="outline" size="sm" asChild>
             <Link href={`/assessments/${assessmentId}/tests/${module.id}`}>Perform</Link>
           </Button>
+          <Button variant="ghost" size="sm" asChild>
+            <Link href={`/assessments/${assessmentId}/tests/${module.id}/configure`}>
+              Configure
+            </Link>
+          </Button>
+          <CopyModuleButton
+            moduleId={module.id}
+            moduleKey={module.moduleKey}
+            assessmentId={assessmentId}
+            targets={copyTargets}
+          />
           <Button
             variant="ghost"
             size="sm"

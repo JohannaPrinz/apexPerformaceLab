@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 
 import { TRPCError } from '@trpc/server';
 
-import { moduleKeySchema } from '@apex/domain';
+import { moduleConfigurationSchema, moduleKeySchema } from '@apex/domain';
 
 import { api } from '@/trpc/server';
 
@@ -65,6 +65,87 @@ export async function addModuleAction(
     revalidatePath(`/assessments/${assessmentId}`);
 
     return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
+/**
+ * Adds a test the coach configured in the builder.
+ *
+ * The configuration is re-parsed here **and** validated in the procedure —
+ * this action is a caller, not a gate. Every id it carries is checked against
+ * the workspace's catalogues server-side (§17); the browser assembled them and
+ * is not trusted with which ones are reachable.
+ */
+export async function addConfiguredModuleAction(
+  assessmentId: string,
+  moduleKey: string,
+  configuration: unknown,
+): Promise<{ message?: string; moduleId?: string }> {
+  const key = moduleKeySchema.safeParse(moduleKey);
+  if (!key.success) return { message: 'Unknown test.' };
+
+  const parsed = moduleConfigurationSchema.safeParse(configuration);
+  if (!parsed.success) {
+    return { message: parsed.error.issues[0]?.message ?? 'This test is not configured yet.' };
+  }
+
+  try {
+    const created = await api.assessments.addModule({
+      assessmentId,
+      moduleKey: key.data,
+      configuration: parsed.data,
+    });
+    revalidatePath(`/assessments/${assessmentId}`);
+
+    return { moduleId: created.id };
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
+/**
+ * Replaces a test's configuration.
+ *
+ * Refused by the procedure when the change would misdescribe values already
+ * recorded — the message names every obstacle, not just the first.
+ */
+export async function updateModuleConfigurationAction(
+  moduleId: string,
+  assessmentId: string,
+  configuration: unknown,
+): Promise<{ message?: string }> {
+  const parsed = moduleConfigurationSchema.safeParse(configuration);
+  if (!parsed.success) {
+    return { message: parsed.error.issues[0]?.message ?? 'This test is not configured yet.' };
+  }
+
+  try {
+    await api.assessments.updateModuleConfiguration({ moduleId, configuration: parsed.data });
+    revalidatePath(`/assessments/${assessmentId}`);
+
+    return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
+/** Copies a configured test. No measurement travels with it (§13). */
+export async function copyModuleAction(
+  moduleId: string,
+  assessmentId: string,
+  targetAssessmentId?: string,
+): Promise<{ message?: string; moduleId?: string }> {
+  try {
+    const copy = await api.assessments.copyModule({
+      moduleId,
+      ...(targetAssessmentId ? { targetAssessmentId } : {}),
+    });
+    revalidatePath(`/assessments/${assessmentId}`);
+    if (targetAssessmentId) revalidatePath(`/assessments/${targetAssessmentId}`);
+
+    return { moduleId: copy.id };
   } catch (error) {
     return { message: toMessage(error) };
   }
