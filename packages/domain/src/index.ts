@@ -14,19 +14,25 @@
  *    `packages/database/prisma/schema.prisma`.
  * 3. **Module behaviour** — each module's validation schema, its measurement
  *    types and its report renderer, as those modules are built.
+ * 4. **The catalogues** — measurement types and exercises. Which quantities the
+ *    platform knows how to record, and which movements it ships, are
+ *    professional statements under review in one diff, not seed data.
  *
  * What does **not** belong here: database access (that is `@apex/database`),
  * transport shapes (`@apex/types`), and anything that needs a request context.
  * This package is pure, which is what makes the invariants testable in
  * isolation.
  *
- * The registry and the system measurement type catalogue exist today. The
- * invariants arrive with the objects they constrain — writing them for unbuilt
- * features would produce rules nobody can check against a real screen.
+ * The registry, both catalogues, the module configuration contract and the
+ * rules around it exist today. The remaining invariants arrive with the objects
+ * they constrain — writing them for unbuilt features would produce rules nobody
+ * can check against a real screen.
  */
+export * from './exercises';
 export * from './measurement-types';
 export * from './modules';
 export * from './modules/configuration';
+export * from './modules/configuration-change';
 export * from './modules/context';
 export * from './modules/readiness';
 export * from './modules/status';

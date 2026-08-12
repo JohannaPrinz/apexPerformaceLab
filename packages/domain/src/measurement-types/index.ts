@@ -102,7 +102,18 @@ export interface SystemMeasurementType {
  */
 export const SYSTEM_MEASUREMENT_TYPES = [
   // ── Body composition ──────────────────────────────────────────────────────
-  { key: 'weight', name: 'Weight', unit: 'kg', valueType: 'NUMERIC', category: 'body_composition' },
+  {
+    key: 'weight',
+    name: 'Weight',
+    // **The athlete's body weight**, and nothing else. The load moved during a
+    // test is `external_load` under `strength` — a separate quantity in a
+    // separate category, deliberately not this one. Reusing `weight` for both
+    // would make "weight over time" a chart of two different things, and no
+    // later query could tell them apart.
+    unit: 'kg',
+    valueType: 'NUMERIC',
+    category: 'body_composition',
+  },
   {
     key: 'body_fat',
     name: 'Body Fat',
@@ -141,6 +152,31 @@ export const SYSTEM_MEASUREMENT_TYPES = [
     category: 'strength',
   },
   { key: 'force', name: 'Force', unit: 'N', valueType: 'NUMERIC', category: 'strength' },
+  {
+    key: 'external_load',
+    name: 'External Load',
+    // The load moved in an attempt — the bar, the stack, the added weight.
+    // **Never the athlete's body weight**, which is `weight` under
+    // `body_composition`. Two quantities that happen to share a unit are still
+    // two quantities: one describes the person, the other what they moved.
+    //
+    // Which movement the load belongs to is the Exercise on the Measurement, not
+    // part of this type (§12a). "Bench press load" as a type would mean one type
+    // per movement, and the catalogue would grow with the exercise catalogue.
+    unit: 'kg',
+    valueType: 'NUMERIC',
+    category: 'strength',
+  },
+  {
+    key: 'repetitions',
+    name: 'Repetitions',
+    // A count, so the unit names what is counted. Numeric rather than an
+    // integer type because the model has three value columns and no fourth —
+    // the column is `Decimal(12,4)` and a whole number stores exactly.
+    unit: 'repetitions',
+    valueType: 'NUMERIC',
+    category: 'strength',
+  },
 
   // ── Muscle activity ───────────────────────────────────────────────────────
   // The quantity, not the device. Myoact is a possible source, recorded on the

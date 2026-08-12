@@ -18,8 +18,33 @@ import {
  * that would fail on its own.
  */
 describe('system measurement type catalogue', () => {
-  it('holds the twelve MVP types', () => {
-    expect(SYSTEM_MEASUREMENT_TYPES).toHaveLength(12);
+  it('holds the fourteen MVP types', () => {
+    expect(SYSTEM_MEASUREMENT_TYPES).toHaveLength(14);
+  });
+
+  /**
+   * The catalogue is append-only in practice: a key is the identity of a system
+   * type and a renamed one silently orphans every measurement that referenced
+   * it. This pins the full set, so an edit to any existing entry has to be
+   * deliberate.
+   */
+  it('keeps every previously shipped key', () => {
+    expect(SYSTEM_MEASUREMENT_TYPES.map((type) => type.key)).toEqual([
+      'weight',
+      'body_fat',
+      'heart_rate',
+      'lactate',
+      'rpe',
+      'pace',
+      'grip_strength',
+      'force',
+      'external_load',
+      'repetitions',
+      'muscle_activity',
+      'range_of_motion',
+      'jump_height',
+      'running_cadence',
+    ]);
   });
 
   it('uses unique keys — they are the identity of a system type', () => {
@@ -107,6 +132,48 @@ describe('system measurement type catalogue', () => {
     expect(findSystemMeasurementType('grip_strength')?.unit).toBe('kg');
     expect(findSystemMeasurementType('force')?.unit).toBe('N');
   });
+
+  /**
+   * A maximal-strength attempt is three separate facts: which movement (the
+   * Exercise, §12a), how much was moved, and how many times. The first is a
+   * reference on the Measurement; the other two are quantities here.
+   */
+  it('supports a maximal strength attempt', () => {
+    expect(findSystemMeasurementType('external_load')?.unit).toBe('kg');
+    expect(findSystemMeasurementType('repetitions')?.unit).toBe('repetitions');
+  });
+
+  /**
+   * `weight` is the athlete's body weight; `external_load` is what they moved.
+   * They share a unit and nothing else — separate keys, separate categories.
+   * Collapsing them would make "weight over time" a chart of two different
+   * things that no later query could separate again.
+   */
+  it('keeps body weight and moved load apart', () => {
+    const bodyWeight = findSystemMeasurementType('weight');
+    const load = findSystemMeasurementType('external_load');
+
+    expect(bodyWeight?.category).toBe('body_composition');
+    expect(load?.category).toBe('strength');
+    expect(bodyWeight?.key).not.toBe(load?.key);
+  });
+
+  /**
+   * A load belongs to a movement, but the movement is the Exercise on the
+   * Measurement — not part of the type. "Bench press load" as a type would mean
+   * one type per movement, and the catalogue would grow with the exercise
+   * catalogue.
+   */
+  it('names no exercise', () => {
+    const movements = ['bench', 'squat', 'deadlift', 'press', 'pull', 'row'];
+
+    for (const type of SYSTEM_MEASUREMENT_TYPES) {
+      const haystack = `${type.key} ${type.name}`.toLowerCase();
+      for (const movement of movements) {
+        expect(haystack, `${type.key} names a movement`).not.toContain(movement);
+      }
+    }
+  });
 });
 
 describe('category is a filter, not a module binding (§12)', () => {
@@ -114,6 +181,8 @@ describe('category is a filter, not a module binding (§12)', () => {
     expect(systemMeasurementTypesByCategory('strength').map((type) => type.key)).toEqual([
       'grip_strength',
       'force',
+      'external_load',
+      'repetitions',
     ]);
   });
 

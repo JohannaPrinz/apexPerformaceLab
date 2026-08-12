@@ -3,14 +3,20 @@ import { describe, expect, it } from 'vitest';
 import { findSystemMeasurementType } from '../measurement-types';
 
 import { moduleConfigurationSchema } from './configuration';
-import { findMeasurementTemplate, MEASUREMENT_TEMPLATES, templatesForModule } from './templates';
+import {
+  findMeasurementTemplate,
+  MEASUREMENT_TEMPLATES,
+  templateMeasurementKeys,
+  templatesForModule,
+  type MeasurementTemplate,
+} from './templates';
 
 import { ASSESSMENT_PRESETS, isModuleKey, MODULE_KEYS } from './index';
 
 describe('measurement templates', () => {
   it('names only measurement types that exist in the catalogue', () => {
     for (const template of MEASUREMENT_TEMPLATES) {
-      for (const key of template.measurementTypeKeys) {
+      for (const key of templateMeasurementKeys(template)) {
         expect(
           findSystemMeasurementType(key),
           `${template.key} → "${key}" is unknown`,
@@ -31,7 +37,10 @@ describe('measurement templates', () => {
     for (const template of MEASUREMENT_TEMPLATES) {
       const result = moduleConfigurationSchema.safeParse({
         // Ids are resolved when the module is created; the shape is what matters.
-        measurementTypeIds: template.measurementTypeKeys.map((key) => `mt_${key}`),
+        measurementTypes: template.measurements.map((entry) => ({
+          measurementTypeId: `mt_${entry.key}`,
+          role: entry.role,
+        })),
         passes: template.passes,
         recordsSide: template.recordsSide,
         dimensions: template.dimensions,
@@ -50,8 +59,16 @@ describe('measurement templates', () => {
   it('records the four quantities a lactate stage needs, together', () => {
     const template = findMeasurementTemplate('lactate_step_test');
 
-    expect(template?.measurementTypeKeys).toEqual(['lactate', 'heart_rate', 'rpe', 'pace']);
+    expect(template && templateMeasurementKeys(template)).toEqual([
+      'lactate',
+      'heart_rate',
+      'rpe',
+      'pace',
+    ]);
     expect(template?.passes).toBeGreaterThan(1);
+    // All four required: a stage missing its heart rate breaks the pairing the
+    // curves rest on.
+    expect(template?.measurements.every((entry) => entry.role === 'required')).toBe(true);
   });
 
   /**
@@ -112,5 +129,138 @@ describe('the three namespaces stay separate', () => {
 
   it('template keys are unique', () => {
     expect(new Set(templateKeys).size).toBe(templateKeys.length);
+  });
+});
+
+/**
+ * The separation §2 of the specification asks for, asserted rather than
+ * assumed:
+ *
+ *   Template   — the global professional starting point
+ *   Module     — the concrete configuration, copied and thereafter independent
+ *   Type       — a quantity that may be recorded
+ *   Measurement— a value that was recorded
+ *
+ * The structural guarantee is that a configuration holds **no reference back to
+ * the template it came from**. These tests pin that: a template can be changed,
+ * replaced or deleted entirely and no configuration derived from it moves.
+ */
+describe('a template is a starting point, never a live link', () => {
+  // Typed as the general shape, not `(typeof MEASUREMENT_TEMPLATES)[number]`:
+  // `as const` narrows each entry to its own literal type, so the tuple element
+  // type would only accept the first template.
+  const applyTemplate = (template: MeasurementTemplate) =>
+    moduleConfigurationSchema.parse({
+      measurementTypes: template.measurements.map((entry) => ({
+        measurementTypeId: `mt_${entry.key}`,
+        role: entry.role,
+      })),
+      passes: template.passes,
+      recordsSide: template.recordsSide,
+      dimensions: template.dimensions,
+    });
+
+  it('stores no template key in the resulting configuration', () => {
+    const configuration = applyTemplate(MEASUREMENT_TEMPLATES[0]);
+
+    expect(configuration).not.toHaveProperty('templateKey');
+    expect(configuration).not.toHaveProperty('template');
+    expect(JSON.stringify(configuration)).not.toContain('lactate_step_test');
+  });
+
+  it('carries the template’s roles into the configuration', () => {
+    const bodyFat = findMeasurementTemplate('body_fat_measurement');
+    const configuration = applyTemplate(bodyFat!);
+
+    expect(configuration.measurementTypes).toEqual([
+      { measurementTypeId: 'mt_body_fat', role: 'required' },
+      { measurementTypeId: 'mt_weight', role: 'recommended' },
+    ]);
+  });
+
+  /**
+   * The copy is a plain value. Mutating it — which is what a coach editing the
+   * test does — cannot reach back into the registry, and the next module
+   * created from the same template starts from the template again.
+   */
+  it('is independent of the template once applied', () => {
+    const template = findMeasurementTemplate('lactate_step_test')!;
+    const first = applyTemplate(template);
+
+    const edited = { ...first, passes: 9, measurementTypes: first.measurementTypes.slice(0, 1) };
+
+    expect(edited.passes).toBe(9);
+    expect(template.passes).toBe(4);
+    expect(templateMeasurementKeys(template)).toHaveLength(4);
+
+    const second = applyTemplate(template);
+    expect(second.passes).toBe(4);
+    expect(second.measurementTypes).toHaveLength(4);
+  });
+
+  it('proposes no exercise — which movement a test covers is chosen per assessment', () => {
+    for (const template of MEASUREMENT_TEMPLATES) {
+      expect(template, `${template.key} presumes an exercise`).not.toHaveProperty('exerciseKeys');
+      expect(applyTemplate(template).exerciseIds).toEqual([]);
+    }
+  });
+});
+
+/**
+ * A strength test is recorded one of two ways, and the two are **test methods,
+ * not preferences**: an instrument reads a force in newtons, a barbell test
+ * records a load and a repetition count. Neither converts to the other, so both
+ * templates exist and the coach picks the one matching the test performed.
+ *
+ * Nothing binds either set to the `strength` module — §12 keeps types
+ * independent of modules — so a coach may also combine them freely in the
+ * builder. The templates only propose.
+ */
+describe('the two strength test methods', () => {
+  it('offers both for the strength module', () => {
+    expect(templatesForModule('strength').map((template) => template.key)).toEqual([
+      'max_strength_test',
+      'force_measurement',
+    ]);
+  });
+
+  it('records load and repetitions for the barbell test', () => {
+    const template = findMeasurementTemplate('max_strength_test');
+
+    expect(template && templateMeasurementKeys(template)).toEqual(['external_load', 'repetitions']);
+    // Both required: a load without a repetition count does not say whether it
+    // was one maximal attempt or a set.
+    expect(template?.measurements.every((entry) => entry.role === 'required')).toBe(true);
+  });
+
+  it('records force alone for the instrument reading', () => {
+    const template = findMeasurementTemplate('force_measurement');
+
+    expect(template && templateMeasurementKeys(template)).toEqual(['force']);
+  });
+
+  it('never mixes the two methods in one template', () => {
+    for (const template of MEASUREMENT_TEMPLATES) {
+      const keys = templateMeasurementKeys(template) as readonly string[];
+      const hasForce = keys.includes('force');
+      const hasLoad = keys.includes('external_load');
+
+      expect(hasForce && hasLoad, `${template.key} mixes newtons with a lifted load`).toBe(false);
+    }
+  });
+
+  /**
+   * A barbell is lifted with both sides at once; a dynamometer takes each side
+   * separately. The side setting follows the instrument, not a house style.
+   */
+  it('records sides only where the method can distinguish them', () => {
+    expect(findMeasurementTemplate('max_strength_test')?.recordsSide).toBe(false);
+    expect(findMeasurementTemplate('force_measurement')?.recordsSide).toBe(true);
+  });
+
+  it('proposes no exercise for either — the movement is chosen per assessment', () => {
+    for (const key of ['max_strength_test', 'force_measurement']) {
+      expect(findMeasurementTemplate(key)).not.toHaveProperty('exerciseKeys');
+    }
   });
 });
