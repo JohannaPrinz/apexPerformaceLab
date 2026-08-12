@@ -59,6 +59,12 @@ export default {
         'notes',
         'appointments',
 
+        // Feature slices — catalogues
+        // Workspace- and system-owned reference data, not attached to an
+        // athlete. Measurement types have no slice of their own; they are
+        // maintained in `packages/domain` and belong to `domain`.
+        'exercises',
+
         // Feature slices — cross-cutting surfaces
         'timeline',
         'portal',
