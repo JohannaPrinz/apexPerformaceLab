@@ -2,7 +2,7 @@ import 'server-only';
 
 import { TRPCError } from '@trpc/server';
 
-import { describeRemovalRefusal } from '@apex/domain';
+import { describeRemovalRefusal, describeVariantRefusal } from '@apex/domain';
 import { AppError } from '@apex/types';
 
 import { createTRPCRouter, withCoachPermission, withPermission } from '@/server/api/trpc';
@@ -13,16 +13,20 @@ import {
   listExercisesSchema,
   setExerciseArchivedSchema,
   updateExerciseSchema,
+  variantLinkSchema,
 } from '../schemas';
 
 import {
   createExercise,
   exerciseUsage,
   getExercise,
+  linkVariants,
   listExercises,
   removeExercise,
   setExerciseArchived,
+  unlinkVariants,
   updateExercise,
+  variantsOf,
 } from './service';
 
 const notFound = () =>
@@ -57,6 +61,20 @@ export const exercisesRouter = createTRPCRouter({
       if (!exercise) throw notFound();
 
       return exerciseUsage(ctx.db, ctx.tenant, input.exerciseId);
+    }),
+
+  /**
+   * The exercises linked as variations of this one.
+   *
+   * Symmetric and stored once, so this reads both sides of the pair.
+   */
+  variants: withPermission('exercise:read')
+    .input(exerciseIdSchema)
+    .query(async ({ ctx, input }) => {
+      const exercise = await getExercise(ctx.db, ctx.tenant, input.exerciseId);
+      if (!exercise) throw notFound();
+
+      return variantsOf(ctx.db, ctx.tenant, input.exerciseId);
     }),
 
   create: withCoachPermission('exercise:write')
@@ -117,5 +135,39 @@ export const exercisesRouter = createTRPCRouter({
       }
 
       return { exerciseId: input.exerciseId };
+    }),
+
+  /**
+   * Links two exercises as variations of one another.
+   *
+   * Refused across workspaces, for a self-link, and when both are system
+   * exercises — that link would join the shared catalogue and every other
+   * workspace would see it.
+   */
+  linkVariant: withPermission('exercise:write')
+    .input(variantLinkSchema)
+    .mutation(async ({ ctx, input }) => {
+      const result = await linkVariants(ctx.db, ctx.tenant, input.exerciseId, input.variantId);
+
+      if (!result.ok) {
+        if (result.reason === 'NOT_FOUND') throw notFound();
+
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: describeVariantRefusal(result.reason),
+        });
+      }
+
+      return input;
+    }),
+
+  /** Removes a variant link. This workspace's own only — a system link is shared. */
+  unlinkVariant: withPermission('exercise:write')
+    .input(variantLinkSchema)
+    .mutation(async ({ ctx, input }) => {
+      const result = await unlinkVariants(ctx.db, ctx.tenant, input.exerciseId, input.variantId);
+      if (!result.ok) throw notFound();
+
+      return input;
     }),
 });

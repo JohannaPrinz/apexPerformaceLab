@@ -11,9 +11,11 @@ export {
   listExercisesSchema,
   setExerciseArchivedSchema,
   updateExerciseSchema,
+  variantLinkSchema,
   type CreateExerciseInput,
   type ExerciseIdInput,
   type ListExercisesInput,
   type SetExerciseArchivedInput,
   type UpdateExerciseInput,
+  type VariantLinkInput,
 } from './schemas';

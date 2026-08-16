@@ -7,10 +7,15 @@ import { scoped, withTenant } from '@apex/database/tenant';
 import {
   canArchiveExercise,
   canEditExercise,
+  canLinkVariants,
   canRemoveExercise,
+  readExerciseMedia,
   scopeOf,
+  variantPairKey,
+  type ExerciseMedia,
   type ExerciseScope,
   type ExerciseUsage,
+  type VariantLinkRefusal,
 } from '@apex/domain';
 import type { TenantContext } from '@apex/types';
 
@@ -35,14 +40,27 @@ import type { CreateExerciseInput, ListExercisesInput, UpdateExerciseInput } fro
  * so, and by a where clause that structurally cannot select it.
  */
 
-type ExerciseDb = Pick<PrismaClientInstance, 'exercise' | 'measurement'>;
+type ExerciseDb = Pick<PrismaClientInstance, 'exercise' | 'measurement' | 'exerciseVariant'>;
 
 const exerciseSelect = {
   id: true,
   key: true,
   name: true,
+  canonicalName: true,
   description: true,
-  muscleGroups: true,
+  instructions: true,
+  primaryMuscles: true,
+  secondaryMuscles: true,
+  equipment: true,
+  category: true,
+  forceType: true,
+  mechanic: true,
+  difficulty: true,
+  unilateral: true,
+  media: true,
+  source: true,
+  sourceId: true,
+  license: true,
   archivedAt: true,
   organizationId: true,
   createdByCoachId: true,
@@ -52,9 +70,25 @@ const exerciseSelect = {
 export interface ExerciseRecord {
   id: string;
   key: string;
+  /** German display name. */
   name: string;
+  /** Canonical English name. */
+  canonicalName: string;
   description: string | null;
-  muscleGroups: string[];
+  instructions: string[];
+  primaryMuscles: string[];
+  secondaryMuscles: string[];
+  equipment: string[];
+  category: string | null;
+  forceType: string | null;
+  mechanic: string | null;
+  difficulty: string | null;
+  unilateral: boolean;
+  media: ExerciseMedia;
+  /** Null on an exercise authored here rather than imported. */
+  source: string | null;
+  sourceId: string | null;
+  license: string | null;
   archivedAt: Date | null;
   organizationId: string | null;
   createdByCoachId: string | null;
@@ -65,20 +99,19 @@ export interface ExerciseRecord {
   editable: boolean;
 }
 
-function toRecord(row: {
-  id: string;
-  key: string;
-  name: string;
-  description: string | null;
-  muscleGroups: string[];
-  archivedAt: Date | null;
-  organizationId: string | null;
-  createdByCoachId: string | null;
-  createdAt: Date;
-}): ExerciseRecord {
+function toRecord(
+  row: Omit<ExerciseRecord, 'scope' | 'editable' | 'media'> & { media: unknown },
+): ExerciseRecord {
   const scope = scopeOf(row);
 
-  return { ...row, scope, editable: canEditExercise(scope) };
+  return {
+    ...row,
+    // A malformed media list must not make the exercise unreadable — the
+    // movement is still a movement without its picture.
+    media: readExerciseMedia(row.media),
+    scope,
+    editable: canEditExercise(scope),
+  };
 }
 
 /**
@@ -108,13 +141,57 @@ function toKey(name: string): string {
 export async function listExercises(
   db: ExerciseDb,
   tenant: Pick<TenantContext, 'organizationId'>,
-  { search, includeArchived }: ListExercisesInput,
+  {
+    search,
+    includeArchived,
+    category,
+    difficulty,
+    forceType,
+    mechanic,
+    unilateral,
+    primaryMuscles,
+    secondaryMuscles,
+    equipment,
+  }: ListExercisesInput,
 ): Promise<ExerciseRecord[]> {
+  /**
+   * `hasEvery`, not `hasSome`: asking for chest *and* dumbbell means both.
+   * A list filter with one entry behaves identically either way, so the
+   * distinction only shows up where the coach narrowed deliberately.
+   */
+  const listFilters = [
+    ...(primaryMuscles ? [{ primaryMuscles: { hasEvery: primaryMuscles } }] : []),
+    ...(secondaryMuscles ? [{ secondaryMuscles: { hasEvery: secondaryMuscles } }] : []),
+    ...(equipment ? [{ equipment: { hasEvery: equipment } }] : []),
+  ];
   const rows = await db.exercise.findMany({
     where: {
-      OR: [{ organizationId: tenant.organizationId }, { organizationId: null }],
+      // **`AND` of two `OR`s, not two `OR` keys.** Prisma takes one `where`
+      // object, so a second `OR` would replace the first — and the first is the
+      // tenant filter. Spelling the conjunction out is what stops a search from
+      // quietly widening the query to every workspace.
+      AND: [
+        { OR: [{ organizationId: tenant.organizationId }, { organizationId: null }] },
+        // Both names: a coach may know the movement in German or by its
+        // international term, and the catalogue answers to either.
+        ...(search
+          ? [
+              {
+                OR: [
+                  { name: { contains: search, mode: 'insensitive' as const } },
+                  { canonicalName: { contains: search, mode: 'insensitive' as const } },
+                ],
+              },
+            ]
+          : []),
+        ...listFilters,
+      ],
+      ...(category === undefined ? {} : { category }),
+      ...(difficulty === undefined ? {} : { difficulty }),
+      ...(forceType === undefined ? {} : { forceType }),
+      ...(mechanic === undefined ? {} : { mechanic }),
+      ...(unilateral === undefined ? {} : { unilateral }),
       ...(includeArchived ? {} : { archivedAt: null }),
-      ...(search ? { name: { contains: search, mode: 'insensitive' as const } } : {}),
     },
     select: exerciseSelect,
     orderBy: [{ organizationId: 'desc' }, { name: 'asc' }],
@@ -140,18 +217,42 @@ export async function getExercise(
   return row ? toRecord(row) : null;
 }
 
+/**
+ * The catalogue fields a workspace may write.
+ *
+ * `source`, `sourceId` and `license` are absent on purpose: they describe
+ * *imported* data, and an exercise created here was authored here. The schema
+ * omits them too, so a request cannot claim otherwise — this is the second
+ * place that holds.
+ */
+function catalogueData(input: CreateExerciseInput) {
+  return {
+    name: input.name,
+    canonicalName: input.canonicalName,
+    description: input.description ?? null,
+    instructions: input.instructions,
+    primaryMuscles: input.primaryMuscles,
+    secondaryMuscles: input.secondaryMuscles,
+    equipment: input.equipment,
+    category: input.category ?? null,
+    forceType: input.forceType ?? null,
+    mechanic: input.mechanic ?? null,
+    difficulty: input.difficulty ?? null,
+    unilateral: input.unilateral,
+    media: input.media,
+  };
+}
+
 export async function createExercise(
   db: ExerciseDb,
   tenant: Pick<TenantContext, 'organizationId'>,
   createdByCoachId: string,
-  { name, description, muscleGroups }: CreateExerciseInput,
+  input: CreateExerciseInput,
 ): Promise<ExerciseRecord> {
   const created = await db.exercise.create({
     data: withTenant(tenant, {
-      key: toKey(name),
-      name,
-      description: description ?? null,
-      muscleGroups,
+      key: toKey(input.name),
+      ...catalogueData(input),
       createdByCoachId,
     }),
     select: exerciseSelect,
@@ -173,11 +274,13 @@ export type ExerciseWriteResult =
 export async function updateExercise(
   db: ExerciseDb,
   tenant: Pick<TenantContext, 'organizationId'>,
-  { exerciseId, name, description, muscleGroups }: UpdateExerciseInput,
+  { exerciseId, ...input }: UpdateExerciseInput,
 ): Promise<ExerciseWriteResult> {
   const { count } = await db.exercise.updateMany({
     where: scoped(tenant, { id: exerciseId }),
-    data: { name, description: description ?? null, muscleGroups },
+    // The key is not rewritten: it is the identity an import and a variant link
+    // match on, and renaming a movement must not orphan either.
+    data: catalogueData(input),
   });
 
   if (count === 0) return { ok: false, reason: 'NOT_FOUND' };
@@ -261,4 +364,128 @@ export async function removeExercise(
 /** Whether this workspace may archive the exercise — its own only. */
 export function mayArchive(exercise: ExerciseRecord): boolean {
   return canArchiveExercise(exercise.scope);
+}
+
+// ── Variants ─────────────────────────────────────────────────────────────────
+
+/**
+ * The exercises linked as variations of this one.
+ *
+ * The relation is symmetric and stored once, with the smaller id first, so
+ * "the variants of X" reads **both** columns. That is the price of not holding
+ * the same fact twice, and it is paid here rather than by the caller.
+ *
+ * Links are filtered like the catalogue itself: system links are shared, and a
+ * workspace sees only its own on top. A link another workspace wrote is
+ * unreachable, and so is the exercise on its far side.
+ */
+export async function variantsOf(
+  db: ExerciseDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  exerciseId: string,
+): Promise<RelatedExercise[]> {
+  const links = await db.exerciseVariant.findMany({
+    where: {
+      OR: [{ exerciseId }, { variantId: exerciseId }],
+      AND: [{ OR: [{ organizationId: tenant.organizationId }, { organizationId: null }] }],
+    },
+    select: { exerciseId: true, variantId: true, type: true },
+  });
+
+  const otherIds = links.map((link) =>
+    link.exerciseId === exerciseId ? link.variantId : link.exerciseId,
+  );
+
+  /**
+   * The kind of relationship, kept beside the exercise it points at.
+   *
+   * Reading the rows without their `type` was the defect this fixes: every
+   * alternative would have reached the coach as merely related, and nothing in
+   * the counts would have shown it.
+   */
+  const typeForId = new Map(
+    links.map((link) => [
+      link.exerciseId === exerciseId ? link.variantId : link.exerciseId,
+      link.type,
+    ]),
+  );
+  if (otherIds.length === 0) return [];
+
+  const rows = await db.exercise.findMany({
+    where: {
+      id: { in: otherIds },
+      OR: [{ organizationId: tenant.organizationId }, { organizationId: null }],
+    },
+    select: exerciseSelect,
+    orderBy: { name: 'asc' },
+  });
+
+  return rows.map((row) => ({
+    ...toRecord(row),
+    // `related` only where the row somehow lost its link — never a silent
+    // downgrade of an alternative, which is the failure this guards.
+    relationship: typeForId.get(row.id) ?? 'related',
+  }));
+}
+
+/** An exercise reached through a relationship, carrying the kind of it. */
+export type RelatedExercise = ExerciseRecord & { readonly relationship: string };
+
+export type VariantResult =
+  { ok: true } | { ok: false; reason: 'NOT_FOUND' } | { ok: false; reason: VariantLinkRefusal };
+
+/**
+ * Links two exercises as variants of one another.
+ *
+ * Both must be readable in this workspace, and `canLinkVariants` decides the
+ * rest: no self-link, never across workspaces, and a workspace may not link two
+ * system exercises — that link would join the shared catalogue and every other
+ * workspace would see it.
+ *
+ * The pair is stored once, ordered, which is also what the database CHECK
+ * enforces. Writing it twice in opposite order is therefore impossible rather
+ * than merely discouraged.
+ */
+export async function linkVariants(
+  db: ExerciseDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  exerciseId: string,
+  variantId: string,
+): Promise<VariantResult> {
+  const [a, b] = await Promise.all([
+    getExercise(db, tenant, exerciseId),
+    getExercise(db, tenant, variantId),
+  ]);
+
+  if (!a || !b) return { ok: false, reason: 'NOT_FOUND' };
+
+  const verdict = canLinkVariants(a, b, tenant.organizationId);
+  if (!verdict.allowed) return { ok: false, reason: verdict.reason };
+
+  const pair = variantPairKey(a.id, b.id);
+
+  await db.exerciseVariant.upsert({
+    where: { exerciseId_variantId: pair },
+    // Already linked is not a failure: the pair is the fact, and it is present.
+    update: {},
+    create: { ...pair, organizationId: tenant.organizationId },
+  });
+
+  return { ok: true };
+}
+
+/** Removes a variant link. Only this workspace's own — a system link is shared. */
+export async function unlinkVariants(
+  db: ExerciseDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  exerciseId: string,
+  variantId: string,
+): Promise<VariantResult> {
+  const pair = variantPairKey(exerciseId, variantId);
+
+  const { count } = await db.exerciseVariant.deleteMany({
+    where: scoped(tenant, pair),
+  });
+
+  return count === 0 ? { ok: false, reason: 'NOT_FOUND' } : { ok: true };
 }

@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { PrismaClientInstance } from '@apex/database';
 
+import { listExercisesSchema } from '../schemas';
+
 import {
   createExercise,
   getExercise,
@@ -9,6 +11,7 @@ import {
   removeExercise,
   setExerciseArchived,
   updateExercise,
+  variantsOf,
 } from './service';
 
 /**
@@ -42,8 +45,21 @@ interface ExerciseRow {
   id: string;
   key: string;
   name: string;
+  canonicalName: string;
   description: string | null;
-  muscleGroups: string[];
+  instructions: string[];
+  primaryMuscles: string[];
+  secondaryMuscles: string[];
+  equipment: string[];
+  category: string | null;
+  forceType: string | null;
+  mechanic: string | null;
+  difficulty: string | null;
+  unilateral: boolean;
+  media: unknown;
+  source: string | null;
+  sourceId: string | null;
+  license: string | null;
   archivedAt: Date | null;
   organizationId: string | null;
   createdByCoachId: string | null;
@@ -53,9 +69,22 @@ interface ExerciseRow {
 const systemRow: ExerciseRow = {
   id: 'ex_system',
   key: 'bench_press',
-  name: 'Bench Press',
+  name: 'Bankdrücken',
+  canonicalName: 'Bench Press',
   description: null,
-  muscleGroups: [],
+  instructions: [],
+  primaryMuscles: [],
+  secondaryMuscles: [],
+  equipment: [],
+  category: null,
+  forceType: null,
+  mechanic: null,
+  difficulty: null,
+  unilateral: false,
+  media: null,
+  source: null,
+  sourceId: null,
+  license: null,
   archivedAt: null,
   organizationId: null,
   createdByCoachId: null,
@@ -66,9 +95,22 @@ const workspaceRow: ExerciseRow = {
   ...systemRow,
   id: 'ex_own',
   key: 'hip_thrust',
-  name: 'Hip thrust',
+  name: 'Hüftheben',
+  canonicalName: 'Hip Thrust',
   organizationId: 'org_a',
   createdByCoachId: 'coach_1',
+};
+
+/** The catalogue fields a form submits — everything but key and provenance. */
+const catalogueInput = {
+  name: 'Hüftheben',
+  canonicalName: 'Hip Thrust',
+  instructions: [],
+  primaryMuscles: [],
+  secondaryMuscles: [],
+  equipment: [],
+  unilateral: false,
+  media: [],
 };
 
 function fakeDb(rows: ExerciseRow[] = []) {
@@ -86,14 +128,22 @@ function fakeDb(rows: ExerciseRow[] = []) {
   const measurement = {
     count: vi.fn<(args: QueryArgs) => Promise<number>>().mockResolvedValue(0),
   };
+  const exerciseVariant = {
+    findMany: vi.fn<(args: QueryArgs) => Promise<unknown[]>>().mockResolvedValue([]),
+    upsert: vi.fn<(args: QueryArgs) => Promise<unknown>>().mockResolvedValue({}),
+    deleteMany: vi
+      .fn<(args: QueryArgs) => Promise<{ count: number }>>()
+      .mockResolvedValue({ count: 1 }),
+  };
 
   return {
-    db: { exercise, measurement } as unknown as Pick<
+    db: { exercise, measurement, exerciseVariant } as unknown as Pick<
       PrismaClientInstance,
-      'exercise' | 'measurement'
+      'exercise' | 'measurement' | 'exerciseVariant'
     >,
     exercise,
     measurement,
+    exerciseVariant,
   };
 }
 
@@ -105,14 +155,46 @@ const argsOf = (mock: { mock: { calls: [QueryArgs][] } }, index = 0): QueryArgs 
 };
 
 describe('reads see this workspace and the system catalogue', () => {
-  it('filters on “this workspace OR system-wide”, never on neither', () => {
+  it('filters on this workspace or system-wide, never on neither', async () => {
     const { db, exercise } = fakeDb();
 
-    void listExercises(db, TENANT, { includeArchived: false });
+    await listExercises(db, TENANT, { includeArchived: false });
 
     expect(argsOf(exercise.findMany).where).toMatchObject({
+      AND: [{ OR: [{ organizationId: 'org_a' }, { organizationId: null }] }],
+    });
+  });
+
+  /**
+   * The tenant filter and the search are both `OR`s, and Prisma takes one
+   * `where` object — so a second `OR` key would **replace** the first. This is
+   * the test that catches a search quietly widening the query to every
+   * workspace, which is why it asserts the tenant clause is still there rather
+   * than merely that the search clause arrived.
+   */
+  it('keeps the tenant filter when a search is added', async () => {
+    const { db, exercise } = fakeDb();
+
+    await listExercises(db, TENANT, { search: 'kniebeuge', includeArchived: false });
+
+    const where = argsOf(exercise.findMany).where as { AND: Record<string, unknown>[] };
+
+    expect(where.AND).toHaveLength(2);
+    expect(where.AND[0]).toMatchObject({
       OR: [{ organizationId: 'org_a' }, { organizationId: null }],
     });
+    expect(JSON.stringify(where.AND[1])).toContain('canonicalName');
+  });
+
+  it('searches the German name and the canonical English one', async () => {
+    const { db, exercise } = fakeDb();
+
+    await listExercises(db, TENANT, { search: 'squat', includeArchived: false });
+
+    const rendered = JSON.stringify(argsOf(exercise.findMany).where);
+
+    expect(rendered).toContain('"name"');
+    expect(rendered).toContain('"canonicalName"');
   });
 
   it('never names another workspace', async () => {
@@ -150,12 +232,13 @@ describe('writes are scoped and therefore cannot reach a system exercise', () =>
   it('stamps the tenant and the author onto a new exercise', async () => {
     const { db, exercise } = fakeDb();
 
-    await createExercise(db, TENANT, 'coach_1', { name: 'Hip thrust', muscleGroups: [] });
+    await createExercise(db, TENANT, 'coach_1', catalogueInput);
 
     expect(argsOf(exercise.create).data).toMatchObject({
       organizationId: 'org_a',
       createdByCoachId: 'coach_1',
-      name: 'Hip thrust',
+      name: 'Hüftheben',
+      canonicalName: 'Hip Thrust',
     });
   });
 
@@ -163,8 +246,8 @@ describe('writes are scoped and therefore cannot reach a system exercise', () =>
     const { db, exercise } = fakeDb();
 
     await createExercise(db, TENANT, 'coach_1', {
+      ...catalogueInput,
       name: 'Bulgarian Split Squat',
-      muscleGroups: [],
     });
 
     expect(argsOf(exercise.create).data?.['key']).toBe('bulgarian_split_squat');
@@ -174,9 +257,9 @@ describe('writes are scoped and therefore cannot reach a system exercise', () =>
     const { db, exercise } = fakeDb([workspaceRow]);
 
     await updateExercise(db, TENANT, {
+      ...catalogueInput,
       exerciseId: 'ex_system',
       name: 'Renamed',
-      muscleGroups: [],
     });
 
     expect(argsOf(exercise.updateMany).where).toMatchObject({
@@ -190,9 +273,9 @@ describe('writes are scoped and therefore cannot reach a system exercise', () =>
     exercise.updateMany.mockResolvedValue({ count: 0 });
 
     const result = await updateExercise(db, TENANT, {
+      ...catalogueInput,
       exerciseId: 'ex_system',
       name: 'Renamed',
-      muscleGroups: [],
     });
 
     // FORBIDDEN would confirm the row exists (docs/SECURITY.md §4).
@@ -255,5 +338,117 @@ describe('deleting versus archiving', () => {
       reason: 'SYSTEM_EXERCISE',
     });
     expect(exercise.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('listing with filters', () => {
+  const call = async (input: Record<string, unknown> = {}) => {
+    const { db, exercise } = fakeDb();
+    await listExercises(db, TENANT, listExercisesSchema.parse(input));
+
+    return argsOf(exercise.findMany).where;
+  };
+
+  it('adds no narrowing when nothing was asked for', async () => {
+    const where = await call({});
+
+    expect(where['category']).toBeUndefined();
+    expect(where['unilateral']).toBeUndefined();
+    expect((where['AND'] as unknown[]).length).toBe(1);
+  });
+
+  it('narrows by each scalar filter', async () => {
+    const where = await call({
+      category: 'strength',
+      difficulty: 'beginner',
+      forceType: 'pull',
+      mechanic: 'isolation',
+      unilateral: true,
+    });
+
+    expect(where).toMatchObject({
+      category: 'strength',
+      difficulty: 'beginner',
+      forceType: 'pull',
+      mechanic: 'isolation',
+      unilateral: true,
+    });
+  });
+
+  /**
+   * `hasEvery`, because "chest and dumbbell" means both. `hasSome` would widen
+   * a deliberate narrowing into an either/or and quietly return more.
+   */
+  it('requires every value of a list filter, not any', async () => {
+    const where = await call({ primaryMuscles: ['chest', 'triceps'], equipment: 'dumbbell' });
+    const and = where['AND'] as Record<string, unknown>[];
+
+    expect(and).toContainEqual({ primaryMuscles: { hasEvery: ['chest', 'triceps'] } });
+    expect(and).toContainEqual({ equipment: { hasEvery: ['dumbbell'] } });
+  });
+
+  it('takes a single value as well as a list', async () => {
+    const where = await call({ equipment: 'dumbbell' });
+
+    expect(where['AND']).toContainEqual({ equipment: { hasEvery: ['dumbbell'] } });
+  });
+
+  it('keeps the tenant clause when search and filters are combined', async () => {
+    const where = await call({ search: 'Kniebeuge', category: 'strength' });
+    const and = where['AND'] as Record<string, unknown>[];
+
+    expect(and[0]).toEqual({
+      OR: [{ organizationId: TENANT.organizationId }, { organizationId: null }],
+    });
+    expect(where['category']).toBe('strength');
+  });
+
+  it('still hides archived exercises unless asked', async () => {
+    expect((await call({ category: 'strength' }))['archivedAt']).toBeNull();
+    expect((await call({ includeArchived: true }))['archivedAt']).toBeUndefined();
+  });
+
+  it('refuses a value outside the vocabulary instead of returning nothing', () => {
+    expect(() => listExercisesSchema.parse({ category: 'cardio' })).toThrow();
+    expect(() => listExercisesSchema.parse({ mechanic: 'compund' })).toThrow();
+  });
+});
+
+describe('relationships carry their kind', () => {
+  it('returns alternative as alternative and related as related', async () => {
+    const { db, exercise, exerciseVariant } = fakeDb();
+
+    exerciseVariant.findMany.mockResolvedValue([
+      { exerciseId: 'ex_1', variantId: 'ex_2', type: 'alternative' },
+      { exerciseId: 'ex_3', variantId: 'ex_1', type: 'related' },
+    ]);
+    exercise.findMany.mockResolvedValue([
+      { ...systemRow, id: 'ex_2', name: 'Zwei' },
+      { ...systemRow, id: 'ex_3', name: 'Drei' },
+    ]);
+
+    const result = await variantsOf(db, TENANT, 'ex_1');
+
+    // The defect this guards: reading the rows without `type` turned every
+    // alternative into a mere related, and no count would have shown it.
+    expect(result.map((entry) => [entry.id, entry.relationship])).toEqual([
+      ['ex_2', 'alternative'],
+      ['ex_3', 'related'],
+    ]);
+  });
+
+  it('reads the type whichever side of the pair the exercise is on', async () => {
+    const { db, exercise, exerciseVariant } = fakeDb();
+
+    // The link is stored with the smaller id first; asking from the other side
+    // must yield the same kind.
+    exerciseVariant.findMany.mockResolvedValue([
+      { exerciseId: 'ex_1', variantId: 'ex_9', type: 'alternative' },
+    ]);
+    exercise.findMany.mockResolvedValue([{ ...systemRow, id: 'ex_1', name: 'Eins' }]);
+
+    const result = await variantsOf(db, TENANT, 'ex_9');
+
+    expect(result[0]?.relationship).toBe('alternative');
   });
 });
