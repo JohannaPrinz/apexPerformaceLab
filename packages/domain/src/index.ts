@@ -29,6 +29,10 @@
  * can check against a real screen.
  */
 export * from './exercises';
+// Exported from the root rather than the exercises barrel: `import.ts` reads
+// `exerciseSchema` from that barrel, so re-exporting it there would close a
+// cycle. The root is the one place that can name it without one.
+export * from './exercises/import';
 export * from './measurement-types';
 export * from './modules';
 export * from './modules/configuration';

@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./client": "./src/client.ts",
-    "./tenant": "./src/tenant.ts"
+    "./tenant": "./src/tenant.ts",
+    "./import-exercises": "./src/import-exercises.ts"
   },
   "scripts": {
     "postinstall": "prisma generate",
@@ -17,6 +18,7 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
+    "db:import-exercises": "tsx prisma/import-catalogue.ts",
     "build": "prisma generate",
     "lint": "eslint .",
     "typecheck": "prisma generate && tsc --noEmit",

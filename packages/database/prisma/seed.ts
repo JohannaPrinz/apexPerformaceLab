@@ -130,15 +130,38 @@ async function main() {
    * professional decision, not a catalogue one.
    */
   let exercisesCreated = 0;
+  let exercisesUpdated = 0;
   for (const exercise of SYSTEM_EXERCISES) {
     const existing = await db.exercise.findFirst({
       where: { key: exercise.key, organizationId: null },
-      select: { id: true },
+      select: { id: true, name: true, canonicalName: true },
     });
 
-    if (existing) continue;
+    // Matched on the key, then brought in line with the catalogue. The names
+    // are corrected rather than skipped: the migration backfilled
+    // `canonicalName` from the old English `name`, and this is where `name`
+    // becomes the German one it should have been.
+    if (existing) {
+      if (existing.name !== exercise.name || existing.canonicalName !== exercise.canonicalName) {
+        await db.exercise.update({
+          where: { id: existing.id },
+          data: { name: exercise.name, canonicalName: exercise.canonicalName },
+        });
+        exercisesUpdated++;
+      }
+      continue;
+    }
 
-    await db.exercise.create({ data: { key: exercise.key, name: exercise.name } });
+    await db.exercise.create({
+      data: {
+        key: exercise.key,
+        name: exercise.name,
+        canonicalName: exercise.canonicalName,
+        // Nothing is classified yet: three vocabularies are still empty, and
+        // claiming a muscle or a category would invent what the import supplies.
+        unilateral: false,
+      },
+    });
     exercisesCreated++;
   }
 
@@ -146,7 +169,7 @@ async function main() {
     `Seeded organization "${organization.slug}" with owner ${owner.email} ` +
       `and coach profile ${coach.id}. ` +
       `Measurement catalogue: ${created} added, ${SYSTEM_MEASUREMENT_TYPES.length} total. ` +
-      `Exercise catalogue: ${exercisesCreated} added, ${SYSTEM_EXERCISES.length} total.`,
+      `Exercise catalogue: ${exercisesCreated} added, ${exercisesUpdated} updated, ${SYSTEM_EXERCISES.length} total.`,
   );
 
   await db.$disconnect();
