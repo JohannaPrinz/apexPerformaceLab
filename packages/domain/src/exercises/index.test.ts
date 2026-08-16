@@ -3,13 +3,16 @@ import { describe, expect, it } from 'vitest';
 import {
   canArchiveExercise,
   canEditExercise,
+  canLinkVariants,
   canRemoveExercise,
+  describeVariantRefusal,
   exerciseSchema,
   findSystemExercise,
   isUsed,
   NO_EXERCISE_USAGE,
   scopeOf,
   SYSTEM_EXERCISES,
+  variantPairKey,
   type ExerciseUsage,
 } from './index';
 
@@ -28,6 +31,41 @@ describe('the system catalogue', () => {
   it('uses stable identifiers', () => {
     for (const exercise of SYSTEM_EXERCISES) {
       expect(exerciseSchema.safeParse(exercise).success, exercise.key).toBe(true);
+    }
+  });
+
+  /**
+   * `name` is what a coach reads — German. `canonicalName` is the professional
+   * English term an import matches against. Two columns, because the canonical
+   * name is data about the movement rather than a rendering of the German one.
+   */
+  it('carries a German name and a canonical English one', () => {
+    expect(findSystemExercise('bench_press')).toMatchObject({
+      name: 'Bankdrücken',
+      canonicalName: 'Bench Press',
+    });
+    expect(findSystemExercise('squat')).toMatchObject({
+      name: 'Kniebeuge',
+      canonicalName: 'Squat',
+    });
+  });
+
+  it('classifies nothing yet, because the vocabularies are the import\u2019s job', () => {
+    for (const exercise of SYSTEM_EXERCISES) {
+      const parsed = exerciseSchema.parse(exercise);
+
+      expect(parsed.primaryMuscles, exercise.key).toEqual([]);
+      expect(parsed.equipment, exercise.key).toEqual([]);
+      expect(parsed.category, exercise.key).toBeUndefined();
+    }
+  });
+
+  it('carries no provenance — these were authored here, not imported', () => {
+    for (const exercise of SYSTEM_EXERCISES) {
+      const parsed = exerciseSchema.parse(exercise);
+
+      expect(parsed.source, exercise.key).toBeUndefined();
+      expect(parsed.license, exercise.key).toBeUndefined();
     }
   });
 
@@ -54,30 +92,92 @@ describe('the system catalogue', () => {
   });
 
   it('looks up by key', () => {
-    expect(findSystemExercise('deadlift')?.name).toBe('Deadlift');
+    expect(findSystemExercise('deadlift')).toMatchObject({
+      name: 'Kreuzheben',
+      canonicalName: 'Deadlift',
+    });
     expect(findSystemExercise('not_a_movement')).toBeUndefined();
   });
 });
 
 describe('exercise input', () => {
   it('requires a stable identifier, not a display name', () => {
-    expect(exerciseSchema.safeParse({ key: 'Bench Press', name: 'Bench Press' }).success).toBe(
-      false,
-    );
+    expect(
+      exerciseSchema.safeParse({
+        key: 'Bench Press',
+        name: 'Bankdrücken',
+        canonicalName: 'Bench Press',
+      }).success,
+    ).toBe(false);
   });
 
-  it('accepts freely named muscle groups — no invented taxonomy', () => {
-    const parsed = exerciseSchema.parse({
+  it('accepts a muscle from the vocabulary', () => {
+    const withMuscle = {
       key: 'hip_thrust',
-      name: 'Hip thrust',
-      muscleGroups: ['glutes', 'hamstrings'],
+      name: 'Hüftheben',
+      canonicalName: 'Hip Thrust',
+      primaryMuscles: ['glutes'],
+      secondaryMuscles: ['hamstrings'],
+      equipment: ['barbell'],
+      category: 'strength',
+    };
+
+    expect(exerciseSchema.safeParse(withMuscle).success).toBe(true);
+  });
+
+  it('refuses one that is not on the list', () => {
+    const invented = {
+      key: 'hip_thrust',
+      name: 'Hüftheben',
+      canonicalName: 'Hip Thrust',
+      primaryMuscles: ['gluteus_maximus_superior'],
+    };
+
+    expect(exerciseSchema.safeParse(invented).success).toBe(false);
+  });
+
+  it('refuses the same muscle listed twice', () => {
+    const repeated = {
+      key: 'hip_thrust',
+      name: 'Hüftheben',
+      canonicalName: 'Hip Thrust',
+      primaryMuscles: ['glutes', 'glutes'],
+    };
+
+    expect(exerciseSchema.safeParse(repeated).success).toBe(false);
+  });
+
+  it('defaults to nothing classified rather than guessing', () => {
+    const parsed = exerciseSchema.parse({ key: 'row', name: 'Rudern', canonicalName: 'Row' });
+
+    expect(parsed.primaryMuscles).toEqual([]);
+    expect(parsed.secondaryMuscles).toEqual([]);
+    expect(parsed.equipment).toEqual([]);
+    expect(parsed.instructions).toEqual([]);
+    expect(parsed.media).toEqual([]);
+    expect(parsed.unilateral).toBe(false);
+  });
+
+  it('takes ordered instructions', () => {
+    const parsed = exerciseSchema.parse({
+      key: 'row',
+      name: 'Rudern',
+      canonicalName: 'Row',
+      instructions: ['Set the hips back.', 'Pull to the ribs.'],
     });
 
-    expect(parsed.muscleGroups).toEqual(['glutes', 'hamstrings']);
+    expect(parsed.instructions).toHaveLength(2);
   });
 
-  it('defaults to no muscle groups rather than guessing them', () => {
-    expect(exerciseSchema.parse({ key: 'row', name: 'Row' }).muscleGroups).toEqual([]);
+  it('records whether the movement is performed one side at a time', () => {
+    const parsed = exerciseSchema.parse({
+      key: 'split_squat',
+      name: 'Ausfallschritt',
+      canonicalName: 'Split Squat',
+      unilateral: true,
+    });
+
+    expect(parsed.unilateral).toBe(true);
   });
 });
 
@@ -143,5 +243,78 @@ describe('deleting versus archiving', () => {
   it('lets a workspace edit only its own exercises', () => {
     expect(canEditExercise('WORKSPACE')).toBe(true);
     expect(canEditExercise('SYSTEM')).toBe(false);
+  });
+});
+
+/**
+ * Variants are peers, not copies and not a hierarchy — front squat and goblet
+ * squat vary one another with no parent. The link is symmetric, so the pair is
+ * the fact and the order is only how it is written down.
+ */
+describe('variant pairs are stored once', () => {
+  it('orders the pair the same way whichever side is named first', () => {
+    expect(variantPairKey('ex_b', 'ex_a')).toEqual({ exerciseId: 'ex_a', variantId: 'ex_b' });
+    expect(variantPairKey('ex_a', 'ex_b')).toEqual({ exerciseId: 'ex_a', variantId: 'ex_b' });
+  });
+});
+
+describe('who may be linked as a variant', () => {
+  const system = (id: string) => ({ id, organizationId: null });
+  const own = (id: string) => ({ id, organizationId: 'org_a' });
+  const other = (id: string) => ({ id, organizationId: 'org_b' });
+
+  it('links two of a workspace own exercises', () => {
+    expect(canLinkVariants(own('ex_1'), own('ex_2'), 'org_a')).toEqual({ allowed: true });
+  });
+
+  it('links a workspace exercise to a system one', () => {
+    expect(canLinkVariants(own('ex_1'), system('ex_sys'), 'org_a')).toEqual({ allowed: true });
+  });
+
+  it('lets the seed link two system exercises', () => {
+    expect(canLinkVariants(system('ex_1'), system('ex_2'), null)).toEqual({ allowed: true });
+  });
+
+  it('refuses an exercise as a variant of itself', () => {
+    expect(canLinkVariants(own('ex_1'), own('ex_1'), 'org_a')).toEqual({
+      allowed: false,
+      reason: 'SAME_EXERCISE',
+    });
+  });
+
+  /**
+   * The link would reference a row the other tenant cannot read, and its very
+   * existence would leak that the row exists.
+   */
+  it('refuses a link across two workspaces', () => {
+    expect(canLinkVariants(own('ex_1'), other('ex_2'), 'org_a')).toEqual({
+      allowed: false,
+      reason: 'ACROSS_WORKSPACES',
+    });
+  });
+
+  it('refuses a workspace linking another tenant exercise to a system one', () => {
+    expect(canLinkVariants(other('ex_1'), system('ex_sys'), 'org_a')).toEqual({
+      allowed: false,
+      reason: 'ACROSS_WORKSPACES',
+    });
+  });
+
+  /**
+   * Two system exercises linked by a workspace would join the shared catalogue,
+   * and every other workspace would see it — editing the system catalogue by
+   * the back door.
+   */
+  it('refuses a workspace linking two system exercises', () => {
+    expect(canLinkVariants(system('ex_1'), system('ex_2'), 'org_a')).toEqual({
+      allowed: false,
+      reason: 'WOULD_EDIT_SYSTEM_CATALOGUE',
+    });
+  });
+
+  it('explains each refusal without naming another workspace', () => {
+    expect(describeVariantRefusal('ACROSS_WORKSPACES')).not.toContain('org_');
+    expect(describeVariantRefusal('SAME_EXERCISE')).toContain('itself');
+    expect(describeVariantRefusal('WOULD_EDIT_SYSTEM_CATALOGUE')).toContain('shared');
   });
 });

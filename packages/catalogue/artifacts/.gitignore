@@ -1,0 +1,9 @@
+# Raw source downloads are versioned by directory name (source/date), not by
+# git: they run to several megabytes and change wholesale when a source
+# republishes. What belongs in the repository is the *normalised* comparison
+# dataset and the analysis derived from it, both of which are small and
+# reviewable.
+#
+# `pnpm catalogue:fetch` recreates anything here from the recorded URLs.
+*/
+!.gitignore

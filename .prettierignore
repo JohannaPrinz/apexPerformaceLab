@@ -8,3 +8,8 @@ pnpm-lock.yaml
 *.tsbuildinfo
 packages/database/generated
 CHANGELOG.md
+
+# Curation artefacts are generated, not written. Formatting them would make
+# Prettier and the generator rewrite each other's output on every run.
+packages/catalogue/artifacts
+packages/database/prisma/catalogue
