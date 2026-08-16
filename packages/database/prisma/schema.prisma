@@ -180,6 +180,7 @@ model Organization {
   modules          AssessmentModule[]
   measurementTypes MeasurementType[]
   exercises        Exercise[]
+  exerciseVariants ExerciseVariant[]
   measurements     Measurement[]
   insights         Insight[]
   recommendations  Recommendation[]
@@ -637,22 +638,70 @@ model MeasurementType {
 /// plans, recommendations and reports are meant to reference the same rows
 /// rather than each growing their own list.
 model Exercise {
-  id           String    @id @default(cuid(2))
-  /// Stable identifier, e.g. `bench_press`.
-  key          String
-  name         String
-  /// How the movement is performed.
-  description  String?
-  /// Freely named — a fixed anatomical vocabulary is a professional decision
-  /// that has not been taken. Same restraint as `MeasurementType.referenceMin`
-  /// and the module configuration's dimension values.
-  muscleGroups String[]
+  id            String   @id @default(cuid(2))
+  /// Stable identifier, e.g. `bench_press`. What an import matches on.
+  key           String
+  /// German display name — what a coach reads.
+  name          String
+  /// Canonical English name — the professional term the movement is known by,
+  /// and what an import matches against. A separate column rather than a
+  /// translation of `name`: it is data about the movement, not a rendering.
+  canonicalName String
+  /// Prose: what the movement is and what it is for.
+  description   String?
+  /// How it is performed, as ordered steps. A list rather than one block,
+  /// because that is how instructions are read and how a media item points at
+  /// the step it illustrates.
+  instructions  String[]
+
+  /// Classification, validated against the controlled vocabularies in
+  /// `@apex/domain` → `exercises/taxonomy`.
+  ///
+  /// `String`/`String[]` rather than Postgres enums, for the same reason as
+  /// `moduleKey` and `MeasurementType.category`: correcting a vocabulary for a
+  /// catalogue of several hundred movements must be a reviewable code change,
+  /// not a migration. "No free strings" is met at the validation layer, which
+  /// is the layer that can also catch a value that is spelled right and wrong.
+  ///
+  /// The muscle, equipment and category vocabularies are **empty until the
+  /// catalogue's source dataset is named**, so these stay unset until then.
+  primaryMuscles   String[]
+  secondaryMuscles String[]
+  equipment        String[]
+  category         String?
+  forceType        String?
+  mechanic         String?
+  difficulty       String?
+
+  /// Whether the movement is performed one side at a time.
+  ///
+  /// A property of the movement, **not** the same thing as a module's
+  /// `recordsSide`: the catalogue informs that choice and never makes it.
+  unilateral Boolean @default(false)
+
+  /// Structured media references — where a demonstration lives, never its
+  /// bytes. Deliberately not an `Asset`: that model is bound to an athlete, and
+  /// catalogue content belongs to no one athlete. Shape validated by
+  /// `exerciseMediaSchema`; Json for the same reason `payload` is.
+  media Json?
+
+  /// Provenance of imported rows. All three are null for an exercise a coach
+  /// typed in — that is the distinction they encode.
+  ///
+  /// `sourceId` is the origin dataset's own identifier and is what makes a
+  /// re-import idempotent rather than duplicating the catalogue. `license`
+  /// records the terms the rows arrived under, so a later redistribution
+  /// question has an answer in the data.
+  source   String?
+  sourceId String?
+  license  String?
+
   /// Archived rather than deleted once used. `archivedAt` removes the exercise
   /// from selection while every past reference stays intact — see
   /// `canRemoveExercise` in `@apex/domain`.
-  archivedAt   DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
   /// Null means a **system exercise**: provided by Apex OS, inherited by every
   /// Workspace, editable by none. Exactly the `MeasurementType` arrangement
@@ -671,10 +720,64 @@ model Exercise {
 
   measurements Measurement[]
 
+  /// Variants are **peers**, not a hierarchy: front squat and goblet squat vary
+  /// one another with no parent. Stored once per pair with the smaller id
+  /// first, so the same fact is not held twice (DOMAIN_RULES #15); both sides
+  /// of the relation exist because Prisma needs them, not because the direction
+  /// means anything.
+  variantOf ExerciseVariant[] @relation("VariantLower")
+  variantTo ExerciseVariant[] @relation("VariantUpper")
+
+  /// Re-import matching: an origin dataset's identifier is unique within that
+  /// dataset, and scoped by owner for the same reason `Measurement.externalId`
+  /// is — two workspaces may legitimately import the same source row.
   @@unique([organizationId, key])
+  @@unique([organizationId, source, sourceId])
   @@index([organizationId])
   @@index([createdByCoachId])
+  @@index([canonicalName])
   @@map("exercises")
+}
+
+/// A pair of exercises that are variations of one another.
+///
+/// Symmetric and stored **once**: `exerciseId` always holds the smaller id.
+/// Reading "the variants of X" therefore looks at both columns — the price of
+/// not writing the same fact twice, and a cheap one.
+///
+/// `organizationId` says whose link it is. Null is a system link, part of the
+/// shared catalogue. A workspace link must involve at least one of that
+/// workspace's own exercises, or a coach could add a link between two system
+/// exercises and every other workspace would see it — enforced by
+/// `canLinkVariants` in `@apex/domain`.
+model ExerciseVariant {
+  exerciseId String
+  exercise   Exercise @relation("VariantLower", fields: [exerciseId], references: [id], onDelete: Cascade)
+  variantId  String
+  variant    Exercise @relation("VariantUpper", fields: [variantId], references: [id], onDelete: Cascade)
+
+  /// What kind of relationship this is — `alternative` or `related`, from
+  /// `EXERCISE_RELATIONSHIP_TYPES`. A controlled vocabulary in code, like every
+  /// other such list in this schema.
+  ///
+  /// `alternative` means a coach can put the other exercise in its place when
+  /// the equipment is missing or the movement is unwanted. `related` means the
+  /// two are biomechanically close but **not** interchangeable — a front squat
+  /// is not a substitute for a back squat.
+  ///
+  /// The relationship stays symmetric: one row, smaller id first, and the type
+  /// reads the same from either side.
+  type String @default("related")
+
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([exerciseId, variantId])
+  @@index([variantId])
+  @@index([organizationId])
+  @@map("exercise_variants")
 }
 
 model Measurement {
@@ -1518,6 +1621,13 @@ enum TimelineEntryKind {
 //     be a row whose scope and provenance disagree.
 //       ALTER TABLE exercises ADD CONSTRAINT exercises_system_has_no_author
 //         CHECK (("organizationId" IS NULL) = ("createdByCoachId" IS NULL));
+//
+//  1d. exercise_variants — one row per pair, never a self-link
+//     The relation is symmetric and stored once, with the smaller id first.
+//     Without this, the same pair could exist twice in opposite order and
+//     "the variants of X" would return duplicates.
+//       ALTER TABLE exercise_variants ADD CONSTRAINT exercise_variants_ordered
+//         CHECK ("exerciseId" < "variantId");
 //
 //  2. measurements — exactly one value column, matching the type
 //       ALTER TABLE measurements ADD CONSTRAINT measurements_one_value

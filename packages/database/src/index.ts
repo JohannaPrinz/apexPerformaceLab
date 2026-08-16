@@ -42,6 +42,7 @@ export type {
   AssessmentModuleModel as AssessmentModule,
   MeasurementTypeModel as MeasurementType,
   ExerciseModel as Exercise,
+  ExerciseVariantModel as ExerciseVariant,
   MeasurementModel as Measurement,
 
   // ── Interpretation ─────────────────────────────────────────────────────────

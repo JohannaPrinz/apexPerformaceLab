@@ -1,0 +1,301 @@
+{
+  "formatVersion": 1,
+  "_note": [
+    "A small curated set for verifying the import pipeline end to end — not the",
+    "catalogue. Fourteen movements chosen to exercise every part of the shape:",
+    "several categories, bodyweight and loaded, unilateral and bilateral, one",
+    "variant cluster, one media reference, and a movement with no equipment at all.",
+    "",
+    "No `source` anywhere: these were authored here, and both external sources are",
+    "registered as not approved. That is deliberate — the pipeline must be provably",
+    "correct before a licence question decides what may be written.",
+    "",
+    "German names are ours. They are the words a coach uses, not a translation",
+    "taken from a dataset."
+  ],
+  "exercises": [
+    {
+      "key": "bench_press",
+      "name": "Bankdrücken",
+      "canonicalName": "Bench Press",
+      "description": "Horizontales Drücken mit der Langhantel auf der Flachbank.",
+      "instructions": [
+        "Schulterblätter zusammenziehen und auf der Bank fixieren.",
+        "Hantel über den Schultern aus der Ablage nehmen.",
+        "Kontrolliert zur Brust senken.",
+        "Ohne Ausweichen der Ellenbogen nach oben drücken."
+      ],
+      "primaryMuscles": ["chest"],
+      "secondaryMuscles": ["triceps", "shoulders"],
+      "equipment": ["barbell", "bench"],
+      "category": "strength",
+      "forceType": "push",
+      "mechanic": "compound",
+      "difficulty": "intermediate",
+      "unilateral": false,
+      "variantKeys": ["incline_bench_press", "dumbbell_bench_press"]
+    },
+    {
+      "key": "incline_bench_press",
+      "name": "Schrägbankdrücken",
+      "canonicalName": "Incline Bench Press",
+      "description": "Drücken auf der Schrägbank, mit stärkerem Anteil der vorderen Schulter.",
+      "instructions": [
+        "Bank auf etwa 30 bis 45 Grad einstellen.",
+        "Hantel über den Schultern aufnehmen.",
+        "Zur oberen Brust senken und zurückdrücken."
+      ],
+      "primaryMuscles": ["chest"],
+      "secondaryMuscles": ["shoulders", "triceps"],
+      "equipment": ["barbell", "incline_bench"],
+      "category": "strength",
+      "forceType": "push",
+      "mechanic": "compound",
+      "difficulty": "intermediate",
+      "unilateral": false,
+      "variantKeys": ["dumbbell_bench_press"]
+    },
+    {
+      "key": "dumbbell_bench_press",
+      "name": "Kurzhantel-Bankdrücken",
+      "canonicalName": "Dumbbell Bench Press",
+      "description": "Bankdrücken mit Kurzhanteln, mit größerem Bewegungsumfang je Seite.",
+      "instructions": [
+        "Mit den Kurzhanteln auf der Bank ablegen.",
+        "Hanteln über den Schultern positionieren.",
+        "Kontrolliert senken und zusammenführend drücken."
+      ],
+      "primaryMuscles": ["chest"],
+      "secondaryMuscles": ["triceps", "shoulders"],
+      "equipment": ["dumbbell", "bench"],
+      "category": "strength",
+      "forceType": "push",
+      "mechanic": "compound",
+      "difficulty": "beginner",
+      "unilateral": false
+    },
+    {
+      "key": "squat",
+      "name": "Kniebeuge",
+      "canonicalName": "Squat",
+      "description": "Beugen und Strecken der Hüfte und Knie mit Langhantel im Nacken.",
+      "instructions": [
+        "Hantel auf dem oberen Rücken ablegen.",
+        "Hüfte und Knie gleichzeitig beugen.",
+        "Bis mindestens zur Parallele absenken.",
+        "Über die ganze Fußsohle nach oben drücken."
+      ],
+      "primaryMuscles": ["quads", "glutes"],
+      "secondaryMuscles": ["hamstrings", "lower_back", "adductors"],
+      "equipment": ["barbell"],
+      "category": "strength",
+      "forceType": "push",
+      "mechanic": "compound",
+      "difficulty": "intermediate",
+      "unilateral": false,
+      "variantKeys": ["front_squat", "goblet_squat"]
+    },
+    {
+      "key": "front_squat",
+      "name": "Frontkniebeuge",
+      "canonicalName": "Front Squat",
+      "description": "Kniebeuge mit der Hantel vor dem Körper, mit aufrechterem Oberkörper.",
+      "instructions": [
+        "Hantel auf den vorderen Schultern ablegen, Ellenbogen hoch.",
+        "Aufrecht absenken.",
+        "Ohne Absinken der Ellenbogen aufrichten."
+      ],
+      "primaryMuscles": ["quads"],
+      "secondaryMuscles": ["glutes", "abs", "upper_back"],
+      "equipment": ["barbell"],
+      "category": "strength",
+      "forceType": "push",
+      "mechanic": "compound",
+      "difficulty": "advanced",
+      "unilateral": false,
+      "variantKeys": ["goblet_squat"]
+    },
+    {
+      "key": "goblet_squat",
+      "name": "Goblet-Kniebeuge",
+      "canonicalName": "Goblet Squat",
+      "description": "Kniebeuge mit einer vor der Brust gehaltenen Kurzhantel oder Kettlebell.",
+      "instructions": [
+        "Gewicht vor der Brust halten.",
+        "Aufrecht absenken.",
+        "Kontrolliert aufrichten."
+      ],
+      "primaryMuscles": ["quads", "glutes"],
+      "secondaryMuscles": ["abs"],
+      "equipment": ["kettlebell"],
+      "category": "strength",
+      "forceType": "push",
+      "mechanic": "compound",
+      "difficulty": "beginner",
+      "unilateral": false
+    },
+    {
+      "key": "deadlift",
+      "name": "Kreuzheben",
+      "canonicalName": "Deadlift",
+      "description": "Heben der Langhantel vom Boden bis zum aufrechten Stand.",
+      "instructions": [
+        "Hantel über dem Mittelfuß, Schienbeine nah an der Stange.",
+        "Rücken neutral, Brust aufrichten.",
+        "Über Beine und Hüfte gleichzeitig strecken.",
+        "Kontrolliert ablegen."
+      ],
+      "primaryMuscles": ["hamstrings", "glutes", "lower_back"],
+      "secondaryMuscles": ["traps", "forearms", "lats"],
+      "equipment": ["barbell"],
+      "category": "strength",
+      "forceType": "pull",
+      "mechanic": "compound",
+      "difficulty": "advanced",
+      "unilateral": false,
+      "variantKeys": ["romanian_deadlift"]
+    },
+    {
+      "key": "romanian_deadlift",
+      "name": "Rumänisches Kreuzheben",
+      "canonicalName": "Romanian Deadlift",
+      "description": "Hüftbeuge mit weitgehend gestreckten Knien, aus dem Stand heraus.",
+      "instructions": [
+        "Aus dem Stand die Hüfte nach hinten schieben.",
+        "Hantel nah am Bein führen.",
+        "Bis zur Dehnung der Beinrückseite absenken.",
+        "Hüfte strecken."
+      ],
+      "primaryMuscles": ["hamstrings"],
+      "secondaryMuscles": ["glutes", "lower_back"],
+      "equipment": ["barbell"],
+      "category": "strength",
+      "forceType": "pull",
+      "mechanic": "compound",
+      "difficulty": "intermediate",
+      "unilateral": false
+    },
+    {
+      "key": "pull_up",
+      "name": "Klimmzug",
+      "canonicalName": "Pull-up",
+      "description": "Vertikales Ziehen am Griff bis das Kinn über die Stange kommt.",
+      "instructions": [
+        "Im Obergriff etwa schulterbreit greifen.",
+        "Schulterblätter zuerst nach unten ziehen.",
+        "Bis über die Stange ziehen.",
+        "Kontrolliert ablassen."
+      ],
+      "primaryMuscles": ["lats"],
+      "secondaryMuscles": ["biceps", "upper_back", "forearms"],
+      "equipment": ["pull_up_bar"],
+      "category": "calisthenics",
+      "forceType": "pull",
+      "mechanic": "compound",
+      "difficulty": "intermediate",
+      "unilateral": false,
+      "media": [
+        {
+          "kind": "image",
+          "url": "https://upload.wikimedia.org/wikipedia/commons/6/60/Pull-up.png",
+          "alt": "Klimmzug am Reck"
+        }
+      ]
+    },
+    {
+      "key": "overhead_press",
+      "name": "Schulterdrücken",
+      "canonicalName": "Overhead Press",
+      "description": "Drücken der Langhantel aus Schulterhöhe über den Kopf.",
+      "instructions": [
+        "Hantel auf den vorderen Schultern, Ellenbogen leicht vor.",
+        "Kopf leicht zurücknehmen und nach oben drücken.",
+        "Am obersten Punkt den Kopf wieder durchschieben."
+      ],
+      "primaryMuscles": ["shoulders"],
+      "secondaryMuscles": ["triceps", "abs"],
+      "equipment": ["barbell"],
+      "category": "strength",
+      "forceType": "push",
+      "mechanic": "compound",
+      "difficulty": "intermediate",
+      "unilateral": false
+    },
+    {
+      "key": "bulgarian_split_squat",
+      "name": "Bulgarische Kniebeuge",
+      "canonicalName": "Bulgarian Split Squat",
+      "description": "Einbeinige Kniebeuge mit erhöht abgelegtem hinterem Fuß.",
+      "instructions": [
+        "Hinteren Fuß auf einer Bank ablegen.",
+        "Auf dem vorderen Bein absenken.",
+        "Über das vordere Bein aufrichten."
+      ],
+      "primaryMuscles": ["quads", "glutes"],
+      "secondaryMuscles": ["hamstrings", "adductors"],
+      "equipment": ["dumbbell", "bench"],
+      "category": "strength",
+      "forceType": "push",
+      "mechanic": "compound",
+      "difficulty": "intermediate",
+      "unilateral": true
+    },
+    {
+      "key": "plank",
+      "name": "Unterarmstütz",
+      "canonicalName": "Plank",
+      "description": "Statisches Halten der Rumpfspannung im Unterarmstütz.",
+      "instructions": [
+        "Unterarme unter den Schultern aufsetzen.",
+        "Becken so einstellen, dass der Rücken gerade bleibt.",
+        "Position ohne Absinken halten."
+      ],
+      "primaryMuscles": ["abs"],
+      "secondaryMuscles": ["obliques", "shoulders", "glutes"],
+      "equipment": ["gym_mat"],
+      "category": "stability",
+      "forceType": "static",
+      "mechanic": "isolation",
+      "difficulty": "beginner",
+      "unilateral": false
+    },
+    {
+      "key": "hip_flexor_stretch",
+      "name": "Hüftbeugerdehnung",
+      "canonicalName": "Hip Flexor Stretch",
+      "description": "Dehnung der Hüftbeuger im halben Kniestand.",
+      "instructions": [
+        "In den halben Kniestand gehen.",
+        "Becken aufrichten und Gesäß anspannen.",
+        "Hüfte nach vorn schieben und halten."
+      ],
+      "primaryMuscles": ["quads"],
+      "secondaryMuscles": ["glutes"],
+      "equipment": ["gym_mat"],
+      "category": "mobility",
+      "forceType": "static",
+      "mechanic": "isolation",
+      "difficulty": "beginner",
+      "unilateral": true
+    },
+    {
+      "key": "box_jump",
+      "name": "Kastensprung",
+      "canonicalName": "Box Jump",
+      "description": "Beidbeiniger Sprung auf eine erhöhte Fläche.",
+      "instructions": [
+        "Aus leichter Hüftbeuge abspringen.",
+        "Weich auf der Kiste landen.",
+        "Aufrichten und kontrolliert absteigen."
+      ],
+      "primaryMuscles": ["quads", "glutes"],
+      "secondaryMuscles": ["calves", "hamstrings"],
+      "equipment": [],
+      "category": "plyometrics",
+      "forceType": "dynamic",
+      "mechanic": "compound",
+      "difficulty": "intermediate",
+      "unilateral": false
+    }
+  ]
+}
