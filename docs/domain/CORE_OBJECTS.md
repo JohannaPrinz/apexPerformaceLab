@@ -503,9 +503,65 @@ Dieselbe Anordnung wie beim Measurement Type: Eine Übung ohne Workspace ist ein
 Systemübung, die jeder Workspace erbt und niemand ändert. Ein Workspace darf
 eigene anlegen und verwalten.
 
-Erfasst werden Name, Ausführung und betroffene Muskelgruppen. Die
-**Muskelgruppen sind Freitext** — eine feste anatomische Werteliste ist eine
-fachliche Entscheidung, die nicht getroffen wurde.
+### Zwei Namen
+
+`name` ist der **deutsche** Anzeigename — was ein Coach liest. `canonicalName`
+ist der **englische** Fachbegriff, unter dem die Übung international bekannt ist.
+Zwei Spalten, weil der kanonische Name eine Angabe über die Übung ist und keine
+Übersetzung des deutschen: Ein Import gleicht darüber ab.
+
+`unilateral` beschreibt die **Übung**, nicht den Test. Es ist nicht dasselbe wie
+`recordsSide` am Modul: Eine einbeinige Beinpresse darf auch ohne Seitentrennung
+gemessen werden. Der Katalog informiert diese Entscheidung, er trifft sie nicht.
+
+### Kontrollierte Wertelisten
+
+> **Das ersetzt die frühere Festlegung, dass Muskelgruppen Freitext sind.**
+> Sie war damit begründet, dass die Benennung der Muskulatur eine fachliche
+> Entscheidung ist, die niemand getroffen hatte. Sie ist jetzt getroffen.
+
+Muskeln, Equipment, Kategorien, forceType, mechanic und difficulty stammen je
+aus einer festen Liste in `packages/domain`. Die Werte stehen im **Code, nicht
+als Datenbank-Enum** — genau wie `moduleKey` und `MeasurementType.category`. Eine
+Korrektur am Vokabular ist damit eine prüfbare Codeänderung statt einer
+Migration.
+
+`forceType`, `mechanic` und `difficulty` sind definiert. **Muskeln, Equipment
+und Kategorien sind bewusst leer**, bis der Datensatz benannt ist, aus dem der
+Katalog importiert wird — damit Vokabular und `source`/`license` dieselbe Sache
+beschreiben.
+
+### Varianten sind gleichrangig
+
+Front-, Goblet- und Backsquat variieren einander, **ohne Stammübung**. Die
+Verknüpfung ist symmetrisch und immer eine _Referenz_: Eine Variante ist eine
+vollständige Übung mit eigenen Muskeln, eigenem Equipment und eigenen Medien —
+korrigiert man eine, veralten die anderen nicht.
+
+Gespeichert wird **eine Zeile je Paar**, die kleinere Id zuerst. Beide
+Richtungen zu speichern hieße, dieselbe Tatsache doppelt zu halten.
+
+Ein Workspace darf seine eigene Übung mit einer eigenen oder einer Systemübung
+verknüpfen — aber **nie zwei Systemübungen**: Diese Verknüpfung gehörte zum
+geteilten Katalog und wäre in jedem anderen Workspace sichtbar.
+
+### Herkunft
+
+`source`, `sourceId` und `license` machen einen Import nachvollziehbar und
+rechtlich sauber. `sourceId` ist die Kennung des Ursprungsdatensatzes und macht
+einen erneuten Import idempotent statt doppelt. Alle drei sind leer bei einer
+Übung, die ein Coach selbst angelegt hat — genau das unterscheiden sie.
+
+### Medien sind Verweise
+
+Die Übung nennt, wo eine Demonstration liegt; Bytes speichert sie nicht.
+Bewusst **kein `Asset`**: Das Modell hängt an einem Athleten, damit die Timeline
+vollständig bleibt, und Katalogmaterial gehört keinem Athleten.
+
+### Ernährung bleibt außerhalb
+
+In jede Richtung. Eine Übung ist eine Bewegung; nichts über Nahrung, Zufuhr oder
+Supplemente gehört in den Katalog oder ist über ihn erreichbar.
 
 ### Archivieren statt löschen
 

@@ -925,10 +925,91 @@ Exactly the arrangement §12 describes for Measurement Types: an Exercise with n
 Workspace is a system exercise, inherited by all and editable by none. A
 Workspace may add and manage its own.
 
-An Exercise records a name, how it is performed, and the muscle groups it
-affects. **Muscle groups are free text.** Naming the muscle groups of the human
-body in a fixed list is a professional decision that has not been taken, and the
-same restraint applies here as to reference ranges.
+### What an Exercise records
+
+| Field                                             | Purpose                                                |
+| ------------------------------------------------- | ------------------------------------------------------ |
+| `key`                                             | stable identifier; what an import matches on           |
+| `name`                                            | **German** display name — what a coach reads           |
+| `canonicalName`                                   | **English** professional term the movement is known by |
+| `description`                                     | what the movement is and what it is for                |
+| `instructions`                                    | how it is performed, as ordered steps                  |
+| `primaryMuscles` / `secondaryMuscles`             | what it works                                          |
+| `equipment`                                       | what it is performed with                              |
+| `category`, `forceType`, `mechanic`, `difficulty` | classification                                         |
+| `unilateral`                                      | whether it is performed one side at a time             |
+| `media`                                           | structured references to demonstrations                |
+| `source`, `sourceId`, `license`                   | provenance of imported rows                            |
+
+Two names on purpose. `canonicalName` is **data about the movement**, not a
+rendering of the German one: it is what an import matches against and what a
+later English interface would show. A translation table for a catalogue nobody
+translates twice would be machinery without a load.
+
+`unilateral` describes the **movement**. It is not a module's `recordsSide`: a
+coach may take a single-leg press without distinguishing sides, and a bilateral
+movement may still be measured per side on a force plate. The catalogue informs
+that choice and never makes it.
+
+### Controlled vocabularies
+
+> **This supersedes the earlier decision that muscle groups are free text.**
+> That decision was taken because naming the muscles of the human body is a
+> professional call nobody had made. It has now been made: the catalogue is
+> classified against controlled vocabularies.
+
+Muscles, equipment, categories, force type, mechanic and difficulty each draw
+from a fixed list maintained in `packages/domain` → `exercises/taxonomy`.
+
+The values live in **code, not a database enum** — exactly as `moduleKey` and
+`MeasurementType.category` do. Correcting a vocabulary for a catalogue of
+several hundred movements is then a reviewable code change rather than a
+migration, and "no free strings" is met at the layer that can also catch a value
+spelled correctly but wrong.
+
+`forceType`, `mechanic` and `difficulty` are defined. **Muscles, equipment and
+categories are deliberately empty** until the dataset the catalogue is imported
+from is named, so that the vocabulary and `source`/`license` describe the same
+thing. Until then an exercise simply carries no classification, and the
+structure is complete without it.
+
+### Variants are peers
+
+Front squat, goblet squat and back squat vary one another with **no parent**.
+The link is symmetric and always a _reference_: a variant is a whole Exercise
+with its own muscles, equipment and media, so correcting one never leaves the
+others stale.
+
+Stored **once per pair**, smaller id first, because storing both directions
+would hold the same fact twice (#15). Reads look at both sides.
+
+A link belongs to whoever wrote it. A workspace may link its own exercise to
+another of its own or to a system one; it may **not** link two system
+exercises — that link would join the shared catalogue and every other workspace
+would see it.
+
+### Provenance, not attribution
+
+`source`, `sourceId` and `license` are what make an import traceable and lawful.
+`sourceId` is the origin dataset's own identifier, which makes a re-import
+idempotent instead of duplicating the catalogue; `license` records the terms the
+rows arrived under, so a later redistribution question has an answer in the data
+rather than in someone's memory.
+
+All three are null for an exercise a coach typed in. That is the distinction
+they encode: authored here, or brought in from elsewhere.
+
+### Media are references, not uploads
+
+An exercise names where a demonstration lives; nothing stores bytes. Deliberately
+**not an `Asset`**: that model is bound to an athlete so the timeline stays
+complete, and catalogue content belongs to no athlete. Widening `Asset` would
+weaken that guarantee in exchange for a relationship it does not have.
+
+### Nutrition is outside this feature
+
+In every direction. An Exercise is a movement; nothing about food, intake or
+supplementation belongs to the catalogue or is reachable through it.
 
 ### Archive instead of delete, once used
 
@@ -1649,6 +1730,30 @@ Imported device data arrives as **Tracking Entries**, not Measurements — see
 Organizations already exist in the MVP as the implementation of the Personal Workspace (§5).
 What is deferred is multiple coaches within one Workspace, not the concept itself.
 
+### Catalogue text is German today, localisable later
+
+The application ships in German, so the Exercise catalogue carries German
+`name`, `description` and `instructions`. `canonicalName` stays the English
+technical name — it is the identifier a coach recognises across languages and
+the key the curation joins on.
+
+**No `instructions_de` / `instructions_en` fields are introduced for this.** A
+second language is not a requirement yet, and a schema that carries two columns
+per translatable field pays for a language nobody has asked for while making
+every read decide which one to use.
+
+What keeps the door open is that no _code_ branches on language: the fields hold
+whatever the catalogue was curated in, and nothing outside the catalogue parses
+their content. Adding English later is a data question — a translation table
+keyed by `(exerciseId, locale)`, or a per-row locale column — and both are
+additive migrations, not a redesign of Exercise.
+
+The constraint this imposes on curation: **source text never ships in a language
+other than the catalogue's.** English wrkout instructions are translated into
+German editorially before an exercise enters the catalogue. The wrkout
+attribution stays in `provenance`; a second entry records that the German
+wording is ours.
+
 ---
 
 ## 26. Domain Rules
@@ -1743,3 +1848,16 @@ read-only state begins only when the last collaboration ends (§21).
 
 35. `weight` is the athlete's body weight. The load moved in a test is
     `external_load`, and the two are never interchanged (§12).
+
+36. Exercises are classified against controlled vocabularies maintained in
+    `packages/domain`, not free text. This supersedes the earlier free-text
+    decision (§12a).
+
+37. An Exercise carries a German `name` and an English `canonicalName`. Both are
+    data about the movement (§12a).
+
+38. Variants are symmetric references between whole Exercises, stored once per
+    pair. A workspace never links two system exercises (§12a).
+
+39. Imported catalogue rows record `source`, `sourceId` and `license`. Rows
+    authored in the product carry none of the three (§12a).
