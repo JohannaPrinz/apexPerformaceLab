@@ -141,6 +141,30 @@ function toKey(name: string): string {
 export async function listExercises(
   db: ExerciseDb,
   tenant: Pick<TenantContext, 'organizationId'>,
+  input: ListExercisesInput,
+): Promise<ExerciseRecord[]> {
+  const { limit, offset } = input;
+
+  const rows = await db.exercise.findMany({
+    where: listWhere(tenant, input),
+    select: exerciseSelect,
+    orderBy: [{ organizationId: 'desc' }, { name: 'asc' }],
+    ...(limit === undefined ? {} : { take: limit }),
+    ...(offset === undefined ? {} : { skip: offset }),
+  });
+
+  return rows.map(toRecord);
+}
+
+/**
+ * The `where` shared by the list and its count.
+ *
+ * One builder, so a page can never show "42 Treffer" above a list filtered
+ * differently — the two would drift the first time a filter is added to only
+ * one of them.
+ */
+function listWhere(
+  tenant: Pick<TenantContext, 'organizationId'>,
   {
     search,
     includeArchived,
@@ -153,7 +177,7 @@ export async function listExercises(
     secondaryMuscles,
     equipment,
   }: ListExercisesInput,
-): Promise<ExerciseRecord[]> {
+) {
   /**
    * `hasEvery`, not `hasSome`: asking for chest *and* dumbbell means both.
    * A list filter with one entry behaves identically either way, so the
@@ -164,40 +188,51 @@ export async function listExercises(
     ...(secondaryMuscles ? [{ secondaryMuscles: { hasEvery: secondaryMuscles } }] : []),
     ...(equipment ? [{ equipment: { hasEvery: equipment } }] : []),
   ];
-  const rows = await db.exercise.findMany({
-    where: {
-      // **`AND` of two `OR`s, not two `OR` keys.** Prisma takes one `where`
-      // object, so a second `OR` would replace the first — and the first is the
-      // tenant filter. Spelling the conjunction out is what stops a search from
-      // quietly widening the query to every workspace.
-      AND: [
-        { OR: [{ organizationId: tenant.organizationId }, { organizationId: null }] },
-        // Both names: a coach may know the movement in German or by its
-        // international term, and the catalogue answers to either.
-        ...(search
-          ? [
-              {
-                OR: [
-                  { name: { contains: search, mode: 'insensitive' as const } },
-                  { canonicalName: { contains: search, mode: 'insensitive' as const } },
-                ],
-              },
-            ]
-          : []),
-        ...listFilters,
-      ],
-      ...(category === undefined ? {} : { category }),
-      ...(difficulty === undefined ? {} : { difficulty }),
-      ...(forceType === undefined ? {} : { forceType }),
-      ...(mechanic === undefined ? {} : { mechanic }),
-      ...(unilateral === undefined ? {} : { unilateral }),
-      ...(includeArchived ? {} : { archivedAt: null }),
-    },
-    select: exerciseSelect,
-    orderBy: [{ organizationId: 'desc' }, { name: 'asc' }],
-  });
 
-  return rows.map(toRecord);
+  return {
+    // **`AND` of two `OR`s, not two `OR` keys.** Prisma takes one `where`
+    // object, so a second `OR` would replace the first — and the first is the
+    // tenant filter. Spelling the conjunction out is what stops a search from
+    // quietly widening the query to every workspace.
+    AND: [
+      { OR: [{ organizationId: tenant.organizationId }, { organizationId: null }] },
+      // Both names: a coach may know the movement in German or by its
+      // international term, and the catalogue answers to either.
+      ...(search
+        ? [
+            {
+              OR: [
+                { name: { contains: search, mode: 'insensitive' as const } },
+                { canonicalName: { contains: search, mode: 'insensitive' as const } },
+              ],
+            },
+          ]
+        : []),
+      ...listFilters,
+    ],
+    ...(category === undefined ? {} : { category }),
+    ...(difficulty === undefined ? {} : { difficulty }),
+    ...(forceType === undefined ? {} : { forceType }),
+    ...(mechanic === undefined ? {} : { mechanic }),
+    ...(unilateral === undefined ? {} : { unilateral }),
+    ...(includeArchived ? {} : { archivedAt: null }),
+  };
+}
+
+/**
+ * How many exercises the same filters match, ignoring paging.
+ *
+ * Separate from `listExercises` rather than folded into its return: two other
+ * pages read that list and would have to change shape for a number they do not
+ * use. The `where` is built by the shared helper, so the count can never drift
+ * from the list it describes.
+ */
+export async function countExercises(
+  db: ExerciseDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  input: ListExercisesInput,
+): Promise<number> {
+  return db.exercise.count({ where: listWhere(tenant, input) });
 }
 
 /** One exercise, from this workspace or the system catalogue. */

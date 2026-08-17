@@ -84,6 +84,15 @@ export const listExercisesSchema = z.object({
   secondaryMuscles: listFilter,
   equipment: listFilter,
   /**
+   * Paging, optional and without a default.
+   *
+   * Left undefined the query returns everything, which is what the assessment
+   * builder relies on — a default page size here would silently truncate a
+   * picker that expects the whole catalogue.
+   */
+  limit: z.number().int().min(1).max(200).optional(),
+  offset: z.number().int().min(0).optional(),
+  /**
    * Archived exercises are excluded by default. They stay reachable, because an
    * archived exercise is one that has been used and its history is still read.
    */

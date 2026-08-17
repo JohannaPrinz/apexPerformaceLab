@@ -21,6 +21,7 @@ import {
   exerciseUsage,
   getExercise,
   linkVariants,
+  countExercises,
   listExercises,
   removeExercise,
   setExerciseArchived,
@@ -41,6 +42,11 @@ export const exercisesRouter = createTRPCRouter({
   list: withPermission('exercise:read')
     .input(listExercisesSchema)
     .query(({ ctx, input }) => listExercises(ctx.db, ctx.tenant, input)),
+
+  /** How many the same filters match, for paging. */
+  count: withPermission('exercise:read')
+    .input(listExercisesSchema)
+    .query(({ ctx, input }) => countExercises(ctx.db, ctx.tenant, input)),
 
   byId: withPermission('exercise:read')
     .input(exerciseIdSchema)
