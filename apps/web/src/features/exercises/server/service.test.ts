@@ -34,6 +34,9 @@ interface QueryArgs {
   where: Record<string, unknown>;
   data?: Record<string, unknown>;
   orderBy?: unknown;
+  /** Paging, present only when the caller asked for it. */
+  take?: number;
+  skip?: number;
 }
 
 /**
@@ -450,5 +453,39 @@ describe('relationships carry their kind', () => {
     const result = await variantsOf(db, TENANT, 'ex_9');
 
     expect(result[0]?.relationship).toBe('alternative');
+  });
+});
+
+describe('paging never points past the result', () => {
+  const call = async (input: Record<string, unknown>) => {
+    const { db, exercise } = fakeDb();
+    await listExercises(db, TENANT, listExercisesSchema.parse(input));
+
+    return argsOf(exercise.findMany);
+  };
+
+  it('passes take and skip straight through', async () => {
+    const args = await call({ limit: 25, offset: 50 });
+
+    expect(args.take).toBe(25);
+    expect(args.skip).toBe(50);
+  });
+
+  /**
+   * The assessment builder reads the same list and expects the whole catalogue.
+   * A default page size here would have truncated its picker silently.
+   */
+  it('fetches everything when no paging was asked for', async () => {
+    const args = await call({});
+
+    expect(args.take).toBeUndefined();
+    expect(args.skip).toBeUndefined();
+  });
+
+  it('pages a filtered result the same way', async () => {
+    const args = await call({ category: 'strength', limit: 25, offset: 0 });
+
+    expect(args.take).toBe(25);
+    expect(args.where['category']).toBe('strength');
   });
 });

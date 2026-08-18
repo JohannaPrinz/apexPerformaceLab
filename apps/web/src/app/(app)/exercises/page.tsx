@@ -15,6 +15,7 @@ import {
   hasActiveFilters,
 } from '@/features/exercises/components/exercise-filters';
 import { ExerciseListItem } from '@/features/exercises/components/exercise-list-item';
+import { FocusResults } from '@/features/exercises/components/focus-results';
 import { api } from '@/trpc/server';
 
 import type { Metadata } from 'next';
@@ -88,7 +89,7 @@ export default async function ExercisesPage({
     mechanic: clean(params.mechanic),
   };
 
-  const page = Math.max(1, Number.parseInt(params.page ?? '1', 10) || 1);
+  const requested = Math.max(1, Number.parseInt(params.page ?? '1', 10) || 1);
 
   const filters = {
     includeArchived: false,
@@ -111,25 +112,50 @@ export default async function ExercisesPage({
     ...(values.unilateral === undefined ? {} : { unilateral: values.unilateral === 'true' }),
   } as const;
 
-  const [total, exercises] = await Promise.all([
-    api.exercises.count(filters),
-    api.exercises.list({ ...filters, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }),
-  ]);
+  const total = await api.exercises.count(filters);
 
+  /**
+   * Never a page beyond the result.
+   *
+   * `?page=99` on three pages, or a filter that shrinks the result while the
+   * coach is on page five, would otherwise show an empty list *and* hide the
+   * pagination — a dead end with no way back except the reset. Clamping first
+   * keeps the empty state honest: it then means "nothing matches", never
+   * "nothing on this page".
+   */
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const page = Math.min(requested, pages);
+
+  const exercises = await api.exercises.list({
+    ...filters,
+    limit: PAGE_SIZE,
+    offset: (page - 1) * PAGE_SIZE,
+  });
   const first = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const last = (page - 1) * PAGE_SIZE + exercises.length;
   const narrowed = hasActiveFilters(values);
 
+  /** The current narrowing, as a query string. */
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(values)) {
+    if (value !== undefined) query.set(key, value);
+  }
+  if (page > 1) query.set('page', String(page));
+
+  /**
+   * Handed to every row so the detail page can offer a way back *here* — same
+   * filters, same page. Losing that on the way back is the mistake a coach
+   * forgives once.
+   */
+  const from = query.toString();
+
   /** Keeps every filter and moves only the page. */
   const pageHref = (target: number): string => {
-    const query = new URLSearchParams();
-    for (const [key, value] of Object.entries(values)) {
-      if (value !== undefined) query.set(key, value);
-    }
-    if (target > 1) query.set('page', String(target));
+    const next = new URLSearchParams(query);
+    next.delete('page');
+    if (target > 1) next.set('page', String(target));
 
-    const suffix = query.toString();
+    const suffix = next.toString();
 
     return suffix === '' ? '/exercises' : `/exercises?${suffix}`;
   };
@@ -139,15 +165,28 @@ export default async function ExercisesPage({
       <header className="flex flex-col gap-1">
         <span className="eyebrow">Katalog</span>
         <h1 className="text-3xl font-semibold">Übungen</h1>
-        <p className="text-sm text-muted-foreground">
+        {/* Announced, because changing a filter reloads the page and moves the
+            focus to the top — without this a screen reader user is given no
+            sign that the result changed. */}
+        <p
+          id="exercise-results"
+          tabIndex={-1}
+          className="text-sm text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          role="status"
+          aria-live="polite"
+        >
           {total === 0
             ? 'Keine Treffer'
             : `${String(first)}–${String(last)} von ${String(total)} Übungen`}
-          {narrowed ? ' (gefiltert)' : ''}
         </p>
       </header>
 
       <ExerciseFilters values={values} />
+
+      {/* Moves the focus to the result line after a search or a filter change,
+          so keyboard and screen-reader users do not walk the whole bar again.
+          Server rendering is untouched — this is the only client component. */}
+      <FocusResults active={narrowed} />
 
       {exercises.length === 0 ? (
         <Card>
@@ -159,7 +198,7 @@ export default async function ExercisesPage({
             </p>
             {narrowed ? (
               <Button asChild variant="outline" size="sm">
-                <a href="/exercises">Filter zurücksetzen</a>
+                <Link href="/exercises">Filter zurücksetzen</Link>
               </Button>
             ) : null}
           </CardContent>
@@ -169,7 +208,7 @@ export default async function ExercisesPage({
           <ul className="flex flex-col gap-2">
             {exercises.map((exercise) => (
               <li key={exercise.id}>
-                <ExerciseListItem exercise={exercise} search={values.q} />
+                <ExerciseListItem exercise={exercise} search={values.q} from={from} />
               </li>
             ))}
           </ul>

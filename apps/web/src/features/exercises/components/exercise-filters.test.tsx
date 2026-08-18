@@ -47,17 +47,50 @@ describe('the filter bar', () => {
   it('shows the German labels, not the stored keys', () => {
     render(<ExerciseFilters values={{}} />);
 
-    expect(screen.getByRole('option', { name: 'Kraft' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'Langhantel' })).toBeInTheDocument();
-    // Twice: the primary and the secondary muscle select share one vocabulary.
-    expect(screen.getAllByRole('option', { name: 'Beinrückseite' })).toHaveLength(2);
+    expect(screen.getAllByRole('option', { name: 'Kraft' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('option', { name: 'Langhantel' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('option', { name: 'Beinrückseite' }).length).toBeGreaterThan(0);
   });
 
   it('preselects what the URL already narrowed', () => {
     render(<ExerciseFilters values={{ category: 'strength', equipment: 'dumbbell' }} />);
 
-    expect(screen.getByLabelText('Kategorie')).toHaveValue('strength');
-    expect(screen.getByLabelText('Equipment')).toHaveValue('dumbbell');
+    for (const field of screen.getAllByLabelText('Kategorie')) {
+      expect(field).toHaveValue('strength');
+    }
+    for (const field of screen.getAllByLabelText('Equipment')) {
+      expect(field).toHaveValue('dumbbell');
+    }
+  });
+
+  /**
+   * The regression this restructuring exists for: the mobile branch once held
+   * only the search field, which left a phone with no filters at all.
+   */
+  it('offers the same eight filters in both layouts', () => {
+    render(<ExerciseFilters values={{}} />);
+
+    for (const name of [
+      'category',
+      'primaryMuscle',
+      'equipment',
+      'difficulty',
+      'unilateral',
+      'secondaryMuscle',
+      'forceType',
+      'mechanic',
+    ]) {
+      const form = screen.getByRole('form', { name: 'Übungen filtern' });
+
+      // One in the desktop row, one in the phone disclosure.
+      expect(form.querySelectorAll(`[name="${name}"]`), name).toHaveLength(2);
+    }
+  });
+
+  it('folds the phone controls away and counts what is narrowed', () => {
+    render(<ExerciseFilters values={{ category: 'strength', q: 'Kniebeuge' }} />);
+
+    expect(screen.getByText('Suchen und filtern (2)')).toBeVisible();
   });
 
   it('offers a reset only when something is narrowed', () => {
@@ -74,13 +107,15 @@ describe('the filter bar', () => {
   it('opens the secondary group when one of its filters is in use', () => {
     render(<ExerciseFilters values={{ mechanic: 'isolation' }} />);
 
-    expect(screen.getByText('Weitere Filter').closest('details')).toHaveAttribute('open');
+    expect(screen.getAllByText('Weitere Filter')[0]?.closest('details')).toHaveAttribute('open');
   });
 
   it('keeps the secondary group closed by default', () => {
     render(<ExerciseFilters values={{ category: 'strength' }} />);
 
-    expect(screen.getByText('Weitere Filter').closest('details')).not.toHaveAttribute('open');
+    expect(screen.getAllByText('Weitere Filter')[0]?.closest('details')).not.toHaveAttribute(
+      'open',
+    );
   });
 });
 

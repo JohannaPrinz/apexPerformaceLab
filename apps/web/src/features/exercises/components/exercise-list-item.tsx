@@ -29,6 +29,8 @@ export interface ExerciseListItemProps {
   };
   /** What the coach typed, so a match on the English name can explain itself. */
   readonly search?: string | undefined;
+  /** The list's own query, carried so the detail page can lead back to it. */
+  readonly from?: string | undefined;
 }
 
 /**
@@ -50,7 +52,7 @@ export function shouldShowCanonicalName(
   return canonicalName.toLowerCase().includes(term) && !name.toLowerCase().includes(term);
 }
 
-export function ExerciseListItem({ exercise, search }: ExerciseListItemProps) {
+export function ExerciseListItem({ exercise, search, from }: ExerciseListItemProps) {
   const showCanonical = shouldShowCanonicalName(exercise, search);
 
   const facts = [
@@ -63,7 +65,11 @@ export function ExerciseListItem({ exercise, search }: ExerciseListItemProps) {
 
   return (
     <Link
-      href={`/exercises/${exercise.id}`}
+      href={
+        from === undefined || from === ''
+          ? `/exercises/${exercise.id}`
+          : `/exercises/${exercise.id}?from=${encodeURIComponent(from)}`
+      }
       className="flex items-start gap-3 rounded-md border border-border bg-card px-4 py-3 transition-colors hover:border-border-strong focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
     >
       <ExerciseThumbnail name={exercise.name} media={exercise.media} />

@@ -1,7 +1,15 @@
+import Link from 'next/link';
+
 import { Button } from '@apex/ui';
 
 import {
+  CATEGORY_LABELS,
   CATEGORY_OPTIONS,
+  DIFFICULTY_LABELS,
+  EQUIPMENT_LABELS,
+  FORCE_TYPE_LABELS,
+  MECHANIC_LABELS,
+  MUSCLE_LABELS,
   DIFFICULTY_OPTIONS,
   EQUIPMENT_OPTIONS,
   FORCE_TYPE_OPTIONS,
@@ -77,12 +85,61 @@ function Select({
   );
 }
 
-export function ExerciseFilters({ values }: { readonly values: ExerciseFilterValues }) {
-  const active = hasActiveFilters(values);
+/** The German word for what a filter is currently set to. */
+const FIELD_LABELS: Readonly<Record<string, string>> = {
+  q: 'Suche',
+  category: 'Kategorie',
+  primaryMuscle: 'Primärer Muskel',
+  secondaryMuscle: 'Sekundärer Muskel',
+  equipment: 'Equipment',
+  difficulty: 'Niveau',
+  unilateral: 'Seitigkeit',
+  forceType: 'Kraftrichtung',
+  mechanic: 'Gelenkbeteiligung',
+};
+
+const VALUE_LABELS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  category: CATEGORY_LABELS,
+  primaryMuscle: MUSCLE_LABELS,
+  secondaryMuscle: MUSCLE_LABELS,
+  equipment: EQUIPMENT_LABELS,
+  difficulty: DIFFICULTY_LABELS,
+  forceType: FORCE_TYPE_LABELS,
+  mechanic: MECHANIC_LABELS,
+  unilateral: { true: 'Einseitig', false: 'Beidseitig' },
+};
+
+/** The URL without one filter — the chip's remove link. */
+function withoutField(values: ExerciseFilterValues, field: string): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(values) as [string, string | undefined][]) {
+    if (value !== undefined && value !== '' && key !== field) query.set(key, value);
+  }
+  const suffix = query.toString();
+
+  return suffix === '' ? '/exercises' : `/exercises?${suffix}`;
+}
+
+/**
+ * The eight filters, defined once.
+ *
+ * Rendered twice — once in the desktop row, once inside the mobile disclosure —
+ * but written once. Two parallel lists were the previous shape and they drifted
+ * within a day: the mobile branch kept only the search field, which left a
+ * phone with no filters at all.
+ */
+function FilterFields({
+  values,
+  layout,
+}: {
+  readonly values: ExerciseFilterValues;
+  readonly layout: 'row' | 'column';
+}) {
+  const wrapper = layout === 'row' ? 'flex flex-wrap items-end gap-3' : 'flex flex-col gap-3';
 
   return (
-    <form className="flex flex-col gap-4" aria-label="Übungen filtern">
-      <div className="flex flex-wrap items-end gap-3">
+    <>
+      <div className={wrapper}>
         <label className="flex flex-col gap-1 text-xs text-muted-foreground">
           Suche
           <input
@@ -93,6 +150,10 @@ export function ExerciseFilters({ values }: { readonly values: ExerciseFilterVal
             className="h-9 w-full max-w-xs min-w-48 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           />
         </label>
+
+        <Button type="submit" size="sm" className="h-9">
+          Suchen
+        </Button>
 
         <Select
           name="category"
@@ -145,7 +206,7 @@ export function ExerciseFilters({ values }: { readonly values: ExerciseFilterVal
           Weitere Filter
         </summary>
 
-        <div className="flex flex-wrap items-end gap-3 pt-3">
+        <div className={`${wrapper} pt-3`}>
           <Select
             name="secondaryMuscle"
             label="Sekundärer Muskel"
@@ -169,6 +230,65 @@ export function ExerciseFilters({ values }: { readonly values: ExerciseFilterVal
           />
         </div>
       </details>
+    </>
+  );
+}
+
+export function ExerciseFilters({ values }: { readonly values: ExerciseFilterValues }) {
+  const active = hasActiveFilters(values);
+
+  const chips = (Object.entries(values) as [string, string | undefined][]).flatMap(
+    ([field, value]) =>
+      value === undefined || value === ''
+        ? []
+        : [
+            {
+              field,
+              label: FIELD_LABELS[field] ?? field,
+              value: VALUE_LABELS[field]?.[value] ?? value,
+            },
+          ],
+  );
+
+  return (
+    <form className="flex flex-col gap-4" aria-label="Übungen filtern">
+      {/* Desktop: always open. */}
+      <div className="flex flex-col gap-4 max-sm:hidden">
+        <FilterFields values={values} layout="row" />
+      </div>
+
+      {/* Phone: the same fields, folded away — six controls would otherwise
+          fill the screen before the first result. The count tells the coach
+          something is narrowed without opening it. */}
+      <details className="sm:hidden">
+        <summary className="w-fit cursor-pointer text-sm text-muted-foreground">
+          Suchen und filtern{chips.length > 0 ? ` (${String(chips.length)})` : ''}
+        </summary>
+
+        <div className="flex flex-col gap-3 pt-3">
+          <FilterFields values={values} layout="column" />
+        </div>
+      </details>
+
+      {chips.length > 0 ? (
+        <ul className="flex flex-wrap gap-2" aria-label="Aktive Filter">
+          {chips.map((chip) => (
+            <li key={chip.field}>
+              {/* A chip removes exactly its own filter and keeps the rest — the
+                  quickest correction after narrowing one step too far. */}
+              <Link
+                href={withoutField(values, chip.field)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted px-3 py-1 text-xs transition-colors hover:border-border-strong focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              >
+                <span className="text-muted-foreground">{chip.label}:</span>
+                <span>{chip.value}</span>
+                <span aria-hidden="true">×</span>
+                <span className="sr-only">entfernen</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       <div className="flex items-center gap-2">
         <Button type="submit" variant="outline" size="sm">
@@ -179,7 +299,7 @@ export function ExerciseFilters({ values }: { readonly values: ExerciseFilterVal
             browser and a screen reader both take it as one. */}
         {active ? (
           <Button asChild variant="ghost" size="sm">
-            <a href="/exercises">Filter zurücksetzen</a>
+            <Link href="/exercises">Filter zurücksetzen</Link>
           </Button>
         ) : null}
       </div>
