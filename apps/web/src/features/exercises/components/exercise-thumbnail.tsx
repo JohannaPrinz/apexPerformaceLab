@@ -19,12 +19,20 @@ import { readExerciseMedia } from '@apex/domain';
  * icon. Only `image` is rendered — a video needs a player, which is a different
  * decision than this one.
  */
+const SIZES = {
+  sm: 'size-11 text-sm',
+  lg: 'size-20 text-2xl',
+} as const;
+
 export function ExerciseThumbnail({
   name,
   media,
+  size = 'sm',
 }: {
   readonly name: string;
   readonly media?: unknown;
+  /** The detail page needs a larger square; scaling the small one distorted it. */
+  readonly size?: keyof typeof SIZES;
 }) {
   const items = readExerciseMedia(media);
   const image = items.find((item) => item.kind === 'image');
@@ -34,7 +42,7 @@ export function ExerciseThumbnail({
       <span
         aria-hidden="true"
         data-testid="thumbnail-placeholder"
-        className="grid size-11 shrink-0 place-items-center rounded-md border border-border bg-muted text-sm font-medium text-muted-foreground"
+        className={`grid shrink-0 place-items-center rounded-md border border-border bg-muted font-medium text-muted-foreground ${SIZES[size]}`}
       >
         {name.slice(0, 1).toUpperCase()}
       </span>
@@ -51,7 +59,7 @@ export function ExerciseThumbnail({
       src={image.url}
       alt={image.alt ?? name}
       loading="lazy"
-      className="size-11 shrink-0 rounded-md border border-border object-cover"
+      className={`shrink-0 rounded-md border border-border object-cover ${SIZES[size]}`}
     />
   );
 }
