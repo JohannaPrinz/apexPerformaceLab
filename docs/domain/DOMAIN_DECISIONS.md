@@ -1730,6 +1730,34 @@ Imported device data arrives as **Tracking Entries**, not Measurements — see
 Organizations already exist in the MVP as the implementation of the Personal Workspace (§5).
 What is deferred is multiple coaches within one Workspace, not the concept itself.
 
+### The Athlete belongs to the Workspace, not to the Coach who entered them
+
+Decided 2026-08-16, and it confirms §5 rather than departing from it: an Athlete
+belongs to the Workspace. Whoever created the record is a fact about its
+history, not a claim of ownership. A coach leaving the practice does not take
+athletes with them, and a colleague can take over a case without a transfer
+step.
+
+**Visibility inside the Workspace is a second question.** Belonging to the
+Workspace will not by itself mean every coach sees every Athlete: which
+colleagues may read a record is granted per Athlete, **with the Athlete's
+consent** — the same principle §21 already applies to the Athlete's own access,
+and the one Art. 9 health data demands.
+
+Two consequences for whoever implements this:
+
+- **The mechanism already exists in the model.** `Share` (§3) is a visibility
+  grant for any shareable resource. Nothing new needs inventing.
+- **The grant belongs beside the tenant filter, not in each query.** Reads would
+  change from "belongs to my Workspace" to "belongs to my Workspace _and_ is
+  granted to me". A single forgotten place shows health data to someone who may
+  not see it, which is precisely why `scoped()` exists as one implementation
+  rather than a convention.
+
+**Not part of the MVP.** One coach, one Workspace, their athletes. This is
+recorded so the question is answered once, before multiple coaches make it
+urgent and someone answers it differently under time pressure.
+
 ### Catalogue text is German today, localisable later
 
 The application ships in German, so the Exercise catalogue carries German
