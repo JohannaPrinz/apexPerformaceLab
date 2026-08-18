@@ -6,7 +6,7 @@ import { organization } from 'better-auth/plugins';
 import { db } from '@apex/database';
 
 import { accessControl, roles } from './permissions';
-import { provisionPersonalWorkspace, resolveInitialOrganizationId } from './provisioning';
+import { ensureActiveOrganizationId, provisionPersonalWorkspace } from './provisioning';
 
 /**
  * Better Auth server instance — the single source of truth for identity.
@@ -113,22 +113,50 @@ export const auth = betterAuth({
     session: {
       create: {
         /**
-         * Puts the session into a workspace at sign-in.
+         * Puts the session into a workspace at sign-in — and provisions one if
+         * the coach does not have it yet.
          *
-         * The active organization is resolved **from Membership** — never from
-         * the coach profile, which holds no organization by design (§6). This
-         * only supplies the initial value; a workspace switcher will later
-         * write `activeOrganizationId` explicitly.
+         * The active organization is resolved **from Membership**, never from
+         * the coach profile, which holds no organization by design (§6).
          *
-         * `null` is a valid result: a user with no membership (a future athlete
-         * portal account) gets a session without a tenant scope, and
-         * `organizationProcedure` refuses it. That is the correct outcome, not
-         * an error to swallow here.
+         * **Why this also provisions.** Better Auth does not sequence
+         * `user.create.after` before this hook. On a real registration the
+         * session was written 315 ms *before* the membership existed, so
+         * resolving alone stored `null` and the first session after signing up
+         * had no tenant scope. `ensureActiveOrganizationId` closes that race
+         * from both sides; provisioning is idempotent, so whichever hook gets
+         * there first wins and the other returns without writing.
+         *
+         * ## The MVP assumption, stated here on purpose
+         *
+         * **Everyone who registers through Better Auth is a coach**, and every
+         * coach gets exactly one personal workspace they own alone. No
+         * multi-coach organizations, no invitations, no shared athletes — see
+         * §5 and §25. That assumption is what makes provisioning at sign-in
+         * correct rather than presumptuous.
+         *
+         * `null` is therefore **no longer expected on a normal sign-in.** It
+         * now means the user row is gone — a deleted account or a stale
+         * session — and `organizationProcedure` refusing it is right.
+         *
+         * ## Where the gate moves when athletes arrive (§21)
+         *
+         * **This is the place to change.** Athlete portal accounts are created
+         * server-side by a coach, bypassing public sign-up, so the user hook
+         * never sees them — but this hook fires on *every* sign-in, theirs
+         * included. Provisioning would hand an athlete a coach profile and a
+         * workspace.
+         *
+         * So when portal accounts land, gate the call below on the registration
+         * intent. Do not push that gate down into `ensureActiveOrganizationId`:
+         * it is a policy about who deserves a workspace, and it belongs at the
+         * auth boundary where it can be read in one place. The function keeps
+         * only the low-level guard that a user with no row provisions nothing.
          */
         before: async (session) => ({
           data: {
             ...session,
-            activeOrganizationId: await resolveInitialOrganizationId(db, session.userId),
+            activeOrganizationId: await ensureActiveOrganizationId(db, session.userId),
           },
         }),
       },

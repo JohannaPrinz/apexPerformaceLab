@@ -8,6 +8,7 @@
 export { auth, type Auth, type Session } from './server';
 export * from './permissions';
 export {
+  ensureActiveOrganizationId,
   personalWorkspaceName,
   provisionPersonalWorkspace,
   resolveInitialOrganizationId,

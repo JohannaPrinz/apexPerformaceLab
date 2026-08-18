@@ -207,3 +207,63 @@ export async function resolveInitialOrganizationId(
 
   return membership?.organizationId ?? null;
 }
+
+/**
+ * The organization a session should start in, provisioning one if it is missing.
+ *
+ * ## Why this exists
+ *
+ * `user.create.after` and `session.create.before` are **not sequenced** by
+ * Better Auth. Measured on a real registration: the user row was written at
+ * `…00.255`, the session at `…00.354`, and the membership only at `…00.669` —
+ * the session was created 315 ms *before* the membership existed. So
+ * `resolveInitialOrganizationId` alone found nothing and stored `null`, and the
+ * very first session after registering had no tenant scope. Every later
+ * sign-in was correct, which is what made this easy to miss.
+ *
+ * Ordering the calls here is deliberate:
+ *
+ * 1. **Resolve first.** For every sign-in after the first this is the only
+ *    query, so the normal path costs exactly what it did before.
+ * 2. **Read the user** only when that came back empty. The session hook is
+ *    handed a `userId` and no name, and provisioning without one would name the
+ *    workspace "My Workspace" whenever the session hook wins the race — the
+ *    workspace name would depend on timing.
+ * 3. **Provision idempotently**, which closes the race from the other side: if
+ *    the user hook is still in flight, whichever transaction commits second
+ *    hits `Coach.userId @unique`, rolls its organization back, and returns
+ *    `null`.
+ * 4. **Resolve again** in exactly that case — the coach already existed, so the
+ *    membership the other transaction wrote is now visible.
+ *
+ * ## The low-level guard, and what it is not
+ *
+ * A `userId` with no user row provisions **nothing** and yields `null`. That is
+ * safety at this level: a phantom or deleted session must never conjure a
+ * workspace, and there is no name to build one from anyway.
+ *
+ * It is *not* the athlete gate. This function will happily provision for any
+ * user that exists, because deciding **who deserves a workspace** is a policy
+ * question and it is answered at the auth boundary in `server.ts`, where the
+ * MVP assumption "everyone who registers is a coach" is stated. When athlete
+ * portal accounts arrive (§21) that gate moves — here it would have to be
+ * repeated at every call site.
+ */
+export async function ensureActiveOrganizationId(
+  db: PrismaClientInstance,
+  userId: string,
+): Promise<string | null> {
+  const existing = await resolveInitialOrganizationId(db, userId);
+  if (existing !== null) return existing;
+
+  const user = await db.user.findUnique({ where: { id: userId }, select: { name: true } });
+  if (!user) return null;
+
+  const provisioned = await provisionPersonalWorkspace(db, { userId, userName: user.name });
+  if (provisioned) return provisioned.organizationId;
+
+  // Provisioning declined because a coach profile already existed — the user
+  // hook won the race between our resolve above and our call. Its membership
+  // is committed by now.
+  return resolveInitialOrganizationId(db, userId);
+}
