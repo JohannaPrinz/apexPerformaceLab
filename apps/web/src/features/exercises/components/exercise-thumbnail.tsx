@@ -22,6 +22,8 @@ import { readExerciseMedia } from '@apex/domain';
 const SIZES = {
   sm: 'size-11 text-sm',
   lg: 'size-20 text-2xl',
+  /** The detail page: a square that fills its column, not a thumbnail. */
+  xl: 'aspect-square w-full text-5xl',
 } as const;
 
 export function ExerciseThumbnail({

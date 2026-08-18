@@ -75,27 +75,30 @@ export function ExerciseDetail({ exercise }: { readonly exercise: ExerciseDetail
       {/* The media area is a large version of the list placeholder. Every
           exercise carries `media: []` today, so this is the normal state and
           says so plainly rather than looking like a failed load. */}
-      <section aria-label="Medien" className="flex items-center gap-4">
-        <div className="origin-left scale-150">
-          <ExerciseThumbnail name={exercise.name} media={exercise.media} />
-        </div>
-        <p className="pl-6 text-sm text-muted-foreground">
-          Für diese Übung liegt noch kein Bild und kein Video vor.
-        </p>
-      </section>
-
-      {exercise.instructions.length > 0 ? (
-        <section className="flex flex-col gap-3" aria-labelledby="instructions">
-          <h2 id="instructions" className="text-lg font-semibold">
-            Ausführung
-          </h2>
-          <ol className="flex list-decimal flex-col gap-2 pl-5 text-pretty">
-            {exercise.instructions.map((step) => (
-              <li key={step}>{step}</li>
-            ))}
-          </ol>
+      {/* Media and execution side by side from `md` up: the picture is what a
+          coach glances at while reading the steps, and stacking them put a
+          whole screen between the two. */}
+      <div className="flex flex-col gap-8 md:flex-row md:items-start md:gap-10">
+        <section aria-label="Medien" className="flex shrink-0 flex-col gap-2 md:w-64">
+          <ExerciseThumbnail name={exercise.name} media={exercise.media} size="xl" />
+          <p className="text-xs text-muted-foreground">
+            Für diese Übung liegt noch kein Bild und kein Video vor.
+          </p>
         </section>
-      ) : null}
+
+        {exercise.instructions.length > 0 ? (
+          <section className="flex flex-1 flex-col gap-3" aria-labelledby="instructions">
+            <h2 id="instructions" className="text-lg font-semibold">
+              Ausführung
+            </h2>
+            <ol className="flex list-decimal flex-col gap-2 pl-5 text-pretty">
+              {exercise.instructions.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
+          </section>
+        ) : null}
+      </div>
 
       <section className="flex flex-col gap-3" aria-labelledby="attributes">
         <h2 id="attributes" className="text-lg font-semibold">

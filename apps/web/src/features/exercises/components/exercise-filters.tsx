@@ -102,7 +102,7 @@ const VALUE_LABELS: Readonly<Record<string, Readonly<Record<string, string>>>> =
   category: CATEGORY_LABELS,
   primaryMuscle: MUSCLE_LABELS,
   secondaryMuscle: MUSCLE_LABELS,
-  equipment: EQUIPMENT_LABELS,
+  equipment: { none: 'Kein Equipment', ...EQUIPMENT_LABELS },
   difficulty: DIFFICULTY_LABELS,
   forceType: FORCE_TYPE_LABELS,
   mechanic: MECHANIC_LABELS,
@@ -140,21 +140,6 @@ function FilterFields({
   return (
     <>
       <div className={wrapper}>
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          Suche
-          <input
-            name="q"
-            defaultValue={values.q ?? ''}
-            placeholder="Übung suchen"
-            aria-label="Übungen nach Namen suchen"
-            className="h-9 w-full max-w-xs min-w-48 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-          />
-        </label>
-
-        <Button type="submit" size="sm" className="h-9">
-          Suchen
-        </Button>
-
         <Select
           name="category"
           label="Kategorie"
@@ -173,7 +158,7 @@ function FilterFields({
           name="equipment"
           label="Equipment"
           value={values.equipment}
-          options={EQUIPMENT_OPTIONS}
+          options={[{ value: 'none', label: 'Kein Equipment' }, ...EQUIPMENT_OPTIONS]}
           placeholder="Alle"
         />
         <Select
@@ -193,6 +178,12 @@ function FilterFields({
           ]}
           placeholder="Alle"
         />
+
+        {layout === 'row' ? (
+          <Button type="submit" variant="outline" size="sm" className="h-9">
+            Anwenden
+          </Button>
+        ) : null}
       </div>
 
       <details
@@ -251,7 +242,29 @@ export function ExerciseFilters({ values }: { readonly values: ExerciseFilterVal
   );
 
   return (
-    <form className="flex flex-col gap-4" aria-label="Übungen filtern">
+    <form
+      /* Uncontrolled fields keep whatever the DOM holds when React reuses the
+         element, so a reset changed the URL and left the inputs filled. Keying
+         the form on the current narrowing remounts them. */
+      key={JSON.stringify(values)}
+      className="flex flex-col gap-4"
+      aria-label="Übungen filtern"
+    >
+      {/* Search first and full width: it is the fastest way in, and a coach who
+          knows the name should not have to pass the filters to reach it. */}
+      <div className="flex gap-2">
+        <input
+          name="q"
+          defaultValue={values.q ?? ''}
+          placeholder="Übung suchen"
+          aria-label="Übungen nach Namen suchen"
+          className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        />
+        <Button type="submit" className="h-10 shrink-0">
+          Suchen
+        </Button>
+      </div>
+
       {/* Desktop: always open. */}
       <div className="flex flex-col gap-4 max-sm:hidden">
         <FilterFields values={values} layout="row" />
@@ -291,7 +304,7 @@ export function ExerciseFilters({ values }: { readonly values: ExerciseFilterVal
       ) : null}
 
       <div className="flex items-center gap-2">
-        <Button type="submit" variant="outline" size="sm">
+        <Button type="submit" variant="outline" size="sm" className="sm:hidden">
           Anwenden
         </Button>
 

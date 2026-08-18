@@ -27,17 +27,19 @@ export const metadata: Metadata = {
 /** Twenty-five rows: a screenful to scan, and short enough to page quickly. */
 const PAGE_SIZE = 25;
 
+type Param = string | string[] | undefined;
+
 interface SearchParams {
-  q?: string;
-  category?: string;
-  primaryMuscle?: string;
-  secondaryMuscle?: string;
-  equipment?: string;
-  difficulty?: string;
-  unilateral?: string;
-  forceType?: string;
-  mechanic?: string;
-  page?: string;
+  q?: Param;
+  category?: Param;
+  primaryMuscle?: Param;
+  secondaryMuscle?: Param;
+  equipment?: Param;
+  difficulty?: Param;
+  unilateral?: Param;
+  forceType?: Param;
+  mechanic?: Param;
+  page?: Param;
 }
 
 /**
@@ -50,11 +52,23 @@ interface SearchParams {
 const oneOf = <T extends string>(allowed: readonly T[], value: string | undefined): T | undefined =>
   allowed.find((candidate) => candidate === value);
 
-/** Only what is set, so an empty select never narrows anything. */
-const clean = (value: string | undefined): string | undefined => {
-  const trimmed = value?.trim();
+/**
+ * One value, from a parameter that may arrive twice.
+ *
+ * The filter fields are rendered in both layouts — desktop row and phone
+ * disclosure — so a submit sends every name twice and Next hands back an array.
+ * The last non-empty entry wins: whichever layout the coach actually filled in
+ * is the one that carries a value.
+ */
+const clean = (value: string | string[] | undefined): string | undefined => {
+  const candidates = Array.isArray(value) ? value : [value];
 
-  return trimmed === undefined || trimmed === '' ? undefined : trimmed;
+  for (const candidate of [...candidates].reverse()) {
+    const trimmed = candidate?.trim();
+    if (trimmed !== undefined && trimmed !== '') return trimmed;
+  }
+
+  return undefined;
 };
 
 /**
@@ -89,7 +103,7 @@ export default async function ExercisesPage({
     mechanic: clean(params.mechanic),
   };
 
-  const requested = Math.max(1, Number.parseInt(params.page ?? '1', 10) || 1);
+  const requested = Math.max(1, Number.parseInt(clean(params.page) ?? '1', 10) || 1);
 
   const filters = {
     includeArchived: false,
@@ -99,7 +113,11 @@ export default async function ExercisesPage({
       : {}),
     ...(oneOf(MUSCLES, values.primaryMuscle) ? { primaryMuscles: values.primaryMuscle } : {}),
     ...(oneOf(MUSCLES, values.secondaryMuscle) ? { secondaryMuscles: values.secondaryMuscle } : {}),
-    ...(oneOf(EQUIPMENT, values.equipment) ? { equipment: values.equipment } : {}),
+    ...(values.equipment === 'none'
+      ? { bodyweight: true }
+      : oneOf(EQUIPMENT, values.equipment)
+        ? { equipment: values.equipment }
+        : {}),
     ...(oneOf(EXERCISE_DIFFICULTIES, values.difficulty)
       ? { difficulty: oneOf(EXERCISE_DIFFICULTIES, values.difficulty) }
       : {}),

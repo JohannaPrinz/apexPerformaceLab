@@ -30,7 +30,7 @@ export const CATEGORY_LABELS: Readonly<Record<string, string>> = {
 export const DIFFICULTY_LABELS: Readonly<Record<string, string>> = {
   beginner: 'Einsteiger',
   intermediate: 'Fortgeschritten',
-  advanced: 'Fortgeschritten+',
+  advanced: 'Profi',
 };
 
 export const EQUIPMENT_LABELS: Readonly<Record<string, string>> = {

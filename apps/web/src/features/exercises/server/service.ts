@@ -176,6 +176,7 @@ function listWhere(
     primaryMuscles,
     secondaryMuscles,
     equipment,
+    bodyweight,
   }: ListExercisesInput,
 ) {
   /**
@@ -187,6 +188,7 @@ function listWhere(
     ...(primaryMuscles ? [{ primaryMuscles: { hasEvery: primaryMuscles } }] : []),
     ...(secondaryMuscles ? [{ secondaryMuscles: { hasEvery: secondaryMuscles } }] : []),
     ...(equipment ? [{ equipment: { hasEvery: equipment } }] : []),
+    ...(bodyweight === true ? [{ equipment: { isEmpty: true } }] : []),
   ];
 
   return {

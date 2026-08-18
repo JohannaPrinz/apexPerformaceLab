@@ -84,6 +84,14 @@ export const listExercisesSchema = z.object({
   secondaryMuscles: listFilter,
   equipment: listFilter,
   /**
+   * Only movements that need nothing.
+   *
+   * Bodyweight is the *empty* equipment list, so it cannot be expressed as an
+   * equipment value — asking for it is a different question, and it gets its
+   * own flag rather than a magic string inside `equipment`.
+   */
+  bodyweight: z.boolean().optional(),
+  /**
    * Paging, optional and without a default.
    *
    * Left undefined the query returns everything, which is what the assessment
