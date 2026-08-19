@@ -38,6 +38,8 @@ const athleteSelect = {
   dateOfBirth: true,
   email: true,
   phone: true,
+  heightCm: true,
+  weightKg: true,
   archivedAt: true,
   createdAt: true,
   userId: true,
@@ -51,11 +53,37 @@ export interface AthleteRecord {
   dateOfBirth: Date | null;
   email: string | null;
   phone: string | null;
+  /** Centimetres and kilograms — the units the columns are declared in. */
+  heightCm: number | null;
+  weightKg: number | null;
   archivedAt: Date | null;
   createdAt: Date;
   userId: string | null;
   createdByCoachId: string;
 }
+
+/**
+ * A `Decimal(5,2)` column, as a number.
+ *
+ * Prisma hands back a `Decimal` object, not a `number`, and superjson carries it
+ * to the client as one — where `String()` on it stringifies an object rather
+ * than the value. `slots.ts` narrows defensively for exactly this reason.
+ *
+ * Here the conversion happens once, at the service boundary, so no caller ever
+ * meets a `Decimal`. That is the opposite choice from a lactate reading, and for
+ * the opposite reason: two decimals of a height carry no precision worth
+ * protecting, and a value the UI can format directly is worth more.
+ */
+const toNumber = (value: unknown): number | null =>
+  value === null || value === undefined ? null : Number(value);
+
+/** Rows leave this module as plain numbers; nothing above it sees a `Decimal`. */
+const toRecord = (row: Record<string, unknown>): AthleteRecord =>
+  ({
+    ...row,
+    heightCm: toNumber(row['heightCm']),
+    weightKg: toNumber(row['weightKg']),
+  }) as AthleteRecord;
 
 /**
  * Roster page.
@@ -87,7 +115,7 @@ export async function listAthletes(
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
 
-  const items = rows.slice(0, limit);
+  const items = rows.slice(0, limit).map(toRecord);
 
   return {
     items,
@@ -109,10 +137,12 @@ export async function getAthlete(
   tenant: Pick<TenantContext, 'organizationId'>,
   athleteId: string,
 ): Promise<AthleteRecord | null> {
-  return db.athlete.findFirst({
+  const row = await db.athlete.findFirst({
     where: scoped(tenant, { id: athleteId }),
     select: athleteSelect,
   });
+
+  return row === null ? null : toRecord(row);
 }
 
 export async function createAthlete(
@@ -121,7 +151,7 @@ export async function createAthlete(
   createdByCoachId: string,
   input: CreateAthleteInput,
 ): Promise<AthleteRecord> {
-  return db.athlete.create({
+  const row = await db.athlete.create({
     data: withTenant(tenant, {
       firstName: input.firstName,
       lastName: input.lastName,
@@ -130,10 +160,14 @@ export async function createAthlete(
       dateOfBirth: input.dateOfBirth ? new Date(input.dateOfBirth) : null,
       email: input.email ?? null,
       phone: input.phone ?? null,
+      heightCm: input.heightCm ?? null,
+      weightKg: input.weightKg ?? null,
       createdByCoachId,
     }),
     select: athleteSelect,
   });
+
+  return toRecord(row);
 }
 
 /**
@@ -158,6 +192,8 @@ export async function updateAthlete(
         : { dateOfBirth: fields.dateOfBirth ? new Date(fields.dateOfBirth) : null }),
       ...(fields.email === undefined ? {} : { email: fields.email ?? null }),
       ...(fields.phone === undefined ? {} : { phone: fields.phone ?? null }),
+      ...(fields.heightCm === undefined ? {} : { heightCm: fields.heightCm }),
+      ...(fields.weightKg === undefined ? {} : { weightKg: fields.weightKg }),
     },
   });
 

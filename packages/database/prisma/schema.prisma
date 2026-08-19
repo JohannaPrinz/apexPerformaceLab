@@ -351,12 +351,32 @@ model Athlete {
   dateOfBirth DateTime? @db.Date
   email       String?
   phone       String?
+
+  /// Body height in **centimetres**, and current body weight in **kilograms**.
+  ///
+  /// The unit is fixed by the column rather than carried alongside it, unlike
+  /// `MeasurementType.unit`. A profile field has no room for a unit and no need
+  /// for one: these are two known quantities in a German-language product, and
+  /// showing pounds later is a rendering decision, not a storage one.
+  ///
+  /// **Profile fields, not measurements — and the distinction is structural.**
+  /// `Measurement.assessmentModuleId` is required, so a measurement only exists
+  /// inside an assessment module. A weight noted at a first consultation, before
+  /// any assessment exists, has nowhere else to go. The two are not redundant:
+  /// this is the current value a coach reads at a glance, and the measurement
+  /// history that arrives later is the series behind it (§9).
+  ///
+  /// `Decimal(5,2)` because half-centimetres occur in youth data and a weight is
+  /// read to a tenth. Both stay optional — the ordinary case is an athlete
+  /// entered during a first consultation about whom little is known (§21).
+  heightCm   Decimal?  @db.Decimal(5, 2)
+  weightKg   Decimal?  @db.Decimal(5, 2)
   /// Inactive marker. Athletes are archived, never deleted — the performance
   /// history outlives the coaching relationship (§22). Set when the coaching
   /// ends, and also when the Athlete deletes their portal account (§7).
-  archivedAt  DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)

@@ -190,3 +190,74 @@ describe('athlete service — behaviour', () => {
     });
   });
 });
+
+/**
+ * Height and weight through the service.
+ *
+ * Two separate concerns: the write has to carry the fields, and the read has to
+ * hand back numbers. The second is the one that bites silently — a `Decimal`
+ * reaching a component stringifies as an object, not a value.
+ */
+describe('body measurements', () => {
+  it('writes both figures on create', () => {
+    const { db, athlete } = fakeDb();
+
+    void createAthlete(db, TENANT, 'coach_1', {
+      firstName: 'Johanna',
+      lastName: 'Prinz',
+      heightCm: 178,
+      weightKg: 64.5,
+    });
+
+    expect(argsOf(athlete.create).data).toMatchObject({ heightCm: 178, weightKg: 64.5 });
+  });
+
+  it('writes null for a figure the coach cleared', () => {
+    // The point of the separate update schema: `null` is an instruction to
+    // remove, and it must reach the database rather than being skipped.
+    const { db, athlete } = fakeDb();
+
+    void updateAthlete(db, TENANT, { athleteId: 'ath_1', weightKg: null });
+
+    expect(argsOf(athlete.updateMany).data).toMatchObject({ weightKg: null });
+  });
+
+  it('leaves an unsent figure untouched', () => {
+    const { db, athlete } = fakeDb();
+
+    void updateAthlete(db, TENANT, { athleteId: 'ath_1', firstName: 'Johanna' });
+
+    expect(argsOf(athlete.updateMany).data).not.toHaveProperty('weightKg');
+    expect(argsOf(athlete.updateMany).data).not.toHaveProperty('heightCm');
+  });
+
+  it('hands back numbers, never a Decimal object', async () => {
+    // Prisma returns `Decimal`, superjson carries it to the client as one, and
+    // `String()` on it stringifies an object. Converting once at this boundary
+    // is why no caller has to know that.
+    const { db, athlete } = fakeDb();
+    const decimal = { toString: () => '64.5', valueOf: () => 64.5 };
+
+    athlete.findFirst.mockResolvedValue({
+      id: 'ath_1',
+      heightCm: { toString: () => '178', valueOf: () => 178 },
+      weightKg: decimal,
+    } as never);
+
+    const record = await getAthlete(db, TENANT, 'ath_1');
+
+    expect(record?.heightCm).toBe(178);
+    expect(record?.weightKg).toBe(64.5);
+    expect(typeof record?.weightKg).toBe('number');
+  });
+
+  it('reads an absent figure as null', async () => {
+    const { db, athlete } = fakeDb();
+    athlete.findFirst.mockResolvedValue({ id: 'ath_1', heightCm: null, weightKg: null } as never);
+
+    const record = await getAthlete(db, TENANT, 'ath_1');
+
+    expect(record?.heightCm).toBeNull();
+    expect(record?.weightKg).toBeNull();
+  });
+});
