@@ -3,7 +3,10 @@ import { nextConfig } from '@apex/config/eslint/next';
 export default [
   ...nextConfig,
   {
-    ignores: ['.next/**', 'next-env.d.ts'],
+    // `scripts/` are standalone Node tools run by hand, not part of the
+    // application bundle: they use `console` deliberately and evaluate code
+    // inside a browser page, where `document` is the browser's, not Node's.
+    ignores: ['.next/**', 'next-env.d.ts', 'scripts/**'],
   },
   {
     /**
