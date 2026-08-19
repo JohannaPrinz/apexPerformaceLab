@@ -16,6 +16,7 @@ import {
 } from '@/features/exercises/components/exercise-filters';
 import { ExerciseListItem } from '@/features/exercises/components/exercise-list-item';
 import { FocusResults } from '@/features/exercises/components/focus-results';
+import { EXERCISE_ORIGINS } from '@/features/exercises/schemas';
 import { api } from '@/trpc/server';
 
 import type { Metadata } from 'next';
@@ -31,6 +32,7 @@ type Param = string | string[] | undefined;
 
 interface SearchParams {
   q?: Param;
+  origin?: Param;
   category?: Param;
   primaryMuscle?: Param;
   secondaryMuscle?: Param;
@@ -93,6 +95,7 @@ export default async function ExercisesPage({
 
   const values = {
     q: clean(params.q),
+    origin: clean(params.origin),
     category: clean(params.category),
     primaryMuscle: clean(params.primaryMuscle),
     secondaryMuscle: clean(params.secondaryMuscle),
@@ -107,6 +110,11 @@ export default async function ExercisesPage({
 
   const filters = {
     includeArchived: false,
+    // Narrows the tenant rule, never widens it: `system` selects rows owned by
+    // no workspace, `workspace` this one. Anything else falls back to both.
+    ...(oneOf(EXERCISE_ORIGINS, values.origin)
+      ? { origin: oneOf(EXERCISE_ORIGINS, values.origin) }
+      : {}),
     ...(values.q ? { search: values.q } : {}),
     ...(oneOf(EXERCISE_CATEGORIES, values.category)
       ? { category: oneOf(EXERCISE_CATEGORIES, values.category) }

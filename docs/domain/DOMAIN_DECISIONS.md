@@ -1730,6 +1730,31 @@ Imported device data arrives as **Tracking Entries**, not Measurements — see
 Organizations already exist in the MVP as the implementation of the Personal Workspace (§5).
 What is deferred is multiple coaches within one Workspace, not the concept itself.
 
+### Deferred: does a Coach's own exercise library follow them between Workspaces?
+
+Raised 2026-08-20 while placing the exercise catalogue in the navigation.
+**Not decided, and deliberately not decided by the code.**
+
+An Exercise carries a nullable `organizationId`: `null` is the shared catalogue
+every workspace inherits, anything else is a workspace's own. There are exactly
+two scopes and there will not be a third for the MVP.
+
+The consequence is that an own exercise belongs to the **Workspace**, not to the
+Coach. A coach who writes an exercise in their own workspace and later also
+works at a practice does not have it there. For an Athlete this is obviously
+right — the record belongs to whoever is the controller. For an Exercise it is
+arguable: it holds no personal data and is closer to professional tooling than
+to a client record.
+
+Making it follow the Coach would mean a third scope bound to `Coach` rather than
+`Organization`, and it carries a consequence worth stating before anyone builds
+it: an exercise referenced by the practice's assessments would belong to the
+coach and leave with them, while the assessments stay behind.
+
+The question only arises with the second Workspace, which the MVP does not have.
+Recorded here so that it is answered on purpose rather than by whoever
+implements multi-workspace first.
+
 ### The Athlete belongs to the Workspace, not to the Coach who entered them
 
 Decided 2026-08-16, and it confirms §5 rather than departing from it: an Athlete

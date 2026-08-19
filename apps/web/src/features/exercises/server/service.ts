@@ -19,7 +19,12 @@ import {
 } from '@apex/domain';
 import type { TenantContext } from '@apex/types';
 
-import type { CreateExerciseInput, ListExercisesInput, UpdateExerciseInput } from '../schemas';
+import type {
+  CreateExerciseInput,
+  ExerciseOrigin,
+  ListExercisesInput,
+  UpdateExerciseInput,
+} from '../schemas';
 
 /**
  * The exercise catalogue.
@@ -141,7 +146,7 @@ function toKey(name: string): string {
 export async function listExercises(
   db: ExerciseDb,
   tenant: Pick<TenantContext, 'organizationId'>,
-  input: ListExercisesInput,
+  input: Omit<ListExercisesInput, 'origin'> & { origin?: ExerciseOrigin },
 ): Promise<ExerciseRecord[]> {
   const { limit, offset } = input;
 
@@ -177,7 +182,11 @@ function listWhere(
     secondaryMuscles,
     equipment,
     bodyweight,
-  }: ListExercisesInput,
+    origin = 'all',
+    // `origin` is optional here although the schema defaults it: the router
+    // always passes a parsed input, and a caller building a filter by hand
+    // should not have to name a narrowing it does not want.
+  }: Omit<ListExercisesInput, 'origin'> & { origin?: ExerciseOrigin },
 ) {
   /**
    * `hasEvery`, not `hasSome`: asking for chest *and* dumbbell means both.
@@ -197,7 +206,15 @@ function listWhere(
     // tenant filter. Spelling the conjunction out is what stops a search from
     // quietly widening the query to every workspace.
     AND: [
-      { OR: [{ organizationId: tenant.organizationId }, { organizationId: null }] },
+      // The origin filter narrows the tenant rule, it never replaces it: the
+      // `workspace` branch still names this workspace, and `system` selects
+      // rows that belong to no workspace at all. Neither can reach another
+      // tenant's exercises.
+      origin === 'system'
+        ? { organizationId: null }
+        : origin === 'workspace'
+          ? { organizationId: tenant.organizationId }
+          : { OR: [{ organizationId: tenant.organizationId }, { organizationId: null }] },
       // Both names: a coach may know the movement in German or by its
       // international term, and the catalogue answers to either.
       ...(search
@@ -232,7 +249,7 @@ function listWhere(
 export async function countExercises(
   db: ExerciseDb,
   tenant: Pick<TenantContext, 'organizationId'>,
-  input: ListExercisesInput,
+  input: Omit<ListExercisesInput, 'origin'> & { origin?: ExerciseOrigin },
 ): Promise<number> {
   return db.exercise.count({ where: listWhere(tenant, input) });
 }

@@ -113,3 +113,25 @@ export const MUSCLE_OPTIONS = options(MUSCLES, MUSCLE_LABELS);
 export const EQUIPMENT_OPTIONS = options(EQUIPMENT, EQUIPMENT_LABELS);
 export const FORCE_TYPE_OPTIONS = options(EXERCISE_FORCE_TYPES, FORCE_TYPE_LABELS);
 export const MECHANIC_OPTIONS = options(EXERCISE_MECHANICS, MECHANIC_LABELS);
+
+/**
+ * Where an exercise comes from.
+ *
+ * "Katalog" rather than "System": a coach does not think of the shared
+ * catalogue as a system, and `SYSTEM` is an implementation word. "Eigene" is
+ * the workspace's own — which, once a workspace holds several coaches, means
+ * the practice's, not one person's. That is the same distinction
+ * `Exercise.organizationId` already draws; nothing new is introduced.
+ *
+ * The `all` value is deliberately absent: it is the placeholder of an empty
+ * select, exactly like every other filter in this bar.
+ */
+export const ORIGIN_LABELS: Readonly<Record<string, string>> = {
+  system: 'Katalog',
+  workspace: 'Eigene',
+};
+
+export const ORIGIN_OPTIONS = [
+  { value: 'system', label: ORIGIN_LABELS['system'] ?? 'Katalog' },
+  { value: 'workspace', label: ORIGIN_LABELS['workspace'] ?? 'Eigene' },
+] as const;

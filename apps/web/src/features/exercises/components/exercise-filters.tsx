@@ -4,6 +4,8 @@ import { Button } from '@apex/ui';
 
 import {
   CATEGORY_LABELS,
+  ORIGIN_LABELS,
+  ORIGIN_OPTIONS,
   CATEGORY_OPTIONS,
   DIFFICULTY_LABELS,
   EQUIPMENT_LABELS,
@@ -38,6 +40,7 @@ import {
 
 export interface ExerciseFilterValues {
   readonly q?: string | undefined;
+  readonly origin?: string | undefined;
   readonly category?: string | undefined;
   readonly primaryMuscle?: string | undefined;
   readonly secondaryMuscle?: string | undefined;
@@ -88,6 +91,7 @@ function Select({
 /** The German word for what a filter is currently set to. */
 const FIELD_LABELS: Readonly<Record<string, string>> = {
   q: 'Suche',
+  origin: 'Herkunft',
   category: 'Kategorie',
   primaryMuscle: 'Primärer Muskel',
   secondaryMuscle: 'Sekundärer Muskel',
@@ -99,6 +103,7 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
 };
 
 const VALUE_LABELS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  origin: ORIGIN_LABELS,
   category: CATEGORY_LABELS,
   primaryMuscle: MUSCLE_LABELS,
   secondaryMuscle: MUSCLE_LABELS,
@@ -140,6 +145,13 @@ function FilterFields({
   return (
     <>
       <div className={wrapper}>
+        <Select
+          name="origin"
+          label="Herkunft"
+          value={values.origin}
+          options={ORIGIN_OPTIONS}
+          placeholder="Alle"
+        />
         <Select
           name="category"
           label="Kategorie"

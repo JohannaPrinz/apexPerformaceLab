@@ -100,3 +100,30 @@ describe('when the English name is shown', () => {
     );
   });
 });
+
+/**
+ * A workspace's own exercise among the catalogue's.
+ *
+ * Five own rows sit among 276 shared ones, so the list says which is which
+ * rather than leaving it to a filter the coach has to think of first.
+ */
+describe('telling own exercises apart', () => {
+  it('marks an exercise this workspace owns', () => {
+    render(<ExerciseListItem exercise={{ ...EXERCISE, scope: 'WORKSPACE' }} />);
+
+    expect(screen.getByText('Eigene')).toBeVisible();
+  });
+
+  it('leaves a catalogue exercise unmarked', () => {
+    // A badge on all 276 would say nothing at all.
+    render(<ExerciseListItem exercise={{ ...EXERCISE, scope: 'SYSTEM' }} />);
+
+    expect(screen.queryByText('Eigene')).toBeNull();
+  });
+
+  it('says nothing when the scope was not selected', () => {
+    render(<ExerciseListItem exercise={EXERCISE} />);
+
+    expect(screen.queryByText('Eigene')).toBeNull();
+  });
+});

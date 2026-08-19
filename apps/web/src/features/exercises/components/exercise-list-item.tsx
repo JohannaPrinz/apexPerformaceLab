@@ -25,6 +25,8 @@ export interface ExerciseListItemProps {
     readonly difficulty: string | null;
     readonly equipment: readonly string[];
     readonly unilateral: boolean;
+    /** `WORKSPACE` for an exercise this workspace owns, `SYSTEM` for the shared catalogue. */
+    readonly scope?: string;
     readonly media?: unknown;
   };
   /** What the coach typed, so a match on the English name can explain itself. */
@@ -83,6 +85,11 @@ export function ExerciseListItem({ exercise, search, from }: ExerciseListItemPro
               {exercise.canonicalName}
             </span>
           ) : null}
+
+          {/* An own exercise is five rows among 276 catalogue ones, so it says
+              so in the list rather than only behind a filter. `scope` comes
+              from `organizationId` and introduces no new concept. */}
+          {exercise.scope === 'WORKSPACE' ? <Badge variant="outline">Eigene</Badge> : null}
 
           {exercise.unilateral ? (
             <Badge variant="secondary" className="ml-auto">

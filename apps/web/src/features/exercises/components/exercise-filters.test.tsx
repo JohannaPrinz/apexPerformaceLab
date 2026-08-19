@@ -130,3 +130,46 @@ describe('detecting an active filter', () => {
     expect(hasActiveFilters({ q: 'Kniebeuge' })).toBe(true);
   });
 });
+
+/**
+ * The origin filter (§ catalogue scopes).
+ *
+ * It is an ordinary field in the same GET form as everything else, which is
+ * what makes the narrowing survive a reload, a shared link and the back button
+ * without any state of its own.
+ */
+describe('the origin filter', () => {
+  it('is a named field like every other filter', () => {
+    render(<ExerciseFilters values={{}} />);
+
+    const form = screen.getByRole('form', { name: 'Übungen filtern' });
+    const names = [...form.querySelectorAll('[name]')].map((field) => field.getAttribute('name'));
+
+    expect(names).toContain('origin');
+  });
+
+  it('offers the shared catalogue and the workspace’s own, in German', () => {
+    render(<ExerciseFilters values={{}} />);
+
+    const select = screen.getAllByLabelText('Herkunft')[0];
+    const options = [...(select?.querySelectorAll('option') ?? [])].map((o) => o.textContent);
+
+    // "Katalog", not "System": a coach does not think of it as a system.
+    expect(options).toEqual(['Alle', 'Katalog', 'Eigene']);
+  });
+
+  it('keeps the chosen origin selected after a reload', () => {
+    render(<ExerciseFilters values={{ origin: 'workspace' }} />);
+
+    expect(screen.getAllByLabelText('Herkunft')[0]).toHaveValue('workspace');
+  });
+
+  it('shows the narrowing as a removable chip', () => {
+    render(<ExerciseFilters values={{ origin: 'workspace' }} />);
+
+    const chip = screen.getByRole('link', { name: /Herkunft/ });
+
+    expect(chip).toHaveTextContent('Eigene');
+    expect(chip).toHaveAttribute('href', '/exercises');
+  });
+});

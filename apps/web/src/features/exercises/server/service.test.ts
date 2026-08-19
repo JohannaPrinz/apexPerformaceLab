@@ -5,6 +5,7 @@ import type { PrismaClientInstance } from '@apex/database';
 import { listExercisesSchema } from '../schemas';
 
 import {
+  countExercises,
   createExercise,
   getExercise,
   listExercises,
@@ -29,6 +30,8 @@ import {
  */
 
 const TENANT = { organizationId: 'org_a' };
+/** A second workspace, used to prove no filter can reach across the boundary. */
+const OTHER_TENANT = { organizationId: 'org_b' };
 
 interface QueryArgs {
   where: Record<string, unknown>;
@@ -120,6 +123,7 @@ function fakeDb(rows: ExerciseRow[] = []) {
   const exercise = {
     findMany: vi.fn<(args: QueryArgs) => Promise<unknown[]>>().mockResolvedValue(rows),
     findFirst: vi.fn<(args: QueryArgs) => Promise<unknown>>().mockResolvedValue(rows[0] ?? null),
+    count: vi.fn<(args: QueryArgs) => Promise<number>>().mockResolvedValue(rows.length),
     create: vi.fn<(args: QueryArgs) => Promise<unknown>>().mockResolvedValue(workspaceRow),
     updateMany: vi
       .fn<(args: QueryArgs) => Promise<{ count: number }>>()
@@ -487,5 +491,68 @@ describe('paging never points past the result', () => {
 
     expect(args.take).toBe(25);
     expect(args.where['category']).toBe('strength');
+  });
+});
+
+/**
+ * The origin filter (§ catalogue scopes).
+ *
+ * What is asserted is the `where` clause, because that is where the guarantee
+ * lives: narrowing by origin must never become a way to reach another
+ * workspace's exercises.
+ */
+describe('filtering by origin', () => {
+  const whereOf = (mock: { mock: { calls: [{ where: Record<string, unknown> }][] } }) =>
+    mock.mock.calls[0]?.[0].where ?? {};
+
+  const tenantClause = (where: Record<string, unknown>) =>
+    (where['AND'] as Record<string, unknown>[])[0];
+
+  it('reads this workspace or the shared catalogue by default', async () => {
+    const { db, exercise } = fakeDb();
+
+    await listExercises(db, TENANT, { includeArchived: false });
+
+    expect(tenantClause(whereOf(exercise.findMany))).toEqual({
+      OR: [{ organizationId: 'org_a' }, { organizationId: null }],
+    });
+  });
+
+  it('selects only the shared catalogue', async () => {
+    // `organizationId: null` is a row owned by no workspace — it cannot be
+    // another tenant's.
+    const { db, exercise } = fakeDb();
+
+    await listExercises(db, TENANT, { includeArchived: false, origin: 'system' });
+
+    expect(tenantClause(whereOf(exercise.findMany))).toEqual({ organizationId: null });
+  });
+
+  it("selects only this workspace's own", async () => {
+    const { db, exercise } = fakeDb();
+
+    await listExercises(db, TENANT, { includeArchived: false, origin: 'workspace' });
+
+    expect(tenantClause(whereOf(exercise.findMany))).toEqual({ organizationId: 'org_a' });
+  });
+
+  it('never names another workspace, whichever origin is asked for', async () => {
+    for (const origin of ['all', 'system', 'workspace'] as const) {
+      const { db, exercise } = fakeDb();
+
+      await listExercises(db, OTHER_TENANT, { includeArchived: false, origin });
+
+      expect(JSON.stringify(whereOf(exercise.findMany)), origin).not.toContain('org_a');
+    }
+  });
+
+  it('applies the same narrowing to the count', async () => {
+    // The count and the list must not drift: a "3 Treffer" over a list of 276
+    // would be worse than either number alone.
+    const { db, exercise } = fakeDb();
+
+    await countExercises(db, TENANT, { includeArchived: false, origin: 'workspace' });
+
+    expect(tenantClause(whereOf(exercise.count))).toEqual({ organizationId: 'org_a' });
   });
 });

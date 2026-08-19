@@ -65,7 +65,22 @@ const listFilter = z
   .transform((value) => (Array.isArray(value) ? value : [value]))
   .optional();
 
+/**
+ * Where an exercise comes from.
+ *
+ * Not a new concept: `Exercise.organizationId` is nullable, and `ExerciseScope`
+ * already reads `null` as SYSTEM and anything else as WORKSPACE. This is that
+ * distinction as a filter, so a workspace's own five exercises are findable
+ * beside 276 catalogue ones instead of buried among them.
+ *
+ * `all` is the default and keeps the existing reading rule — this workspace OR
+ * system-wide. The two narrow it; neither can widen it to another workspace.
+ */
+export const EXERCISE_ORIGINS = ['all', 'system', 'workspace'] as const;
+export type ExerciseOrigin = (typeof EXERCISE_ORIGINS)[number];
+
 export const listExercisesSchema = z.object({
+  origin: z.enum(EXERCISE_ORIGINS).default('all'),
   /** Matches the German name and the canonical English one. */
   search: z.string().trim().max(120).optional(),
   /**
