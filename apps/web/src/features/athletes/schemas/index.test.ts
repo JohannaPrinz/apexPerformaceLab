@@ -23,7 +23,13 @@ describe('createAthleteSchema', () => {
     const result = createAthleteSchema.safeParse({ firstName: 'Ida', lastName: 'Nowak' });
 
     expect(result.success).toBe(true);
-    expect(result.data).toEqual({ firstName: 'Ida', lastName: 'Nowak' });
+    // `confirmDuplicate` defaults to false, which is the safe direction: a
+    // caller that has never heard of the duplicate check still gets warned.
+    expect(result.data).toEqual({
+      firstName: 'Ida',
+      lastName: 'Nowak',
+      confirmDuplicate: false,
+    });
   });
 
   it('turns an untouched optional field into absence, not an empty string', () => {
@@ -219,5 +225,23 @@ describe('updateAthleteSchema', () => {
     });
 
     expect(parsed).not.toHaveProperty('organizationId');
+  });
+});
+
+/**
+ * `null` has to be accepted on the way in, not only produced on the way out.
+ *
+ * A tRPC procedure is typed by its schema's *input*. The update action parses a
+ * form and re-sends the parsed value, so a shape that could only emit `null`
+ * would not survive the round trip — and the failure would be a type error at
+ * the call site rather than anything a test would catch.
+ */
+describe('cleared values round-trip', () => {
+  it('accepts the null it produces', () => {
+    const once = updateAthleteSchema.parse({ athleteId: 'ath_1', email: '', weightKg: '' });
+    const twice = updateAthleteSchema.parse(once);
+
+    expect(twice.email).toBeNull();
+    expect(twice.weightKg).toBeNull();
   });
 });

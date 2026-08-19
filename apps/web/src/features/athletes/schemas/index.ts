@@ -46,8 +46,12 @@ const optionalText = <TSchema extends z.ZodType<string>>(schema: TSchema) =>
  */
 const clearableText = <TSchema extends z.ZodType<string>>(schema: TSchema) =>
   z
-    .union([schema, z.literal('')])
-    .transform((value) => (value === '' ? null : value))
+    // `null` is accepted on the way in as well as produced on the way out. A
+    // tRPC procedure is typed by its schema's *input*, and an action re-sends
+    // the parsed value — so a shape that only emitted `null` could not be fed
+    // back through `api.athletes.update`.
+    .union([schema, z.literal(''), z.null()])
+    .transform((value) => (value === '' || value === null ? null : value))
     .optional();
 
 /** Plausibility bounds, in the units the columns are declared in. */
@@ -76,8 +80,12 @@ function measureField<TAbsent extends null | undefined>(
 ) {
   return (
     z
-      .union([z.number(), z.string()])
+      // `null` is accepted on the way in as well as produced on the way out: a
+      // tRPC procedure is typed by its schema's *input*, and the update action
+      // re-sends the parsed value.
+      .union([z.number(), z.string(), z.null()])
       .transform((value, ctx): number | TAbsent => {
+        if (value === null) return absent;
         if (typeof value === 'string' && value.trim() === '') return absent;
 
         const parsed = typeof value === 'number' ? value : Number(value.trim().replace(',', '.'));
@@ -124,6 +132,22 @@ export const createAthleteSchema = z.object({
   phone: optionalText(z.string().trim().max(50)),
   heightCm: measureField(HEIGHT_CM, 'cm', undefined),
   weightKg: measureField(WEIGHT_KG, 'kg', undefined),
+
+  /**
+   * Set once the coach has seen the duplicate warning and chosen to go on (§7).
+   *
+   * A flag rather than a separate "check duplicates" procedure: the check then
+   * cannot be skipped by a caller that forgets to make it. The default is the
+   * safe one, so an API client that has never heard of duplicates still gets
+   * warned rather than silently creating a second record.
+   *
+   * `'1'` is what a submit button contributes to `FormData`; `true` is what the
+   * parsed value is re-sent as.
+   */
+  confirmDuplicate: z
+    .union([z.boolean(), z.literal('1'), z.literal('')])
+    .optional()
+    .transform((value) => value === true || value === '1'),
 });
 
 export type CreateAthleteInput = z.infer<typeof createAthleteSchema>;

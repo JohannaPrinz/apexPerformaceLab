@@ -149,7 +149,10 @@ export async function createAthlete(
   db: AthleteDb,
   tenant: Pick<TenantContext, 'organizationId'>,
   createdByCoachId: string,
-  input: CreateAthleteInput,
+  // `confirmDuplicate` is deliberately not part of this: it decides *whether*
+  // to reach the service, which is the router's business. Writing it here would
+  // be storing an answer to a question nobody asks again.
+  input: Omit<CreateAthleteInput, 'confirmDuplicate'>,
 ): Promise<AthleteRecord> {
   const row = await db.athlete.create({
     data: withTenant(tenant, {
@@ -222,4 +225,107 @@ export async function setAthleteArchived(
   });
 
   return count === 0 ? null : getAthlete(db, tenant, athleteId);
+}
+
+/**
+ * Why a candidate looks like a duplicate, strongest first.
+ *
+ * The order is the order they are shown in: an identical address is close to
+ * proof, an identical name alone is a coincidence that happens all the time.
+ */
+export const DUPLICATE_REASONS = ['email', 'name_and_birthdate', 'name'] as const;
+export type DuplicateReason = (typeof DUPLICATE_REASONS)[number];
+
+export interface DuplicateCandidate {
+  readonly athlete: AthleteRecord;
+  readonly reason: DuplicateReason;
+}
+
+/** Case- and whitespace-insensitive, which is as far as the comparison goes. */
+const normalise = (value: string | null): string =>
+  (value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+/**
+ * Likely duplicates of an athlete about to be created (§7).
+ *
+ * **A warning, never a constraint.** There is deliberately no natural key: name,
+ * email and date of birth are all optional, and a unique index over optional
+ * columns does not apply in exactly the case that matters — Postgres treats
+ * missing values as distinct. §7 puts the control where it can work instead, at
+ * the point of creation, because duplicates come from accidental re-entry rather
+ * than intent.
+ *
+ * **Archived athletes are included, and that is the point.** A coach who
+ * archived someone last season and enters them again is the commonest way a
+ * duplicate appears — and it is invisible, because the roster hides archived
+ * rows by default.
+ *
+ * The database narrows, the rules below decide. Two reasons for that split: the
+ * contradiction rule ("same name, different birthdays, so different people") is
+ * far clearer in code than in a `where` clause, and it is testable without a
+ * database.
+ *
+ * **Umlauts are not folded.** `Müller` and `Mueller` stay separate people here.
+ * Fuzzy matching turns a warning into noise, and a warning nobody reads is worse
+ * than none — that is its own decision, not something to slip in.
+ */
+export async function findAthleteDuplicates(
+  db: AthleteDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  candidate: {
+    readonly firstName: string;
+    readonly lastName: string;
+    readonly dateOfBirth?: string | undefined;
+    readonly email?: string | undefined;
+  },
+): Promise<DuplicateCandidate[]> {
+  const email = candidate.email?.trim();
+
+  const rows = await db.athlete.findMany({
+    where: scoped(tenant, {
+      OR: [
+        // Same name, whichever case it was typed in.
+        {
+          firstName: { equals: candidate.firstName.trim(), mode: 'insensitive' as const },
+          lastName: { equals: candidate.lastName.trim(), mode: 'insensitive' as const },
+        },
+        // Same address, whatever the name says — people marry, and coaches typo.
+        ...(email ? [{ email: { equals: email, mode: 'insensitive' as const } }] : []),
+      ],
+    }),
+    select: athleteSelect,
+    orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
+    // A warning listing twenty people is not a warning. If a name is this
+    // common the list is not the useful signal anyway.
+    take: 10,
+  });
+
+  const wantedName = `${normalise(candidate.firstName)} ${normalise(candidate.lastName)}`;
+  const wantedBirthdate = candidate.dateOfBirth?.trim() ?? '';
+
+  const candidates = rows.flatMap((row): DuplicateCandidate[] => {
+    const athlete = toRecord(row);
+    const sameName =
+      `${normalise(athlete.firstName)} ${normalise(athlete.lastName)}` === wantedName;
+    const birthdate = athlete.dateOfBirth?.toISOString().slice(0, 10) ?? '';
+
+    if (email !== undefined && email !== '' && normalise(athlete.email) === normalise(email)) {
+      return [{ athlete, reason: 'email' }];
+    }
+
+    if (!sameName) return [];
+
+    if (wantedBirthdate !== '' && birthdate !== '') {
+      // Both birthdays known: they either confirm the match or rule it out.
+      // Two Müllers born in different years are two people, and saying so is
+      // what keeps the warning worth reading.
+      return wantedBirthdate === birthdate ? [{ athlete, reason: 'name_and_birthdate' }] : [];
+    }
+
+    return [{ athlete, reason: 'name' }];
+  });
+
+  return candidates.sort(
+    (a, b) => DUPLICATE_REASONS.indexOf(a.reason) - DUPLICATE_REASONS.indexOf(b.reason),
+  );
 }

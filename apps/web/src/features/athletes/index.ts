@@ -9,7 +9,9 @@
  * authorization.
  */
 export { ArchiveButton } from './components/archive-button';
-export { AthleteForm } from './components/athlete-form';
+export { AthleteForm, type AthleteFormValues } from './components/athlete-form';
+export { DuplicateWarning } from './components/duplicate-warning';
+export { LoadMoreAthletes } from './components/load-more-athletes';
 export {
   athleteIdSchema,
   createAthleteSchema,

@@ -4,6 +4,7 @@ import type { PrismaClientInstance } from '@apex/database';
 
 import {
   createAthlete,
+  findAthleteDuplicates,
   getAthlete,
   listAthletes,
   setAthleteArchived,
@@ -259,5 +260,166 @@ describe('body measurements', () => {
 
     expect(record?.heightCm).toBeNull();
     expect(record?.weightKg).toBeNull();
+  });
+});
+
+/**
+ * Editing another workspace's athlete.
+ *
+ * The regression this guards is the one that would not look like a bug in a
+ * diff: `updateMany` with a tenant filter simply matches nothing, so the write
+ * is silently a no-op. What must not happen is the service reporting success —
+ * the router turns `null` into `NOT_FOUND`, and a coach probing ids learns
+ * nothing about whether the row exists (docs/SECURITY.md §4).
+ */
+describe('editing across a tenant boundary', () => {
+  it('writes nothing and reports null for another workspace’s athlete', async () => {
+    const { db, athlete } = fakeDb();
+    athlete.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await updateAthlete(db, OTHER_TENANT, {
+      athleteId: 'ath_owned_by_org_a',
+      firstName: 'Fremd',
+    });
+
+    expect(result).toBeNull();
+    expect(argsOf(athlete.updateMany).where).toMatchObject({ organizationId: 'org_b' });
+    // A miss must not fall back to a second, unscoped read.
+    expect(athlete.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('ignores an organizationId smuggled in through the request', async () => {
+    const { db, athlete } = fakeDb();
+
+    await updateAthlete(db, TENANT, {
+      athleteId: 'ath_1',
+      organizationId: 'org_b',
+    } as never);
+
+    expect(argsOf(athlete.updateMany).where).toMatchObject({ organizationId: 'org_a' });
+    expect(argsOf(athlete.updateMany).data).not.toHaveProperty('organizationId');
+  });
+});
+
+/**
+ * Duplicate detection (§7).
+ *
+ * The rules are asserted rather than the query, because the rules are where the
+ * judgement lives: the database only narrows to "same name or same address",
+ * and everything that decides whether a warning is worth showing happens after.
+ */
+describe('finding likely duplicates', () => {
+  const row = (over: Record<string, unknown> = {}) => ({
+    id: 'ath_existing',
+    firstName: 'Johanna',
+    lastName: 'Prinz',
+    dateOfBirth: new Date('1994-03-17T00:00:00.000Z'),
+    email: 'johanna@example.org',
+    phone: null,
+    heightCm: null,
+    weightKg: null,
+    archivedAt: null,
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    userId: null,
+    createdByCoachId: 'coach_1',
+    ...over,
+  });
+
+  const find = async (
+    rows: Record<string, unknown>[],
+    candidate: Parameters<typeof findAthleteDuplicates>[2],
+  ) => {
+    const { db, athlete } = fakeDb();
+    athlete.findMany.mockResolvedValue(rows as never);
+
+    return { result: await findAthleteDuplicates(db, TENANT, candidate), athlete };
+  };
+
+  it('stays inside the workspace', async () => {
+    const { athlete } = await find([], { firstName: 'Johanna', lastName: 'Prinz' });
+
+    expect(argsOf(athlete.findMany).where).toMatchObject({ organizationId: 'org_a' });
+  });
+
+  it('does not exclude archived athletes', async () => {
+    // The commonest duplicate of all: someone archived last season, re-entered
+    // because the roster hides them by default.
+    const { result, athlete } = await find([row({ archivedAt: new Date('2026-02-01') })], {
+      firstName: 'Johanna',
+      lastName: 'Prinz',
+    });
+
+    expect(argsOf(athlete.findMany).where).not.toHaveProperty('archivedAt');
+    expect(result).toHaveLength(1);
+    expect(result[0]?.athlete.archivedAt).not.toBeNull();
+  });
+
+  it('reports an identical address as the strongest reason', async () => {
+    const { result } = await find([row({ firstName: 'Hanna', lastName: 'Prinz-Meier' })], {
+      firstName: 'Johanna',
+      lastName: 'Prinz',
+      email: 'JOHANNA@example.org',
+    });
+
+    expect(result[0]?.reason).toBe('email');
+  });
+
+  it('reports a matching name and birthdate together', async () => {
+    const { result } = await find([row()], {
+      firstName: 'johanna',
+      lastName: '  Prinz ',
+      dateOfBirth: '1994-03-17',
+    });
+
+    expect(result[0]?.reason).toBe('name_and_birthdate');
+  });
+
+  it('rules out a namesake with a different birthdate', async () => {
+    // Two people called Johanna Prinz born in different years are two people,
+    // and saying so is what keeps the warning worth reading.
+    const { result } = await find([row({ email: null })], {
+      firstName: 'Johanna',
+      lastName: 'Prinz',
+      dateOfBirth: '2001-08-02',
+    });
+
+    expect(result).toEqual([]);
+  });
+
+  it('still warns on the name alone when a birthdate is missing', async () => {
+    const { result } = await find([row({ dateOfBirth: null, email: null })], {
+      firstName: 'Johanna',
+      lastName: 'Prinz',
+      dateOfBirth: '1994-03-17',
+    });
+
+    expect(result[0]?.reason).toBe('name');
+  });
+
+  it('does not fold umlauts', async () => {
+    // Fuzzy matching turns a warning into noise. That is its own decision, not
+    // something to slip in here.
+    const { result } = await find([row({ firstName: 'Jürgen', lastName: 'Müller', email: null })], {
+      firstName: 'Juergen',
+      lastName: 'Mueller',
+    });
+
+    expect(result).toEqual([]);
+  });
+
+  it('lists the strongest reason first', async () => {
+    const { result } = await find(
+      [
+        row({ id: 'ath_name', dateOfBirth: null, email: null }),
+        row({ id: 'ath_mail', firstName: 'Hanna', lastName: 'Meier' }),
+      ],
+      { firstName: 'Johanna', lastName: 'Prinz', email: 'johanna@example.org' },
+    );
+
+    expect(result.map((entry) => entry.reason)).toEqual(['email', 'name']);
+  });
+
+  it('finds nothing when nothing is similar', async () => {
+    expect((await find([], { firstName: 'Neu', lastName: 'Person' })).result).toEqual([]);
   });
 });

@@ -35,7 +35,7 @@ export function ArchiveButton({ athleteId, archived }: { athleteId: string; arch
           });
         }}
       >
-        {pending ? 'Saving…' : archived ? 'Reactivate' : 'Deactivate'}
+        {pending ? 'Wird gespeichert…' : archived ? 'Reaktivieren' : 'Deaktivieren'}
       </Button>
 
       {error ? (

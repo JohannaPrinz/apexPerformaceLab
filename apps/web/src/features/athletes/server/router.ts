@@ -16,6 +16,7 @@ import {
 
 import {
   createAthlete,
+  findAthleteDuplicates,
   getAthlete,
   listAthletes,
   setAthleteArchived,
@@ -51,9 +52,33 @@ export const athletesRouter = createTRPCRouter({
       return athlete;
     }),
 
+  /**
+   * Creates an athlete, warning about likely duplicates first (§7).
+   *
+   * The check lives **inside** the mutation rather than in a procedure the
+   * client is expected to call beforehand: a caller that forgets the second
+   * call would silently create the duplicate, and the safe path should not
+   * depend on remembering anything.
+   *
+   * It returns a result rather than throwing. A duplicate is not an error — the
+   * coach may well be entering twins, or the same name twice on purpose — so
+   * the answer is "here is what I found, say the word", and `confirmDuplicate`
+   * is that word.
+   */
   create: withCoachPermission('athlete:write')
     .input(createAthleteSchema)
-    .mutation(({ ctx, input }) => createAthlete(ctx.db, ctx.tenant, ctx.coach.id, input)),
+    .mutation(async ({ ctx, input }) => {
+      if (!input.confirmDuplicate) {
+        const candidates = await findAthleteDuplicates(ctx.db, ctx.tenant, input);
+
+        if (candidates.length > 0) return { status: 'duplicates' as const, candidates };
+      }
+
+      return {
+        status: 'created' as const,
+        athlete: await createAthlete(ctx.db, ctx.tenant, ctx.coach.id, input),
+      };
+    }),
 
   update: withPermission('athlete:write')
     .input(updateAthleteSchema)

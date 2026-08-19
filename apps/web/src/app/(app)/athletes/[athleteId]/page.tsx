@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 
 import { TRPCError } from '@trpc/server';
 
-import { Badge, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@apex/ui';
+import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@apex/ui';
 
 import { AssessmentForm } from '@/features/assessments';
 import { ArchiveButton } from '@/features/athletes';
@@ -13,8 +13,19 @@ import { api } from '@/trpc/server';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Athlete',
+  title: 'Athlet',
 };
+
+/**
+ * A stored figure with its unit, or an em dash.
+ *
+ * German decimal notation, matching the form: what the coach reads here is what
+ * they would type back into the field. `heightCm` and `weightKg` are profile
+ * values — the current figure a coach reads at a glance, not a measurement
+ * series (§9).
+ */
+const formatFigure = (value: number | null, unit: string): string =>
+  value === null ? '—' : `${value.toLocaleString('de-DE')} ${unit}`;
 
 /**
  * Athlete detail.
@@ -41,38 +52,48 @@ export default async function AthletePage({ params }: { params: Promise<{ athlet
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
           <Link href="/athletes" className="text-xs text-muted-foreground hover:underline">
-            ← Athletes
+            ← Athleten
           </Link>
           <h1 className="text-3xl font-semibold">
             {athlete.firstName} {athlete.lastName}
           </h1>
           <div className="flex items-center gap-2">
             {athlete.archivedAt ? (
-              <Badge variant="secondary">Deactivated</Badge>
+              <Badge variant="secondary">Deaktiviert</Badge>
             ) : (
-              <Badge variant="accent">Active</Badge>
+              <Badge variant="accent">Aktiv</Badge>
             )}
-            {athlete.userId ? <Badge variant="outline">Portal access</Badge> : null}
+            {athlete.userId ? <Badge variant="outline">Portalzugang</Badge> : null}
           </div>
         </div>
 
-        <ArchiveButton athleteId={athlete.id} archived={athlete.archivedAt !== null} />
+        <div className="flex items-center gap-2">
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/athletes/${athlete.id}/edit`}>Bearbeiten</Link>
+          </Button>
+
+          <ArchiveButton athleteId={athlete.id} archived={athlete.archivedAt !== null} />
+        </div>
       </header>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Details</CardTitle>
+            <CardTitle>Stammdaten</CardTitle>
           </CardHeader>
           <CardContent>
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-              <dt className="text-muted-foreground">Date of birth</dt>
+              <dt className="text-muted-foreground">Geburtsdatum</dt>
               <dd data-numeric>{athlete.dateOfBirth?.toLocaleDateString('de-DE') ?? '—'}</dd>
-              <dt className="text-muted-foreground">Email</dt>
+              <dt className="text-muted-foreground">E-Mail</dt>
               <dd>{athlete.email ?? '—'}</dd>
-              <dt className="text-muted-foreground">Phone</dt>
+              <dt className="text-muted-foreground">Telefon</dt>
               <dd>{athlete.phone ?? '—'}</dd>
-              <dt className="text-muted-foreground">Added</dt>
+              <dt className="text-muted-foreground">Größe</dt>
+              <dd data-numeric>{formatFigure(athlete.heightCm, 'cm')}</dd>
+              <dt className="text-muted-foreground">Aktuelles Gewicht</dt>
+              <dd data-numeric>{formatFigure(athlete.weightKg, 'kg')}</dd>
+              <dt className="text-muted-foreground">Angelegt</dt>
               <dd data-numeric>{athlete.createdAt.toLocaleDateString('de-DE')}</dd>
             </dl>
           </CardContent>
@@ -80,14 +101,17 @@ export default async function AthletePage({ params }: { params: Promise<{ athlet
 
         <Card>
           <CardHeader>
-            <CardTitle>Portal access</CardTitle>
+            <CardTitle>Portalzugang</CardTitle>
             <CardDescription>
-              An athlete needs no account (§21). Activation arrives with the portal slice.
+              Ein Athlet braucht kein Benutzerkonto (§21). Die Aktivierung kommt mit dem
+              Athletenportal.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-muted-foreground">
-              {athlete.userId ? 'Linked to a user account.' : 'No account linked.'}
+              {athlete.userId
+                ? 'Mit einem Benutzerkonto verknüpft.'
+                : 'Kein Benutzerkonto verknüpft.'}
             </p>
           </CardContent>
         </Card>
@@ -96,8 +120,8 @@ export default async function AthletePage({ params }: { params: Promise<{ athlet
       <section className="flex flex-col gap-4">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="flex flex-col gap-1">
-            <span className="eyebrow">Performance cases</span>
-            <h2 className="text-xl font-semibold">Journey</h2>
+            <span className="eyebrow">Verlauf</span>
+            <h2 className="text-xl font-semibold">Betreuungsfälle</h2>
           </div>
 
           <CaseForm athleteId={athlete.id} />
@@ -110,7 +134,7 @@ export default async function AthletePage({ params }: { params: Promise<{ athlet
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="flex flex-col gap-1">
             <span className="eyebrow">Assessments</span>
-            <h2 className="text-xl font-semibold">Examinations</h2>
+            <h2 className="text-xl font-semibold">Untersuchungen</h2>
           </div>
 
           <AssessmentForm athleteId={athlete.id} />
@@ -118,8 +142,7 @@ export default async function AthletePage({ params }: { params: Promise<{ athlet
 
         {assessments.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No assessment yet. The performance case is created automatically with the first one
-            (§8).
+            Noch kein Assessment. Der Betreuungsfall entsteht automatisch mit dem ersten (§8).
           </p>
         ) : (
           <ul className="flex flex-col gap-2">
@@ -134,7 +157,7 @@ export default async function AthletePage({ params }: { params: Promise<{ athlet
                     <span className="text-xs text-muted-foreground" data-numeric>
                       {assessment.performedAt.toLocaleDateString('de-DE')} ·{' '}
                       {assessment.modules.length}{' '}
-                      {assessment.modules.length === 1 ? 'test' : 'tests'}
+                      {assessment.modules.length === 1 ? 'Test' : 'Tests'}
                     </span>
                   </span>
 
@@ -150,8 +173,8 @@ export default async function AthletePage({ params }: { params: Promise<{ athlet
 
       {athlete.archivedAt ? (
         <p className="text-sm text-pretty text-muted-foreground">
-          This athlete is deactivated. Nothing has been deleted — the record and its history stay
-          intact, and reactivating restores full access.
+          Dieser Athlet ist deaktiviert. Es wurde nichts gelöscht — der Datensatz und seine Historie
+          bleiben vollständig erhalten, und eine Reaktivierung stellt den vollen Zugriff wieder her.
         </p>
       ) : null}
     </main>
