@@ -22,7 +22,7 @@ import { Field } from './field';
  *
  * See `packages/auth/src/provisioning.ts`.
  */
-export function SignUpForm({ redirectTo = '/dashboard' }: { redirectTo?: string }) {
+export function SignUpForm({ redirectTo = '/start' }: { redirectTo?: string }) {
   const router = useRouter();
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);

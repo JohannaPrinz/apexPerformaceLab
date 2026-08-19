@@ -18,7 +18,7 @@ import { Field } from './field';
  * active organization from the user's memberships as the session is created,
  * so by the time this navigates, the session already carries a tenant scope.
  */
-export function SignInForm({ redirectTo = '/dashboard' }: { redirectTo?: string }) {
+export function SignInForm({ redirectTo = '/start' }: { redirectTo?: string }) {
   const router = useRouter();
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);

@@ -30,8 +30,10 @@ import { getSessionCookie } from 'better-auth/cookies';
  * signed-out user load a page that cannot render.
  */
 const PROTECTED_PREFIXES = [
+  '/start',
   '/dashboard',
   '/athletes',
+  '/exercises',
   '/cases',
   '/assessments',
   '/insights',
@@ -48,7 +50,9 @@ const AUTH_ROUTES = ['/sign-in', '/sign-up'] as const;
  * Where a signed-in user is sent from an auth route. Kept here rather than
  * inline so the redirect target has one definition.
  */
-const SIGNED_IN_HOME = '/dashboard';
+// The personal level, not a workspace: a coach lands where their own
+// information is and chooses a workspace from there.
+const SIGNED_IN_HOME = '/start';
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;

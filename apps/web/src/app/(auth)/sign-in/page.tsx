@@ -43,6 +43,6 @@ export default async function SignInPage({
  * send a freshly authenticated user to an external site.
  */
 function safeRedirect(target: string | undefined): string {
-  if (!target?.startsWith('/') || target.startsWith('//')) return '/dashboard';
+  if (!target?.startsWith('/') || target.startsWith('//')) return '/start';
   return target;
 }

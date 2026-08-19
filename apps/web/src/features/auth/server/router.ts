@@ -44,6 +44,41 @@ export const authRouter = createTRPCRouter({
   }),
 
   /**
+   * Every workspace this user belongs to, with their role in each.
+   *
+   * Better Auth's organization plugin can already list organizations and switch
+   * the active one (`/organization/list`, `/organization/set-active`), but the
+   * list carries no membership role — and "Inhaber" against "Coach" is what
+   * makes the personal overview more than a list of names.
+   *
+   * `protectedProcedure`, not `organizationProcedure`: this is the question a
+   * coach asks *before* choosing a workspace, so requiring one would be
+   * circular.
+   *
+   * Ordered oldest first, the same order `resolveInitialOrganizationId` uses, so
+   * the workspace a session starts in is the one listed first.
+   */
+  myWorkspaces: protectedProcedure.query(async ({ ctx }) => {
+    const memberships = await ctx.db.membership.findMany({
+      where: { userId: ctx.session.user.id },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        role: true,
+        createdAt: true,
+        organization: { select: { id: true, name: true, slug: true } },
+      },
+    });
+
+    return memberships.map((membership) => ({
+      id: membership.organization.id,
+      name: membership.organization.name,
+      slug: membership.organization.slug,
+      role: membership.role,
+      joinedAt: membership.createdAt,
+    }));
+  }),
+
+  /**
    * The signed-in user's coach profile.
    *
    * `protectedProcedure`, not `organizationProcedure`: the profile is a

@@ -53,6 +53,6 @@ export default async function SignUpPage({
  * open-redirect used for credential phishing.
  */
 function safeRedirect(target: string | undefined): string {
-  if (!target?.startsWith('/') || target.startsWith('//')) return '/dashboard';
+  if (!target?.startsWith('/') || target.startsWith('//')) return '/start';
   return target;
 }
