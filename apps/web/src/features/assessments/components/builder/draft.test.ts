@@ -407,11 +407,11 @@ describe('the summary', () => {
   const line = (label: string) => lines.find((entry) => entry.label === label);
 
   it('names the test, not the module key', () => {
-    expect(line('Test')?.value).toBe('Lactate');
+    expect(line('Test')?.value).toBe('Laktat');
   });
 
   it('lists every quantity with its role', () => {
-    expect(line('Measurements')?.entries).toEqual([
+    expect(line('Messgrößen')?.entries).toEqual([
       { name: 'lactate', role: 'required' },
       { name: 'hr', role: 'required' },
       { name: 'rpe', role: 'required' },
@@ -420,21 +420,21 @@ describe('the summary', () => {
   });
 
   it('shows the stage count', () => {
-    expect(line('Passes')?.value).toBe('4');
+    expect(line('Stufen')?.value).toBe('4');
   });
 
   /** "Single pass" rather than "1" — a one-pass test is not a stepped test. */
   it('says single pass instead of one', () => {
     const single = withPasses(draft, 1);
 
-    expect(summarise(single, names).find((entry) => entry.label === 'Passes')?.value).toBe(
-      'Single pass',
+    expect(summarise(single, names).find((entry) => entry.label === 'Stufen')?.value).toBe(
+      'Einfache Erfassung',
     );
   });
 
   it('reports no sides and no exercises for a lactate test', () => {
-    expect(line('Sides')?.value).toBe('No');
-    expect(line('Exercises')?.value).toBe('None');
+    expect(line('Seiten')?.value).toBe('Nein');
+    expect(line('Übungen')?.value).toBe('Keine');
   });
 
   it('names the exercises a strength test covers', () => {
@@ -443,7 +443,7 @@ describe('the summary', () => {
       'ex_deadlift',
     );
 
-    expect(summarise(strength, names).find((entry) => entry.label === 'Exercises')?.value).toBe(
+    expect(summarise(strength, names).find((entry) => entry.label === 'Übungen')?.value).toBe(
       'bench · deadlift',
     );
   });
@@ -451,8 +451,8 @@ describe('the summary', () => {
   it('marks an open dimension as free rather than pretending to know its values', () => {
     const movement = draftFromTemplateKey('muscle_activity_measurement', 'movement', idForTypeKey);
 
-    expect(summarise(movement, names).find((entry) => entry.label === 'Dimensions')?.value).toBe(
-      'Measurement site (free)',
+    expect(summarise(movement, names).find((entry) => entry.label === 'Merkmale')?.value).toBe(
+      'Measurement site (frei)',
     );
   });
 

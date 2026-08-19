@@ -5,8 +5,11 @@ import { useMemo, useState } from 'react';
 import type { MeasurementRole } from '@apex/domain';
 import { Badge, Button, Input } from '@apex/ui';
 
+import { FOCUS_RING, TOUCH_BUTTON, TOUCH_FIELD, TOUCH_TARGET } from '@/components/common/touch';
+
+import { MEASUREMENT_ROLE_LABELS_DE } from '../labels';
+
 import {
-  MEASUREMENT_ROLE_LABELS,
   ROLE_EXPLANATIONS,
   withMeasurementType,
   withMeasurementTypeMoved,
@@ -66,15 +69,15 @@ export function MeasurementPicker({
     <div className="flex flex-col gap-6">
       <section className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
-          <h3 className="text-sm font-medium">What this test records</h3>
+          <h3 className="text-sm font-medium">Was dieser Test erfasst</h3>
           <p className="text-xs text-muted-foreground">
-            The order is the order the entry screen asks for them in.
+            Die Reihenfolge ist die Reihenfolge, in der die Eingabemaske danach fragt.
           </p>
         </div>
 
         {draft.measurementTypes.length === 0 ? (
           <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
-            Nothing chosen yet. A test without a measurement records nothing.
+            Noch nichts ausgewählt. Ein Test ohne Messgröße erfasst nichts.
           </p>
         ) : (
           <ul className="flex flex-col gap-2">
@@ -88,7 +91,7 @@ export function MeasurementPicker({
                 >
                   <div className="flex flex-1 flex-col gap-0.5">
                     <span className="text-sm font-medium">
-                      {option?.name ?? 'Unknown measurement'}
+                      {option?.name ?? 'Unbekannte Messgröße'}
                       {option ? (
                         <span className="text-muted-foreground"> · {option.unit}</span>
                       ) : null}
@@ -100,7 +103,7 @@ export function MeasurementPicker({
 
                   <div
                     role="group"
-                    aria-label={`Role for ${option?.name ?? 'this measurement'}`}
+                    aria-label={`Rolle für ${option?.name ?? 'diese Messgröße'}`}
                     className="flex overflow-hidden rounded-md border border-border"
                   >
                     {ROLES.map((role) => (
@@ -109,13 +112,13 @@ export function MeasurementPicker({
                         type="button"
                         aria-pressed={entry.role === role}
                         onClick={() => onChange(withRole(draft, entry.measurementTypeId, role))}
-                        className={`px-2.5 py-1 text-xs transition-colors ${
+                        className={`${TOUCH_TARGET} ${FOCUS_RING} px-3 text-xs transition-colors ${
                           entry.role === role
                             ? 'bg-accent-soft text-accent-soft-foreground'
                             : 'text-muted-foreground hover:bg-muted'
                         }`}
                       >
-                        {MEASUREMENT_ROLE_LABELS[role]}
+                        {MEASUREMENT_ROLE_LABELS_DE[role]}
                       </button>
                     ))}
                   </div>
@@ -123,8 +126,8 @@ export function MeasurementPicker({
                   <div className="flex items-center gap-1">
                     <Button
                       variant="ghost"
-                      size="sm"
-                      aria-label="Move up"
+                      className={TOUCH_BUTTON}
+                      aria-label="Nach oben"
                       disabled={index === 0}
                       onClick={() =>
                         onChange(withMeasurementTypeMoved(draft, entry.measurementTypeId, -1))
@@ -134,8 +137,8 @@ export function MeasurementPicker({
                     </Button>
                     <Button
                       variant="ghost"
-                      size="sm"
-                      aria-label="Move down"
+                      className={TOUCH_BUTTON}
+                      aria-label="Nach unten"
                       disabled={index === draft.measurementTypes.length - 1}
                       onClick={() =>
                         onChange(withMeasurementTypeMoved(draft, entry.measurementTypeId, 1))
@@ -145,12 +148,12 @@ export function MeasurementPicker({
                     </Button>
                     <Button
                       variant="ghost"
-                      size="sm"
+                      className={TOUCH_BUTTON}
                       onClick={() =>
                         onChange(withoutMeasurementType(draft, entry.measurementTypeId))
                       }
                     >
-                      Remove
+                      Entfernen
                     </Button>
                   </div>
                 </li>
@@ -163,26 +166,28 @@ export function MeasurementPicker({
       <section className="flex flex-col gap-3">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="flex flex-col gap-1">
-            <h3 className="text-sm font-medium">Add a measurement</h3>
+            <h3 className="text-sm font-medium">Messgröße hinzufügen</h3>
             <p className="text-xs text-muted-foreground">
-              Any quantity may be combined with any test — the catalogue is filtered by area, never
-              restricted by it.
+              Jede Messgröße lässt sich mit jedem Test kombinieren — der Katalog wird nach Bereich
+              gefiltert, aber nie darauf beschränkt.
             </p>
           </div>
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search"
-            aria-label="Search measurements"
-            className="h-9 w-48"
+            placeholder="Suchen"
+            aria-label="Messgrößen suchen"
+            // Full width on a phone: at 375px the heading beside it wraps, and a
+            // 12rem box on its own line looks broken rather than deliberate.
+            className={`${TOUCH_FIELD} w-full sm:w-48`}
           />
         </div>
 
         {available.length === 0 ? (
           <p className="text-xs text-muted-foreground">
             {search.trim() === ''
-              ? 'Everything in the catalogue is already part of this test.'
-              : 'Nothing matches that.'}
+              ? 'Alles aus dem Katalog gehört bereits zu diesem Test.'
+              : 'Dazu passt nichts.'}
           </p>
         ) : (
           <ul className="flex flex-wrap gap-2">
@@ -191,7 +196,7 @@ export function MeasurementPicker({
                 <button
                   type="button"
                   onClick={() => onChange(withMeasurementType(draft, option.id))}
-                  className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-sm transition-colors hover:border-border-strong hover:bg-muted"
+                  className={`${TOUCH_TARGET} ${FOCUS_RING} flex items-center gap-1.5 rounded-md border border-border px-3 text-sm transition-colors hover:border-border-strong hover:bg-muted`}
                 >
                   <span>{option.name}</span>
                   <span className="text-xs text-muted-foreground">{option.unit}</span>

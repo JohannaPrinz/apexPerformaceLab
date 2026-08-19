@@ -6,6 +6,7 @@ import { TRPCError } from '@trpc/server';
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@apex/ui';
 
 import { AssessmentForm } from '@/features/assessments';
+import { ASSESSMENT_TYPE_LABELS_DE } from '@/features/assessments/components/labels';
 import { ArchiveButton } from '@/features/athletes';
 import { CaseForm, CaseList } from '@/features/cases';
 import { api } from '@/trpc/server';
@@ -162,7 +163,7 @@ export default async function AthletePage({ params }: { params: Promise<{ athlet
                   </span>
 
                   <Badge variant="secondary">
-                    {assessment.type.replace('_', '-').toLowerCase()}
+                    {ASSESSMENT_TYPE_LABELS_DE[assessment.type] ?? assessment.type}
                   </Badge>
                 </Link>
               </li>

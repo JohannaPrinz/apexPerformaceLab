@@ -43,7 +43,7 @@ export function CaseList({ athleteId, cases }: { athleteId: string; cases: CaseL
               <span className="font-medium">{performanceCase.title}</span>
               <StatusBadge status={performanceCase.status} />
               {performanceCase.type === 'SINGLE_ASSESSMENT' ? (
-                <Badge variant="outline">Single assessment</Badge>
+                <Badge variant="outline">Einzelnes Assessment</Badge>
               ) : null}
             </div>
 
@@ -71,8 +71,8 @@ export function CaseList({ athleteId, cases }: { athleteId: string; cases: CaseL
 }
 
 function StatusBadge({ status }: { status: CaseStatusInput }) {
-  if (status === 'OPEN') return <Badge variant="accent">Open</Badge>;
-  if (status === 'CLOSED') return <Badge variant="secondary">Closed</Badge>;
+  if (status === 'OPEN') return <Badge variant="accent">Offen</Badge>;
+  if (status === 'CLOSED') return <Badge variant="secondary">Abgeschlossen</Badge>;
 
-  return <Badge variant="outline">Archived</Badge>;
+  return <Badge variant="outline">Archiviert</Badge>;
 }

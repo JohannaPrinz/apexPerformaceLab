@@ -6,6 +6,9 @@ import { useRouter } from 'next/navigation';
 
 import { Badge, Button } from '@apex/ui';
 
+import { TOUCH_BUTTON, TOUCH_FIELD } from '@/components/common/touch';
+
+import { SIDE_LABELS_DE } from '../../components/labels';
 import { correctMeasurementAction, recordMeasurementAction } from '../server/actions';
 
 import { findRecorded, formatValue, type MeasurementSlot, type RecordedMeasurement } from './slots';
@@ -62,7 +65,7 @@ export function MeasurementCell({
   function save() {
     const value = parse(draft);
     if (value === null) {
-      setError('Enter a value.');
+      setError('Bitte einen Wert eingeben.');
 
       return;
     }
@@ -100,15 +103,23 @@ export function MeasurementCell({
   }
 
   return (
-    <div className="flex flex-col gap-2 rounded-md border border-border bg-card p-3">
+    <div
+      // `min-w-0`: a grid item carries `min-width: auto`, so the longest
+      // measurement name would size the whole track instead of wrapping
+      // inside it. Measured at 375px: each cell was the full viewport wide
+      // and pushed the page 24px sideways.
+      className="flex min-w-0 flex-col gap-2 rounded-md border border-border bg-card p-3"
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-sm font-medium">
-          {type?.name ?? 'Unknown measurement'}
+        <span className="min-w-0 text-sm font-medium break-words">
+          {type?.name ?? 'Unbekannte Messgröße'}
           {type ? <span className="text-muted-foreground"> · {type.unit}</span> : null}
         </span>
 
         <div className="flex items-center gap-1.5">
-          {slot.side !== 'BILATERAL' ? <Badge variant="outline">{slot.side}</Badge> : null}
+          {slot.side !== 'BILATERAL' ? (
+            <Badge variant="outline">{SIDE_LABELS_DE[slot.side] ?? slot.side}</Badge>
+          ) : null}
           {Object.entries(slot.context).map(([key, value]) => (
             <Badge key={key} variant="secondary">
               {value}
@@ -125,7 +136,7 @@ export function MeasurementCell({
           {existing.note ? <span className="text-muted-foreground"> · {existing.note}</span> : null}
         </p>
       ) : (
-        <p className="text-xs text-muted-foreground">Not recorded</p>
+        <p className="text-xs text-muted-foreground">Noch nicht erfasst</p>
       )}
 
       {readOnly ? null : (
@@ -142,7 +153,7 @@ export function MeasurementCell({
               }
               placeholder={dimension.label}
               aria-label={dimension.label}
-              className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+              className={`${TOUCH_FIELD} rounded-md border border-input bg-background px-3`}
             />
           ))}
 
@@ -151,40 +162,43 @@ export function MeasurementCell({
               <select
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
-                aria-label="Value"
-                className="h-8 flex-1 rounded-md border border-input bg-background px-2 text-sm"
+                aria-label="Wert"
+                className={`${TOUCH_FIELD} flex-1 rounded-md border border-input bg-background px-3`}
               >
                 <option value="">—</option>
-                <option value="yes">Yes</option>
-                <option value="no">No</option>
+                <option value="yes">Ja</option>
+                <option value="no">Nein</option>
               </select>
             ) : (
               <input
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
                 inputMode={valueType === 'NUMERIC' ? 'decimal' : 'text'}
-                placeholder={existing ? 'Corrected value' : 'Value'}
-                aria-label="Value"
-                className="h-8 flex-1 rounded-md border border-input bg-background px-2 text-sm"
+                placeholder={existing ? 'Korrigierter Wert' : 'Wert'}
+                aria-label="Wert"
+                // `min-w-0`: a flex child defaults to `min-width: auto`, so a
+                // long placeholder would push the Save button off the card
+                // rather than shrinking.
+                className={`${TOUCH_FIELD} min-w-0 flex-1 rounded-md border border-input bg-background px-3`}
               />
             )}
 
             <Button
-              size="sm"
+              className={TOUCH_BUTTON}
               variant={existing ? 'outline' : 'accent'}
               disabled={pending}
               onClick={save}
             >
-              {pending ? '…' : existing ? 'Correct' : 'Save'}
+              {pending ? '…' : existing ? 'Korrigieren' : 'Speichern'}
             </Button>
           </div>
 
           <input
             value={note}
             onChange={(event) => setNote(event.target.value)}
-            placeholder="Note about this value (optional)"
-            aria-label="Note about this value"
-            className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+            placeholder="Notiz zu diesem Wert (optional)"
+            aria-label="Notiz zu diesem Wert"
+            className={`${TOUCH_FIELD} rounded-md border border-input bg-background px-3`}
           />
         </div>
       )}

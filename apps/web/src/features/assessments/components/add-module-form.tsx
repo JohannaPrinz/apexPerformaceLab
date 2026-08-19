@@ -4,10 +4,14 @@ import { useState, useTransition } from 'react';
 
 import { useRouter } from 'next/navigation';
 
-import { MEASUREMENT_TEMPLATES, MODULE_KEYS, MODULE_LABELS } from '@apex/domain';
+import { MEASUREMENT_TEMPLATES, MODULE_KEYS } from '@apex/domain';
 import { Button } from '@apex/ui';
 
+import { FOCUS_RING, TOUCH_BUTTON, TOUCH_FIELD } from '@/components/common/touch';
+
 import { addModuleAction } from '../server/actions';
+
+import { MODULE_LABELS_DE } from './labels';
 
 /**
  * Adds a module — one test — to an assessment.
@@ -42,11 +46,11 @@ export function AddModuleForm({ assessmentId }: { assessmentId: string }) {
             setModuleKey(event.target.value);
             setTemplateKey('');
           }}
-          className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          className={`${TOUCH_FIELD} rounded-md border border-input bg-background px-3 shadow-sm ${FOCUS_RING}`}
         >
           {MODULE_KEYS.map((key) => (
             <option key={key} value={key}>
-              {MODULE_LABELS[key]}
+              {MODULE_LABELS_DE[key]}
             </option>
           ))}
         </select>
@@ -54,17 +58,17 @@ export function AddModuleForm({ assessmentId }: { assessmentId: string }) {
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor="templateKey" className="text-sm font-medium text-foreground">
-          Template
+          Vorlage
         </label>
         <select
           id="templateKey"
           value={templateKey}
           onChange={(event) => setTemplateKey(event.target.value)}
           disabled={templates.length === 0}
-          className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-50"
+          className={`${TOUCH_FIELD} rounded-md border border-input bg-background px-3 shadow-sm disabled:opacity-50 ${FOCUS_RING}`}
         >
           <option value="">
-            {templates.length === 0 ? 'None available' : 'Configure manually'}
+            {templates.length === 0 ? 'Keine verfügbar' : 'Manuell konfigurieren'}
           </option>
           {templates.map((template) => (
             <option key={template.key} value={template.key}>
@@ -76,7 +80,7 @@ export function AddModuleForm({ assessmentId }: { assessmentId: string }) {
 
       <Button
         variant="outline"
-        size="sm"
+        className={TOUCH_BUTTON}
         disabled={pending || !templateKey}
         onClick={() => {
           setError(null);
@@ -87,12 +91,12 @@ export function AddModuleForm({ assessmentId }: { assessmentId: string }) {
           });
         }}
       >
-        {pending ? 'Adding…' : 'Add test'}
+        {pending ? 'Wird hinzugefügt…' : 'Test hinzufügen'}
       </Button>
 
       {!templateKey ? (
         <p className="text-xs text-muted-foreground">
-          Manual configuration arrives with the measurement entry screen.
+          Die manuelle Konfiguration erfolgt im nächsten Schritt.
         </p>
       ) : null}
 

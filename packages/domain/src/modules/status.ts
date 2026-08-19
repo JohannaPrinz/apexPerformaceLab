@@ -79,17 +79,62 @@ export function hasStarted(status: AssessmentModuleStatus): boolean {
 }
 
 /**
+ * Whether an assessment has been performed, from its tests alone.
+ *
+ * There is no status on the Assessment itself, and adding one would be a second
+ * source of truth for something the tests already say. A test that has left
+ * `PLANNED` is a test somebody acted on — started it, completed it, decided to
+ * skip it, or broke it off — and any one of those makes the examination a thing
+ * that happened rather than a thing being assembled.
+ */
+export function assessmentHasBegun(statuses: readonly AssessmentModuleStatus[]): boolean {
+  return statuses.some((status) => status !== 'PLANNED');
+}
+
+export type ModuleRemovalRefusal = 'HAS_MEASUREMENTS' | 'ASSESSMENT_BEGUN';
+
+export type ModuleRemoval =
+  { readonly ok: true } | { readonly ok: false; readonly reason: ModuleRemovalRefusal };
+
+/**
  * Whether a test may be removed from its assessment outright.
  *
- * Only a test that was never started and holds nothing. There is no history to
- * preserve, and leaving it behind would clutter the record with a decision
- * nobody took.
+ * Two different situations, and the rule differs because the record means
+ * different things in each:
  *
- * `SKIPPED` is deliberately **not** removable: "we decided not to run this" is
- * a statement about the examination, and losing it would make the assessment
- * look like the test was never considered. A started test is `ABORTED`, never
- * deleted — its measurements stay.
+ * **While the assessment is still being assembled** — no test has left
+ * `PLANNED` — removing one is editing a plan. Nothing happened yet, so nothing
+ * is lost.
+ *
+ * **Once the assessment has been performed**, only a `SKIPPED` test may go. A
+ * completed, running or aborted test is what took place, and the record has to
+ * keep saying so.
+ *
+ * ## Why SKIPPED became removable
+ *
+ * This reverses the earlier rule here, which kept skipped tests on the grounds
+ * that "we decided not to run this" is itself a statement about the
+ * examination. That reasoning is sound and still holds — but it is a decision
+ * for the coach to make about their own documentation, not one for this
+ * function to enforce. A skip entered by mistake, or a test skipped and then
+ * genuinely dropped from the plan, otherwise stays visible forever with no way
+ * to correct it. The coach is asked to confirm; that is where the weight
+ * belongs.
+ *
+ * ## The one refusal that is not negotiable
+ *
+ * A test holding measurements is never removable, whatever its status. §13:
+ * measurements are never deleted, an erroneous reading included. If a skipped
+ * test somehow holds values, they are the record and the test stays with them.
  */
-export function canRemove(status: AssessmentModuleStatus, measurementCount: number): boolean {
-  return status === 'PLANNED' && measurementCount === 0;
+export function canRemoveModule(
+  status: AssessmentModuleStatus,
+  measurementCount: number,
+  assessmentBegun: boolean,
+): ModuleRemoval {
+  if (measurementCount > 0) return { ok: false, reason: 'HAS_MEASUREMENTS' };
+  if (!assessmentBegun) return { ok: true };
+  if (status === 'SKIPPED') return { ok: true };
+
+  return { ok: false, reason: 'ASSESSMENT_BEGUN' };
 }

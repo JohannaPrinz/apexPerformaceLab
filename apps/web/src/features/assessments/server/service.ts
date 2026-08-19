@@ -3,7 +3,9 @@ import 'server-only';
 import type { PrismaClientInstance } from '@apex/database';
 import { scoped, withTenant } from '@apex/database/tenant';
 import {
-  canRemove,
+  assessmentHasBegun,
+  canRemoveModule,
+  type ModuleRemovalRefusal,
   canTransition,
   configurationChangeViolations,
   findMeasurementTemplate,
@@ -53,6 +55,10 @@ const moduleSelect = {
   status: true,
   createdByCoachId: true,
   createdAt: true,
+  // Whether a test holds values decides whether it may ever be removed (§13).
+  // Counted here rather than fetched per card: one aggregate on a query that
+  // already runs beats one query per test.
+  _count: { select: { measurements: true } },
 } as const;
 
 const assessmentSelect = {
@@ -76,6 +82,8 @@ export interface AssessmentModuleRecord {
   /** The stored configuration, or null on a module created before one existed. */
   configuration: ModuleConfiguration | null;
   status: AssessmentModuleStatus;
+  /** How many values this test holds; a test holding any is never removable (§13). */
+  measurementCount: number;
   /** Recorded, not yet enforced — see the schema comment and §26.24. */
   createdByCoachId: string;
   createdAt: Date;
@@ -126,6 +134,7 @@ function toRecord(row: {
     status: string;
     createdByCoachId: string;
     createdAt: Date;
+    _count: { measurements: number };
   }[];
 }): AssessmentRecord {
   return {
@@ -138,6 +147,7 @@ function toRecord(row: {
       moduleVersion: entry.moduleVersion,
       configuration: readConfiguration(entry.payload, entry.moduleVersion),
       status: entry.status as AssessmentModuleStatus,
+      measurementCount: entry._count.measurements,
       createdByCoachId: entry.createdByCoachId,
       createdAt: entry.createdAt,
     })),
@@ -270,6 +280,7 @@ function toModuleRecord(row: {
   status: string;
   createdByCoachId: string;
   createdAt: Date;
+  _count?: { measurements: number };
 }): AssessmentModuleRecord {
   return {
     id: row.id,
@@ -277,6 +288,9 @@ function toModuleRecord(row: {
     moduleVersion: row.moduleVersion,
     configuration: readConfiguration(row.payload, row.moduleVersion),
     status: row.status as AssessmentModuleStatus,
+    // A module just created holds nothing; the count is only selected where a
+    // screen needs it.
+    measurementCount: row._count?.measurements ?? 0,
     createdByCoachId: row.createdByCoachId,
     createdAt: row.createdAt,
   };
@@ -448,7 +462,7 @@ export async function setModuleStatus(
 ): Promise<StatusChange> {
   const current = await db.assessmentModule.findFirst({
     where: scoped(tenant, { id: moduleId }),
-    select: { id: true, status: true },
+    select: { id: true, status: true, assessmentId: true },
   });
 
   if (!current) return { ok: false, reason: 'NOT_FOUND' };
@@ -475,7 +489,11 @@ export async function setModuleStatus(
  */
 export type RemovalResult =
   | { ok: true }
-  | { ok: false; reason: 'NOT_FOUND' | 'HAS_HISTORY'; status?: AssessmentModuleStatus };
+  | {
+      ok: false;
+      reason: 'NOT_FOUND' | ModuleRemovalRefusal;
+      status?: AssessmentModuleStatus;
+    };
 
 export async function removeModule(
   db: AssessmentDb & Pick<PrismaClientInstance, 'measurement'>,
@@ -484,7 +502,7 @@ export async function removeModule(
 ): Promise<RemovalResult> {
   const current = await db.assessmentModule.findFirst({
     where: scoped(tenant, { id: moduleId }),
-    select: { id: true, status: true },
+    select: { id: true, status: true, assessmentId: true },
   });
 
   if (!current) return { ok: false, reason: 'NOT_FOUND' };
@@ -493,10 +511,25 @@ export async function removeModule(
     where: scoped(tenant, { assessmentModuleId: moduleId }),
   });
 
+  // Whether the examination took place is a property of its *siblings*, not of
+  // this test: a still-planned test inside a performed assessment must be
+  // refused, and a skipped one inside an assessment nobody has started yet is
+  // simply a plan being edited.
+  const siblings = await db.assessmentModule.findMany({
+    where: scoped(tenant, { assessmentId: current.assessmentId }),
+    select: { status: true },
+  });
+
   const status = current.status;
-  if (!canRemove(status, measurementCount)) {
-    return { ok: false, reason: 'HAS_HISTORY', status };
-  }
+  const removal = canRemoveModule(
+    status,
+    measurementCount,
+    assessmentHasBegun(siblings.map((sibling) => sibling.status)),
+  );
+
+  // Enforced here, not only in the confirmation dialog. A rule that lives in a
+  // button is not a rule.
+  if (!removal.ok) return { ok: false, reason: removal.reason, status };
 
   await db.assessmentModule.deleteMany({ where: scoped(tenant, { id: moduleId }) });
 

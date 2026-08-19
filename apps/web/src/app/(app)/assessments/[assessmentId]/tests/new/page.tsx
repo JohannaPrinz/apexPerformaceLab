@@ -9,7 +9,7 @@ import { api } from '@/trpc/server';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Add a test',
+  title: 'Test hinzufügen',
 };
 
 /**
@@ -44,7 +44,7 @@ export default async function NewTestPage({
         >
           ← {assessment.question}
         </Link>
-        <h1 className="text-2xl font-semibold">Add a test</h1>
+        <h1 className="text-2xl font-semibold">Test hinzufügen</h1>
       </div>
 
       <TestBuilder

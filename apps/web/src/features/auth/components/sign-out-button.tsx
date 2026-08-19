@@ -7,6 +7,8 @@ import { useRouter } from 'next/navigation';
 import { signOut } from '@apex/auth/client';
 import { Button } from '@apex/ui';
 
+import { TOUCH_BUTTON } from '@/components/common/touch';
+
 /** Ends the session and returns to the sign-in screen. */
 export function SignOutButton() {
   const router = useRouter();
@@ -15,7 +17,9 @@ export function SignOutButton() {
   return (
     <Button
       variant="outline"
-      size="sm"
+      // Reached on a phone through the menu panel, so it carries the same
+      // touch size as everything else in the shell.
+      className={TOUCH_BUTTON}
       disabled={pending}
       onClick={() => {
         setPending(true);
@@ -27,7 +31,7 @@ export function SignOutButton() {
         });
       }}
     >
-      {pending ? 'Signing out…' : 'Sign out'}
+      {pending ? 'Wird abgemeldet…' : 'Abmelden'}
     </Button>
   );
 }

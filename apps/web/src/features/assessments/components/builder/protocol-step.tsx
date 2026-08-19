@@ -4,6 +4,8 @@ import { useState } from 'react';
 
 import { Badge, Button, Input } from '@apex/ui';
 
+import { FOCUS_RING, TOUCH_BUTTON, TOUCH_FIELD, TOUCH_TARGET } from '@/components/common/touch';
+
 import {
   toDimensionKey,
   withDimension,
@@ -46,10 +48,10 @@ export function ProtocolStep({
   return (
     <div className="flex flex-col gap-8">
       <section className="flex flex-col gap-2">
-        <h3 className="text-sm font-medium">Passes</h3>
+        <h3 className="text-sm font-medium">Stufen</h3>
         <p className="text-xs text-muted-foreground">
-          How many times the whole set is recorded. A lactate step test sets this to the number of
-          stages; a body-fat measurement records once.
+          Wie oft der gesamte Satz erfasst wird. Ein Laktatstufentest trägt hier die Anzahl der
+          Stufen ein; eine Körperfettmessung erfasst einmal.
         </p>
 
         <div className="flex items-center gap-3">
@@ -59,23 +61,23 @@ export function ProtocolStep({
             max={50}
             value={draft.passes}
             onChange={(event) => onChange(withPasses(draft, Number(event.target.value)))}
-            aria-label="Number of passes"
-            className="h-9 w-24"
+            aria-label="Anzahl der Stufen"
+            className={`${TOUCH_FIELD} w-24`}
             data-numeric
           />
           <span className="text-sm text-muted-foreground">
             {draft.passes > 1
-              ? `${String(draft.passes)} stages, each recording the whole set`
-              : 'A single pass — values carry no stage number at all'}
+              ? `${String(draft.passes)} Stufen, jede erfasst den gesamten Satz`
+              : 'Eine einzelne Erfassung — die Werte tragen keine Stufennummer'}
           </span>
         </div>
       </section>
 
       <section className="flex flex-col gap-2">
-        <h3 className="text-sm font-medium">Sides</h3>
+        <h3 className="text-sm font-medium">Seiten</h3>
         <p className="text-xs text-muted-foreground">
-          Turn this on where left against right is the comparison the test exists for. A barbell
-          lift is taken with both sides at once; a dynamometer takes each separately.
+          Einschalten, wenn der Vergleich links gegen rechts der Zweck des Tests ist. Eine
+          Langhantelübung wird beidseitig erfasst, ein Dynamometer je Seite einzeln.
         </p>
 
         <label className="flex w-fit items-center gap-2 text-sm">
@@ -85,16 +87,17 @@ export function ProtocolStep({
             onChange={(event) => onChange(withRecordsSide(draft, event.target.checked))}
             className="size-4 rounded border-input"
           />
-          Record each value per side
+          Jeden Wert je Seite erfassen
         </label>
       </section>
 
       <section className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
-          <h3 className="text-sm font-medium">Dimensions</h3>
+          <h3 className="text-sm font-medium">Merkmale</h3>
           <p className="text-xs text-muted-foreground">
-            Further axes the same quantity is recorded along — a joint, a muscle site, a body
-            region. Leave the values empty to name them freely while measuring.
+            Weitere Achsen, entlang derer dieselbe Messgröße erfasst wird — ein Gelenk, eine
+            Muskelstelle, eine Körperregion. Werte leer lassen, um sie während der Messung frei zu
+            benennen.
           </p>
         </div>
 
@@ -114,19 +117,19 @@ export function ProtocolStep({
                         withDimensionValues(draft, dimension.key, event.target.value.split(',')),
                       )
                     }
-                    placeholder="Leave empty to name them while measuring"
-                    aria-label={`Values for ${dimension.label}`}
-                    className="h-8 text-sm"
+                    placeholder="Leer lassen, um sie während der Messung zu benennen"
+                    aria-label={`Werte für ${dimension.label}`}
+                    className={TOUCH_FIELD}
                   />
                 </div>
                 <Badge variant="outline">
                   {dimension.values && dimension.values.length > 0
-                    ? `${String(dimension.values.length)} values`
-                    : 'Free'}
+                    ? `${String(dimension.values.length)} Werte`
+                    : 'Frei'}
                 </Badge>
                 <Button
                   variant="ghost"
-                  size="sm"
+                  className={TOUCH_BUTTON}
                   onClick={() => onChange(withoutDimension(draft, dimension.key))}
                 >
                   Remove
@@ -140,13 +143,13 @@ export function ProtocolStep({
           <Input
             value={dimensionLabel}
             onChange={(event) => setDimensionLabel(event.target.value)}
-            placeholder="e.g. Joint"
-            aria-label="New dimension"
-            className="h-9 max-w-xs"
+            placeholder="z. B. Gelenk"
+            aria-label="Neues Merkmal"
+            className={`${TOUCH_FIELD} w-full max-w-xs`}
           />
           <Button
             variant="outline"
-            size="sm"
+            className={TOUCH_BUTTON}
             disabled={dimensionLabel.trim() === '' || toDimensionKey(dimensionLabel) === ''}
             onClick={() => {
               onChange(
@@ -165,16 +168,16 @@ export function ProtocolStep({
 
       <section className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
-          <h3 className="text-sm font-medium">Exercises</h3>
+          <h3 className="text-sm font-medium">Übungen</h3>
           <p className="text-xs text-muted-foreground">
-            Which movements this test covers. Every quantity is then recorded once per exercise, so
-            one test can hold a bench press and a deadlift together. Leave empty where the notion
-            does not apply — a lactate test has no movement to name.
+            Welche Bewegungen dieser Test abdeckt. Jede Messgröße wird dann einmal je Übung erfasst,
+            sodass ein Test Bankdrücken und Kreuzheben zusammen führen kann. Leer lassen, wo der
+            Begriff nicht greift — ein Laktattest hat keine Bewegung zu benennen.
           </p>
         </div>
 
         {exercises.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No exercise in the catalogue yet.</p>
+          <p className="text-xs text-muted-foreground">Noch keine Übung im Katalog.</p>
         ) : (
           <ul className="flex flex-wrap gap-2">
             {exercises.map((exercise) => {
@@ -192,7 +195,7 @@ export function ProtocolStep({
                           : withExercise(draft, exercise.id),
                       )
                     }
-                    className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-sm transition-colors ${
+                    className={`${TOUCH_TARGET} ${FOCUS_RING} flex items-center gap-1.5 rounded-md border px-3 text-sm transition-colors ${
                       chosen
                         ? 'border-accent bg-accent-soft text-accent-soft-foreground'
                         : 'border-border hover:border-border-strong hover:bg-muted'
@@ -201,7 +204,7 @@ export function ProtocolStep({
                     {exercise.name}
                     {exercise.ownedByWorkspace ? (
                       <Badge variant="secondary" className="text-[10px]">
-                        Own
+                        Eigene
                       </Badge>
                     ) : null}
                   </button>
@@ -213,16 +216,16 @@ export function ProtocolStep({
       </section>
 
       <section className="flex flex-col gap-2">
-        <h3 className="text-sm font-medium">Protocol notes</h3>
+        <h3 className="text-sm font-medium">Protokollnotizen</h3>
         <p className="text-xs text-muted-foreground">
-          Load steps, device settings, conditions — anything the next person performing this test
-          needs to know.
+          Belastungsstufen, Geräteeinstellungen, Bedingungen — alles, was die nächste Person wissen
+          muss, die diesen Test durchführt.
         </p>
         <textarea
           value={draft.notes}
           onChange={(event) => onChange(withNotes(draft, event.target.value))}
           rows={3}
-          aria-label="Protocol notes"
+          aria-label="Protokollnotizen"
           className="rounded-md border border-input bg-background px-3 py-2 text-sm"
         />
       </section>

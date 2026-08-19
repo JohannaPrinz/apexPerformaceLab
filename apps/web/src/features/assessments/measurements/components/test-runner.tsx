@@ -6,8 +6,6 @@ import { useRouter } from 'next/navigation';
 
 import {
   allowedTransitions,
-  ASSESSMENT_MODULE_STATUS_LABELS,
-  MODULE_LABELS,
   type AssessmentModuleStatus,
   type ModuleConfiguration,
   type ModuleKey,
@@ -15,6 +13,13 @@ import {
 } from '@apex/domain';
 import { Badge, Button } from '@apex/ui';
 
+import { FOCUS_RING, TOUCH_BUTTON, TOUCH_FIELD, TOUCH_TARGET } from '@/components/common/touch';
+
+import {
+  MODULE_LABELS_DE,
+  MODULE_STATUS_LABELS_DE,
+  READINESS_LABELS_DE,
+} from '../../components/labels';
 import { addModuleNoteAction, setModuleStatusAction } from '../server/actions';
 
 import { MeasurementCell } from './measurement-cell';
@@ -71,8 +76,8 @@ export function TestRunner({
   if (!configuration) {
     return (
       <p className="text-sm text-muted-foreground">
-        This test was configured under a shape that can no longer be read. Its measurements are
-        unaffected.
+        Dieser Test wurde mit einer Struktur konfiguriert, die nicht mehr gelesen werden kann. Die
+        Messwerte sind davon nicht betroffen.
       </p>
     );
   }
@@ -96,12 +101,15 @@ export function TestRunner({
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
           <span className="eyebrow">Test</span>
-          <h2 className="text-xl font-semibold">
-            {MODULE_LABELS[moduleKey as ModuleKey] ?? moduleKey}
-          </h2>
+          {/* `h1`, not `h2`: this component *is* the page — the route around
+              it renders only a back link. A page whose first heading is level
+              two leaves a screen reader without a title to jump to. */}
+          <h1 className="text-xl font-semibold">
+            {MODULE_LABELS_DE[moduleKey as ModuleKey] ?? moduleKey}
+          </h1>
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant={status === 'COMPLETED' ? 'accent' : 'secondary'}>
-              {ASSESSMENT_MODULE_STATUS_LABELS[status]}
+              {MODULE_STATUS_LABELS_DE[status]}
             </Badge>
             <ReadinessBadge readiness={readiness} />
           </div>
@@ -112,7 +120,7 @@ export function TestRunner({
             {allowedTransitions(status).map((next) => (
               <Button
                 key={next}
-                size="sm"
+                className={TOUCH_BUTTON}
                 variant={next === 'IN_PROGRESS' ? 'accent' : 'outline'}
                 disabled={pending}
                 onClick={() => changeStatus(next)}
@@ -131,7 +139,7 @@ export function TestRunner({
       ) : null}
 
       {passes.length > 1 ? (
-        <nav aria-label="Passes" className="flex flex-wrap items-center gap-2">
+        <nav aria-label="Stufen" className="flex flex-wrap items-center gap-2">
           {passes.map((pass) => {
             const empty = isPassEmpty(measurements, pass);
             const active = pass === currentPass;
@@ -142,15 +150,18 @@ export function TestRunner({
                 type="button"
                 onClick={() => setActivePass(pass)}
                 aria-current={active ? 'step' : undefined}
-                className={`rounded-md border px-3 py-1.5 text-sm transition-colors ${
+                className={`${TOUCH_TARGET} ${FOCUS_RING} rounded-md border px-4 text-sm transition-colors ${
                   active
                     ? 'border-accent bg-accent-soft text-accent-soft-foreground'
                     : 'border-border hover:border-border-strong'
                 }`}
               >
-                Stage {pass}
+                Stufe {pass}
                 {empty ? (
-                  <span className="text-muted-foreground"> · skipped</span>
+                  // "leer", not "übersprungen": at the start of a test every
+                  // stage is empty, and calling that skipped claims a decision
+                  // nobody took. Skipping is a status on the test itself.
+                  <span className="text-muted-foreground"> · leer</span>
                 ) : (
                   <span className="text-muted-foreground">
                     {' · '}
@@ -165,11 +176,11 @@ export function TestRunner({
       ) : null}
 
       <section className="flex flex-col gap-3">
-        <p className="text-sm text-muted-foreground">
-          {passes.length > 1 ? `Stage ${String(currentPass)} · ` : ''}
-          {progress.filled} of {progress.expected} recorded
+        <p className="text-sm text-muted-foreground" role="status" aria-live="polite">
+          {passes.length > 1 ? `Stufe ${String(currentPass)} · ` : ''}
+          {progress.filled} von {progress.expected} erfasst
           {progress.filled < progress.expected
-            ? ' — a value left empty stays empty; nothing is filled in.'
+            ? ' — ein leer gelassener Wert bleibt leer; es wird nichts ergänzt.'
             : ''}
         </p>
 
@@ -190,18 +201,18 @@ export function TestRunner({
 
       {superseded.length > 0 ? (
         <section className="flex flex-col gap-2">
-          <h3 className="text-sm font-medium">Corrected values</h3>
+          <h3 className="text-sm font-medium">Korrigierte Werte</h3>
           <p className="text-xs text-muted-foreground">
-            Superseded readings are never deleted — an erroneous measurement is part of the record
-            (§13).
+            Ersetzte Messwerte werden nie gelöscht — auch ein fehlerhafter Wert gehört zur
+            Dokumentation (§13).
           </p>
           <ul className="flex flex-col gap-1 text-sm">
             {superseded.map((measurement) => (
               <li key={measurement.id} className="text-muted-foreground">
                 <span data-numeric>{formatValue(measurement)}</span>
                 {' · '}
-                {types[measurement.measurementTypeId]?.name ?? 'Unknown'}
-                {measurement.passIndex ? ` · stage ${String(measurement.passIndex)}` : ''}
+                {types[measurement.measurementTypeId]?.name ?? 'Unbekannt'}
+                {measurement.passIndex ? ` · Stufe ${String(measurement.passIndex)}` : ''}
                 {measurement.note ? ` · ${measurement.note}` : ''}
               </li>
             ))}
@@ -210,10 +221,10 @@ export function TestRunner({
       ) : null}
 
       <section className="flex flex-col gap-3">
-        <h3 className="text-sm font-medium">Test notes</h3>
+        <h3 className="text-sm font-medium">Testnotizen</h3>
 
         {notes.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No note yet.</p>
+          <p className="text-xs text-muted-foreground">Noch keine Notiz.</p>
         ) : (
           <ul className="flex flex-col gap-2">
             {notes.map((note) => (
@@ -229,12 +240,12 @@ export function TestRunner({
             <input
               value={noteDraft}
               onChange={(event) => setNoteDraft(event.target.value)}
-              placeholder="e.g. athlete stopped because of pain"
-              aria-label="Test note"
-              className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm"
+              placeholder="z. B. Athlet hat wegen Schmerzen abgebrochen"
+              aria-label="Testnotiz"
+              className={`${TOUCH_FIELD} min-w-0 flex-1 rounded-md border border-input bg-background px-3`}
             />
             <Button
-              size="sm"
+              className={TOUCH_BUTTON}
               variant="outline"
               disabled={pending || noteDraft.trim() === ''}
               onClick={() => {
@@ -249,7 +260,7 @@ export function TestRunner({
                 });
               }}
             >
-              Add note
+              Notiz hinzufügen
             </Button>
           </div>
         ) : null}
@@ -260,27 +271,28 @@ export function TestRunner({
 
 /** The readiness the domain service computed. The screen only displays it. */
 function ReadinessBadge({ readiness }: { readiness: Readiness }) {
-  if (readiness.level === 'COMPLETE') return <Badge variant="accent">Fully evaluable</Badge>;
+  if (readiness.level === 'COMPLETE')
+    return <Badge variant="accent">{READINESS_LABELS_DE['COMPLETE']}</Badge>;
   if (readiness.level === 'PARTIAL') {
     return (
       <Badge variant="secondary">
-        Partially evaluable
+        {READINESS_LABELS_DE['PARTIAL']}
         {readiness.missingPasses.length > 0
-          ? ` · missing stage ${readiness.missingPasses.join(', ')}`
+          ? ` · Stufe ${readiness.missingPasses.join(', ')} fehlt`
           : ''}
       </Badge>
     );
   }
 
-  return <Badge variant="outline">Not evaluable</Badge>;
+  return <Badge variant="outline">{READINESS_LABELS_DE['INSUFFICIENT']}</Badge>;
 }
 
 /** Wording that says what happens, not what the enum is called. */
 function actionLabel(from: AssessmentModuleStatus, to: AssessmentModuleStatus): string {
-  if (to === 'IN_PROGRESS') return from === 'PLANNED' ? 'Start test' : 'Reopen';
-  if (to === 'COMPLETED') return 'Mark complete';
-  if (to === 'SKIPPED') return 'Skip test';
-  if (to === 'ABORTED') return 'Abort test';
+  if (to === 'IN_PROGRESS') return from === 'PLANNED' ? 'Test starten' : 'Wieder öffnen';
+  if (to === 'COMPLETED') return 'Abschließen';
+  if (to === 'SKIPPED') return 'Überspringen';
+  if (to === 'ABORTED') return 'Test abbrechen';
 
-  return ASSESSMENT_MODULE_STATUS_LABELS[to];
+  return MODULE_STATUS_LABELS_DE[to];
 }

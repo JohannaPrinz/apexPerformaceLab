@@ -4,7 +4,11 @@ import { useActionState, useState } from 'react';
 
 import { Button } from '@apex/ui';
 
+import { FOCUS_RING, TOUCH_BUTTON, TOUCH_FIELD } from '@/components/common/touch';
+
 import { createAssessmentAction, type AssessmentFormState } from '../server/actions';
+
+import { ASSESSMENT_TYPE_LABELS_DE } from './labels';
 
 /**
  * Starts an assessment.
@@ -32,8 +36,8 @@ export function AssessmentForm({ athleteId }: { athleteId: string }) {
 
   if (!open) {
     return (
-      <Button variant="accent" size="sm" onClick={() => setOpen(true)}>
-        Start assessment
+      <Button variant="accent" className={TOUCH_BUTTON} onClick={() => setOpen(true)}>
+        Assessment starten
       </Button>
     );
   }
@@ -44,19 +48,19 @@ export function AssessmentForm({ athleteId }: { athleteId: string }) {
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor="question" className="text-sm font-medium text-foreground">
-          What should this assessment answer?
+          Welche Frage soll dieses Assessment beantworten?
         </label>
         <input
           id="question"
           name="question"
           required
-          placeholder="Where is the aerobic threshold?"
+          placeholder="Wo liegt die aerobe Schwelle?"
           aria-invalid={state.errors?.['question'] ? true : undefined}
-          className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none aria-invalid:border-destructive"
+          className={`${TOUCH_FIELD} flex w-full rounded-md border border-input bg-background px-3 shadow-sm aria-invalid:border-destructive ${FOCUS_RING}`}
         />
         <p className="text-xs text-muted-foreground">
-          Every assessment answers exactly one question. It is what the report will be written
-          against.
+          Jedes Assessment beantwortet genau eine Frage. An ihr wird später der Bericht
+          ausgerichtet.
         </p>
         {state.errors?.['question'] ? (
           <p role="alert" className="text-xs text-destructive">
@@ -67,17 +71,17 @@ export function AssessmentForm({ athleteId }: { athleteId: string }) {
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor="type" className="text-sm font-medium text-foreground">
-          Type
+          Art
         </label>
         <select
           id="type"
           name="type"
           defaultValue="INITIAL"
-          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          className={`${TOUCH_FIELD} w-full rounded-md border border-input bg-background px-3 shadow-sm ${FOCUS_RING}`}
         >
-          <option value="INITIAL">Initial</option>
-          <option value="RE_ASSESSMENT">Re-assessment</option>
-          <option value="FOLLOW_UP">Follow-up</option>
+          <option value="INITIAL">{ASSESSMENT_TYPE_LABELS_DE['INITIAL']}</option>
+          <option value="RE_ASSESSMENT">{ASSESSMENT_TYPE_LABELS_DE['RE_ASSESSMENT']}</option>
+          <option value="FOLLOW_UP">{ASSESSMENT_TYPE_LABELS_DE['FOLLOW_UP']}</option>
         </select>
       </div>
 
@@ -88,11 +92,16 @@ export function AssessmentForm({ athleteId }: { athleteId: string }) {
       ) : null}
 
       <div className="flex gap-3">
-        <Button type="submit" variant="accent" size="sm" disabled={pending}>
-          {pending ? 'Saving…' : 'Create assessment'}
+        <Button type="submit" variant="accent" className={TOUCH_BUTTON} disabled={pending}>
+          {pending ? 'Wird gespeichert…' : 'Assessment anlegen'}
         </Button>
-        <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(false)}>
-          Cancel
+        <Button
+          type="button"
+          variant="ghost"
+          className={TOUCH_BUTTON}
+          onClick={() => setOpen(false)}
+        >
+          Abbrechen
         </Button>
       </div>
     </form>

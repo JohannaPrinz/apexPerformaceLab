@@ -7,13 +7,15 @@ import { useRouter } from 'next/navigation';
 import {
   MEASUREMENT_TEMPLATES,
   MODULE_KEYS,
-  MODULE_LABELS,
   type ModuleConfiguration,
   type ModuleKey,
 } from '@apex/domain';
 import { Badge, Button } from '@apex/ui';
 
+import { FOCUS_RING, TOUCH_BUTTON, TOUCH_TARGET } from '@/components/common/touch';
+
 import { addConfiguredModuleAction, updateModuleConfigurationAction } from '../../server/actions';
+import { MEASUREMENT_ROLE_LABELS_DE, MODULE_LABELS_DE } from '../labels';
 
 import {
   BUILDER_STEP_LABELS,
@@ -22,7 +24,6 @@ import {
   draftFromTemplateKey,
   emptyDraft,
   expectedCount,
-  MEASUREMENT_ROLE_LABELS,
   ROLE_EXPLANATIONS,
   stepIssues,
   summarise,
@@ -88,8 +89,8 @@ export function TestBuilder({
     const movements = new Map(exercises.map((option) => [option.id, option.name]));
 
     return {
-      measurementType: (id: string) => types.get(id) ?? 'Unknown measurement',
-      exercise: (id: string) => movements.get(id) ?? 'Unknown exercise',
+      measurementType: (id: string) => types.get(id) ?? 'Unbekannte Messgröße',
+      exercise: (id: string) => movements.get(id) ?? 'Unbekannte Übung',
     };
   }, [measurementTypes, exercises]);
 
@@ -99,7 +100,7 @@ export function TestBuilder({
 
   function save() {
     if (!configuration) {
-      setError('This test is not complete yet.');
+      setError('Dieser Test ist noch nicht vollständig.');
 
       return;
     }
@@ -120,7 +121,7 @@ export function TestBuilder({
 
   return (
     <div className="flex flex-col gap-8">
-      <nav aria-label="Steps" className="flex flex-wrap items-center gap-2">
+      <nav aria-label="Schritte" className="flex flex-wrap items-center gap-2">
         {BUILDER_STEPS.map((entry, index) => {
           const reachable =
             index <= stepIndex ||
@@ -135,7 +136,7 @@ export function TestBuilder({
               disabled={!reachable}
               aria-current={entry === step ? 'step' : undefined}
               onClick={() => setStep(entry)}
-              className={`rounded-md border px-3 py-1.5 text-sm transition-colors disabled:opacity-40 ${
+              className={`${TOUCH_TARGET} ${FOCUS_RING} rounded-md border px-3 text-sm transition-colors disabled:opacity-40 ${
                 entry === step
                   ? 'border-accent bg-accent-soft text-accent-soft-foreground'
                   : 'border-border hover:border-border-strong'
@@ -194,23 +195,30 @@ export function TestBuilder({
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
         <Button
           variant="ghost"
+          className={TOUCH_BUTTON}
           disabled={stepIndex === 0 || pending}
           onClick={() => setStep(BUILDER_STEPS[stepIndex - 1] ?? 'test')}
         >
-          Back
+          Zurück
         </Button>
 
         {step === 'summary' ? (
-          <Button variant="accent" disabled={pending || !configuration} onClick={save}>
-            {pending ? 'Saving…' : existing ? 'Save changes' : 'Add test'}
+          <Button
+            className={TOUCH_BUTTON}
+            variant="accent"
+            disabled={pending || !configuration}
+            onClick={save}
+          >
+            {pending ? 'Wird gespeichert…' : existing ? 'Änderungen speichern' : 'Test hinzufügen'}
           </Button>
         ) : (
           <Button
+            className={TOUCH_BUTTON}
             variant="accent"
             disabled={issues.length > 0 || pending}
             onClick={() => setStep(BUILDER_STEPS[stepIndex + 1] ?? 'summary')}
           >
-            Continue
+            Weiter
           </Button>
         )}
       </div>
@@ -242,7 +250,7 @@ function TestStep({
     <div className="flex flex-col gap-6">
       <section className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
-          <h3 className="text-sm font-medium">Which test</h3>
+          <h3 className="text-sm font-medium">Welcher Test</h3>
           <p className="text-xs text-muted-foreground">
             An assessment records each test once. One already in this assessment cannot be added
             again — copy it into another assessment instead.
@@ -261,14 +269,16 @@ function TestStep({
                   disabled={taken}
                   aria-pressed={chosen}
                   onClick={() => onChange({ ...emptyDraft(key) })}
-                  className={`rounded-md border px-3 py-1.5 text-sm transition-colors disabled:opacity-40 ${
+                  className={`${TOUCH_TARGET} ${FOCUS_RING} rounded-md border px-3 text-sm transition-colors disabled:opacity-40 ${
                     chosen
                       ? 'border-accent bg-accent-soft text-accent-soft-foreground'
                       : 'border-border hover:border-border-strong'
                   }`}
                 >
-                  {MODULE_LABELS[key]}
-                  {taken ? <span className="text-muted-foreground"> · in use</span> : null}
+                  {MODULE_LABELS_DE[key]}
+                  {taken ? (
+                    <span className="text-muted-foreground"> · bereits enthalten</span>
+                  ) : null}
                 </button>
               </li>
             );
@@ -278,7 +288,7 @@ function TestStep({
 
       <section className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
-          <h3 className="text-sm font-medium">Start from a template</h3>
+          <h3 className="text-sm font-medium">Von einer Vorlage starten</h3>
           <p className="text-xs text-muted-foreground">
             A template is a starting point. Its configuration is copied in and then belongs to this
             test — changing the template later never touches it.
@@ -287,7 +297,8 @@ function TestStep({
 
         {templates.length === 0 ? (
           <p className="text-xs text-muted-foreground">
-            No template for {MODULE_LABELS[draft.moduleKey]}. Configure it in the next step.
+            Keine Vorlage für {MODULE_LABELS_DE[draft.moduleKey]}. Im nächsten Schritt
+            konfigurieren.
           </p>
         ) : (
           <ul className="flex flex-wrap gap-2">
@@ -296,13 +307,13 @@ function TestStep({
                 type="button"
                 aria-pressed={draft.templateKey === null}
                 onClick={() => onPickTemplate('')}
-                className={`rounded-md border px-3 py-1.5 text-sm transition-colors ${
+                className={`${TOUCH_TARGET} ${FOCUS_RING} rounded-md border px-3 text-sm transition-colors ${
                   draft.templateKey === null
                     ? 'border-accent bg-accent-soft text-accent-soft-foreground'
                     : 'border-border hover:border-border-strong'
                 }`}
               >
-                Configure from scratch
+                Von Grund auf konfigurieren
               </button>
             </li>
             {templates.map((template) => (
@@ -311,7 +322,7 @@ function TestStep({
                   type="button"
                   aria-pressed={draft.templateKey === template.key}
                   onClick={() => onPickTemplate(template.key)}
-                  className={`rounded-md border px-3 py-1.5 text-sm transition-colors ${
+                  className={`${TOUCH_TARGET} ${FOCUS_RING} rounded-md border px-3 text-sm transition-colors ${
                     draft.templateKey === template.key
                       ? 'border-accent bg-accent-soft text-accent-soft-foreground'
                       : 'border-border hover:border-border-strong'
@@ -321,7 +332,7 @@ function TestStep({
                   <span className="text-muted-foreground">
                     {' · '}
                     {template.measurements.length} measurements
-                    {template.passes > 1 ? `, ${String(template.passes)} passes` : ''}
+                    {template.passes > 1 ? `, ${String(template.passes)} Stufen` : ''}
                   </span>
                 </button>
               </li>
@@ -360,7 +371,7 @@ function Summary({
                       </span>
                       <span>{entry.name}</span>
                       <Badge variant={entry.role === 'required' ? 'accent' : 'secondary'}>
-                        {MEASUREMENT_ROLE_LABELS[entry.role]}
+                        {MEASUREMENT_ROLE_LABELS_DE[entry.role]}
                       </Badge>
                       <span className="text-xs text-muted-foreground">
                         {ROLE_EXPLANATIONS[entry.role]}

@@ -11,7 +11,7 @@ import { api } from '@/trpc/server';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Perform test',
+  title: 'Test durchführen',
 };
 
 /**

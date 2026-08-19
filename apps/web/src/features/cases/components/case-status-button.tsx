@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 
 import { Button } from '@apex/ui';
 
+import { TOUCH_BUTTON } from '@/components/common/touch';
+
 import { setCaseStatusAction } from '../server/actions';
 
 import type { CaseStatusInput } from '../schemas';
@@ -18,9 +20,9 @@ import type { CaseStatusInput } from '../schemas';
  * control that has to be learned.
  */
 const NEXT: Record<CaseStatusInput, { status: CaseStatusInput; label: string }> = {
-  OPEN: { status: 'CLOSED', label: 'Close' },
-  CLOSED: { status: 'ARCHIVED', label: 'Archive' },
-  ARCHIVED: { status: 'OPEN', label: 'Reopen' },
+  OPEN: { status: 'CLOSED', label: 'Abschließen' },
+  CLOSED: { status: 'ARCHIVED', label: 'Archivieren' },
+  ARCHIVED: { status: 'OPEN', label: 'Wieder öffnen' },
 };
 
 export function CaseStatusButton({
@@ -41,7 +43,7 @@ export function CaseStatusButton({
     <div className="flex flex-col items-end gap-1">
       <Button
         variant="outline"
-        size="sm"
+        className={TOUCH_BUTTON}
         disabled={pending}
         onClick={() => {
           setError(null);
@@ -52,7 +54,7 @@ export function CaseStatusButton({
           });
         }}
       >
-        {pending ? 'Saving…' : next.label}
+        {pending ? 'Wird gespeichert…' : next.label}
       </Button>
 
       {error ? (

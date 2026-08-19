@@ -3,9 +3,11 @@ import { notFound } from 'next/navigation';
 
 import { TRPCError } from '@trpc/server';
 
+import { assessmentHasBegun } from '@apex/domain';
 import { Badge, Button } from '@apex/ui';
 
 import { CopyAssessmentButton, ModuleCard } from '@/features/assessments';
+import { ASSESSMENT_TYPE_LABELS_DE } from '@/features/assessments/components/labels';
 import { api } from '@/trpc/server';
 
 import type { Metadata } from 'next';
@@ -46,6 +48,11 @@ export default async function AssessmentPage({
       moduleKeys: entry.modules.map((entry_) => entry_.moduleKey),
     }));
 
+  // Whether the examination took place, from its tests alone — there is no
+  // status on the assessment itself, and adding one would be a second source of
+  // truth for something the tests already say.
+  const assessmentBegun = assessmentHasBegun(assessment.modules.map((entry) => entry.status));
+
   return (
     <main className="mx-auto flex w-full max-w-content flex-col gap-8 px-6 py-12">
       <header className="flex flex-wrap items-start justify-between gap-4">
@@ -53,7 +60,9 @@ export default async function AssessmentPage({
           <span className="eyebrow">Assessment</span>
           <h1 className="text-2xl font-semibold text-pretty">{assessment.question}</h1>
           <div className="flex items-center gap-2">
-            <Badge variant="secondary">{assessment.type.replace('_', '-').toLowerCase()}</Badge>
+            <Badge variant="secondary">
+              {ASSESSMENT_TYPE_LABELS_DE[assessment.type] ?? assessment.type}
+            </Badge>
             <span className="text-xs text-muted-foreground" data-numeric>
               {assessment.performedAt.toLocaleDateString('de-DE')}
             </span>
@@ -67,14 +76,14 @@ export default async function AssessmentPage({
         <div className="flex flex-col gap-1">
           <h2 className="text-xl font-semibold">Tests</h2>
           <p className="text-sm text-pretty text-muted-foreground">
-            Each test records the quantities it is configured with. A test with several passes — a
-            lactate step test, for instance — records the whole set once per stage.
+            Jeder Test erfasst die Messgrößen, mit denen er konfiguriert ist. Ein Test mit mehreren
+            Stufen — etwa ein Laktatstufentest — erfasst den gesamten Satz einmal je Stufe.
           </p>
         </div>
 
         {assessment.modules.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No test configured yet. An assessment needs at least one (§26.6).
+            Noch kein Test konfiguriert. Ein Assessment braucht mindestens einen (§26.6).
           </p>
         ) : (
           <div className="flex flex-col gap-3">
@@ -86,6 +95,7 @@ export default async function AssessmentPage({
                 typeNames={assessment.measurementTypeNames}
                 exerciseNames={assessment.exerciseNames}
                 copyTargets={copyTargets}
+                assessmentBegun={assessmentBegun}
               />
             ))}
           </div>
@@ -93,14 +103,14 @@ export default async function AssessmentPage({
 
         <div>
           <Button variant="accent" size="sm" asChild>
-            <Link href={`/assessments/${assessment.id}/tests/new`}>Add a test</Link>
+            <Link href={`/assessments/${assessment.id}/tests/new`}>Test hinzufügen</Link>
           </Button>
         </div>
       </section>
 
       <p className="text-sm text-muted-foreground">
         <Link href="/athletes" className="text-accent underline-offset-4 hover:underline">
-          Back to athletes
+          Zurück zu den Athleten
         </Link>
       </p>
     </main>

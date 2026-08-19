@@ -240,11 +240,14 @@ export const assessmentsRouter = createTRPCRouter({
         if (result.reason === 'NOT_FOUND') throw notFound('Test');
 
         throw new TRPCError({
-          code: 'BAD_REQUEST',
+          // `PRECONDITION_FAILED`, not `BAD_REQUEST`: the request is well
+          // formed and the caller is allowed — the assessment is simply in a
+          // state that does not permit it, and it may permit it later.
+          code: 'PRECONDITION_FAILED',
           message:
-            result.status === 'SKIPPED'
-              ? 'A skipped test is kept — the decision not to run it is part of the examination.'
-              : 'This test has been started. Abort it instead; its measurements are history.',
+            result.reason === 'HAS_MEASUREMENTS'
+              ? 'Dieser Test enthält Messwerte. Messwerte werden nie gelöscht (§13).'
+              : 'Dieses Assessment wurde bereits durchgeführt. Nur übersprungene Tests lassen sich noch entfernen.',
         });
       }
 

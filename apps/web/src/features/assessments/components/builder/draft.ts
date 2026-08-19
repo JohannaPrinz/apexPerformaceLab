@@ -1,14 +1,14 @@
 import {
   findMeasurementTemplate,
-  MEASUREMENT_ROLE_LABELS,
   moduleConfigurationSchema,
-  MODULE_LABELS,
   type ContextDimension,
   type MeasurementRole,
   type MeasurementTemplate,
   type ModuleConfiguration,
   type ModuleKey,
 } from '@apex/domain';
+
+import { MEASUREMENT_ROLE_LABELS_DE, MODULE_LABELS_DE } from '../labels';
 
 /**
  * The test a coach is assembling, before it becomes a configuration.
@@ -299,9 +299,9 @@ export const BUILDER_STEPS: readonly BuilderStep[] = [
 
 export const BUILDER_STEP_LABELS: Readonly<Record<BuilderStep, string>> = {
   test: 'Test',
-  measurements: 'Measurements',
-  protocol: 'Protocol',
-  summary: 'Summary',
+  measurements: 'Messgrößen',
+  protocol: 'Protokoll',
+  summary: 'Zusammenfassung',
 };
 
 /**
@@ -358,43 +358,44 @@ export function summarise(
   },
 ): readonly SummaryLine[] {
   const lines: SummaryLine[] = [
-    { label: 'Test', value: MODULE_LABELS[draft.moduleKey] },
+    { label: 'Test', value: MODULE_LABELS_DE[draft.moduleKey] },
     {
-      label: 'Measurements',
+      label: 'Messgrößen',
       value:
         draft.measurementTypes.length === 0
-          ? 'None chosen'
-          : `${String(draft.measurementTypes.length)} selected`,
+          ? 'Keine ausgewählt'
+          : `${String(draft.measurementTypes.length)} ausgewählt`,
       entries: draft.measurementTypes.map((entry) => ({
         name: names.measurementType(entry.measurementTypeId),
         role: entry.role,
       })),
     },
     {
-      label: 'Passes',
-      // "No" rather than "1": a single-pass test is not a stepped test with one
-      // stage, and the measurement records `passIndex: null` to say so.
-      value: draft.passes > 1 ? String(draft.passes) : 'Single pass',
+      label: 'Stufen',
+      // "Einfache Erfassung" rather than "1": a single-pass test is not a
+      // stepped test with one stage, and the measurement records
+      // `passIndex: null` to say so.
+      value: draft.passes > 1 ? String(draft.passes) : 'Einfache Erfassung',
     },
-    { label: 'Sides', value: draft.recordsSide ? 'Left and right' : 'No' },
+    { label: 'Seiten', value: draft.recordsSide ? 'Links und rechts' : 'Nein' },
     {
-      label: 'Dimensions',
+      label: 'Merkmale',
       value:
         draft.dimensions.length === 0
-          ? 'None'
+          ? 'Keine'
           : draft.dimensions
               .map((dimension) =>
                 dimension.values && dimension.values.length > 0
                   ? `${dimension.label} (${dimension.values.join(', ')})`
-                  : `${dimension.label} (free)`,
+                  : `${dimension.label} (frei)`,
               )
               .join(' · '),
     },
     {
-      label: 'Exercises',
+      label: 'Übungen',
       value:
         draft.exerciseIds.length === 0
-          ? 'None'
+          ? 'Keine'
           : draft.exerciseIds.map((id) => names.exercise(id)).join(' · '),
     },
   ];
@@ -422,9 +423,9 @@ export function expectedCount(draft: BuilderDraft): number {
 
 /** The wording the interface uses for each role. Never the enum name (§9). */
 export const ROLE_EXPLANATIONS: Readonly<Record<MeasurementRole, string>> = {
-  required: 'Needed for the test to count as fully recorded.',
-  recommended: 'Worth taking for this test, but not compulsory.',
-  optional: 'Can be recorded as well, when it is useful.',
+  required: 'Nötig, damit der Test als vollständig erfasst gilt.',
+  recommended: 'Für diesen Test sinnvoll, aber nicht zwingend.',
+  optional: 'Kann zusätzlich erfasst werden, wenn es nützlich ist.',
 } as const;
 
-export { MEASUREMENT_ROLE_LABELS };
+export { MEASUREMENT_ROLE_LABELS_DE };

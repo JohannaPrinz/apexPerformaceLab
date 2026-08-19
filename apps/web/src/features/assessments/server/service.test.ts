@@ -53,6 +53,9 @@ function fakeDb(overrides: { sourceModules?: unknown[] } = {}) {
           status: 'PLANNED',
           createdByCoachId: 'coach_1',
           createdAt: new Date('2026-01-01'),
+          // Selected alongside every module: whether a test holds values
+          // decides whether it may ever be removed (§13).
+          _count: { measurements: 0 },
         },
       ],
       case: { athleteId: 'ath_1' },
@@ -74,9 +77,15 @@ function fakeDb(overrides: { sourceModules?: unknown[] } = {}) {
     findFirst: vi.fn<(args: QueryArgs) => Promise<unknown>>().mockResolvedValue({
       id: 'mod_1',
       status: 'PLANNED',
+      assessmentId: 'ass_1',
       payload: configuration,
       moduleVersion: 2,
     }),
+    // The siblings decide whether the assessment has been performed; an
+    // assessment where every test is still planned is one being assembled.
+    findMany: vi
+      .fn<(args: QueryArgs) => Promise<{ status: string }[]>>()
+      .mockResolvedValue([{ status: 'PLANNED' }]),
     create: vi.fn<(args: QueryArgs) => Promise<unknown>>().mockResolvedValue({
       id: 'mod_new',
       moduleKey: 'lactate',
@@ -221,11 +230,16 @@ describe('assessment service — tenant scoping', () => {
    */
   it('refuses to delete a test that has been started', async () => {
     const { db, assessmentModule } = fakeDb();
-    assessmentModule.findFirst.mockResolvedValue({ id: 'mod_1', status: 'IN_PROGRESS' });
+    assessmentModule.findFirst.mockResolvedValue({
+      id: 'mod_1',
+      status: 'IN_PROGRESS',
+      assessmentId: 'ass_1',
+    });
+    assessmentModule.findMany.mockResolvedValue([{ status: 'IN_PROGRESS' }]);
 
     const result = await removeModule(db, TENANT, 'mod_1');
 
-    expect(result).toMatchObject({ ok: false, reason: 'HAS_HISTORY' });
+    expect(result).toMatchObject({ ok: false, reason: 'ASSESSMENT_BEGUN' });
     expect(assessmentModule.deleteMany).not.toHaveBeenCalled();
   });
 
@@ -239,12 +253,54 @@ describe('assessment service — tenant scoping', () => {
     expect(assessmentModule.deleteMany).not.toHaveBeenCalled();
   });
 
-  it('refuses to delete a skipped test — the decision is part of the record', async () => {
+  it('deletes a skipped test while the assessment is still being assembled', async () => {
+    // Reverses the earlier rule. A skip entered by mistake would otherwise stay
+    // visible forever with no way to correct it; the coach confirms instead.
     const { db, assessmentModule } = fakeDb();
-    assessmentModule.findFirst.mockResolvedValue({ id: 'mod_1', status: 'SKIPPED' });
+    assessmentModule.findFirst.mockResolvedValue({
+      id: 'mod_1',
+      status: 'SKIPPED',
+      assessmentId: 'ass_1',
+    });
 
-    expect((await removeModule(db, TENANT, 'mod_1')).ok).toBe(false);
+    expect((await removeModule(db, TENANT, 'mod_1')).ok).toBe(true);
+    expect(assessmentModule.deleteMany).toHaveBeenCalled();
+  });
+
+  it('refuses a test that took place once the assessment has been performed', async () => {
+    const { db, assessmentModule } = fakeDb();
+    assessmentModule.findFirst.mockResolvedValue({
+      id: 'mod_1',
+      status: 'COMPLETED',
+      assessmentId: 'ass_1',
+    });
+    assessmentModule.findMany.mockResolvedValue([{ status: 'COMPLETED' }]);
+
+    const result = await removeModule(db, TENANT, 'mod_1');
+
+    expect(result).toMatchObject({ ok: false, reason: 'ASSESSMENT_BEGUN' });
     expect(assessmentModule.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('still deletes a skipped test after the assessment was performed', async () => {
+    const { db, assessmentModule } = fakeDb();
+    assessmentModule.findFirst.mockResolvedValue({
+      id: 'mod_1',
+      status: 'SKIPPED',
+      assessmentId: 'ass_1',
+    });
+    assessmentModule.findMany.mockResolvedValue([{ status: 'COMPLETED' }, { status: 'SKIPPED' }]);
+
+    expect((await removeModule(db, TENANT, 'mod_1')).ok).toBe(true);
+  });
+
+  it('scopes the sibling lookup to the workspace', async () => {
+    // The statuses that decide the rule must not be read across tenants.
+    const { db, assessmentModule } = fakeDb();
+
+    await removeModule(db, TENANT, 'mod_1');
+
+    expect(argsOf(assessmentModule.findMany).where).toMatchObject({ organizationId: 'org_a' });
   });
 });
 

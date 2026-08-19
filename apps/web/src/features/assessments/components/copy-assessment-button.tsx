@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 
 import { Button } from '@apex/ui';
 
+import { TOUCH_BUTTON } from '@/components/common/touch';
+
 import { copyAssessmentAction } from '../server/actions';
 
 /**
@@ -26,7 +28,7 @@ export function CopyAssessmentButton({ assessmentId }: { assessmentId: string })
     <div className="flex flex-col items-end gap-1">
       <Button
         variant="outline"
-        size="sm"
+        className={TOUCH_BUTTON}
         disabled={pending}
         onClick={() => {
           setError(null);
@@ -37,7 +39,7 @@ export function CopyAssessmentButton({ assessmentId }: { assessmentId: string })
           });
         }}
       >
-        {pending ? 'Copying…' : 'Reuse setup'}
+        {pending ? 'Wird kopiert…' : 'Aufbau übernehmen'}
       </Button>
 
       {error ? (

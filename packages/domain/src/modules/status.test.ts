@@ -4,7 +4,8 @@ import {
   allowedTransitions,
   ASSESSMENT_MODULE_STATUSES,
   ASSESSMENT_MODULE_STATUS_LABELS,
-  canRemove,
+  assessmentHasBegun,
+  canRemoveModule,
   canTransition,
   hasStarted,
 } from './status';
@@ -74,23 +75,50 @@ describe('test lifecycle', () => {
   });
 });
 
+describe('deciding whether an assessment has begun', () => {
+  it('has not begun while every test is still planned', () => {
+    expect(assessmentHasBegun(['PLANNED', 'PLANNED'])).toBe(false);
+    expect(assessmentHasBegun([])).toBe(false);
+  });
+
+  it('has begun as soon as one test was acted on', () => {
+    // Any departure from PLANNED means somebody did something — including
+    // deciding not to run a test.
+    for (const status of ['IN_PROGRESS', 'COMPLETED', 'SKIPPED', 'ABORTED'] as const) {
+      expect(assessmentHasBegun(['PLANNED', status]), status).toBe(true);
+    }
+  });
+});
+
 describe('removing a test', () => {
-  it('is allowed only for one that was never started and holds nothing', () => {
-    expect(canRemove('PLANNED', 0)).toBe(true);
-    expect(canRemove('PLANNED', 1)).toBe(false);
+  it('allows any test while the assessment is still being assembled', () => {
+    // Nothing has happened yet, so removing one is editing a plan.
+    for (const status of ['PLANNED', 'SKIPPED'] as const) {
+      expect(canRemoveModule(status, 0, false).ok, status).toBe(true);
+    }
   });
 
-  /**
-   * "We decided not to run this" is a statement about the examination. Losing
-   * it would make the assessment look like the test was never considered.
-   */
-  it('is refused for a skipped test — the decision is worth keeping', () => {
-    expect(canRemove('SKIPPED', 0)).toBe(false);
+  it('allows a skipped test once the assessment has been performed', () => {
+    expect(canRemoveModule('SKIPPED', 0, true).ok).toBe(true);
   });
 
-  it('is refused once a test has been started', () => {
-    for (const status of ['IN_PROGRESS', 'COMPLETED', 'ABORTED'] as const) {
-      expect(canRemove(status, 0), `${status} must not be removable`).toBe(false);
+  it('refuses a test that took place', () => {
+    for (const status of ['PLANNED', 'IN_PROGRESS', 'COMPLETED', 'ABORTED'] as const) {
+      const removal = canRemoveModule(status, 0, true);
+
+      expect(removal.ok, `${status} must not be removable`).toBe(false);
+      expect(removal.ok ? null : removal.reason).toBe('ASSESSMENT_BEGUN');
+    }
+  });
+
+  it('never removes a test holding measurements, whatever its status', () => {
+    // §13: a measurement is never deleted, an erroneous reading included. This
+    // refusal outranks every other case, including the skipped one.
+    for (const begun of [true, false]) {
+      const removal = canRemoveModule('SKIPPED', 1, begun);
+
+      expect(removal.ok).toBe(false);
+      expect(removal.ok ? null : removal.reason).toBe('HAS_MEASUREMENTS');
     }
   });
 });

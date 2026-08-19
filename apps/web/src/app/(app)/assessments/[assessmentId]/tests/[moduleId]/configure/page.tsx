@@ -11,7 +11,7 @@ import { api } from '@/trpc/server';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Configure test',
+  title: 'Test konfigurieren',
 };
 
 /**
@@ -55,8 +55,8 @@ export default async function ConfigureTestPage({
           ← {assessment.question}
         </Link>
         <p className="text-sm text-muted-foreground">
-          This test was configured under a shape that can no longer be read, so it cannot be edited
-          here. Its measurements are unaffected.
+          Dieser Test wurde mit einer Struktur konfiguriert, die nicht mehr gelesen werden kann, und
+          lässt sich hier nicht bearbeiten. Die erfassten Messwerte sind davon nicht betroffen.
         </p>
       </main>
     );
@@ -71,7 +71,7 @@ export default async function ConfigureTestPage({
         >
           ← {assessment.question}
         </Link>
-        <h1 className="text-2xl font-semibold">Configure test</h1>
+        <h1 className="text-2xl font-semibold">Test konfigurieren</h1>
       </div>
 
       <TestBuilder

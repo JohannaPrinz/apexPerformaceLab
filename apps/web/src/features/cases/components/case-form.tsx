@@ -4,6 +4,8 @@ import { useActionState, useState } from 'react';
 
 import { Button } from '@apex/ui';
 
+import { FOCUS_RING, TOUCH_BUTTON, TOUCH_FIELD } from '@/components/common/touch';
+
 import { createCaseAction, type CaseFormState } from '../server/actions';
 
 /**
@@ -35,8 +37,8 @@ export function CaseForm({ athleteId }: { athleteId: string }) {
 
   if (!open) {
     return (
-      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
-        Open a case
+      <Button variant="outline" className={TOUCH_BUTTON} onClick={() => setOpen(true)}>
+        Betreuungsfall eröffnen
       </Button>
     );
   }
@@ -47,15 +49,15 @@ export function CaseForm({ athleteId }: { athleteId: string }) {
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor="title" className="text-sm font-medium text-foreground">
-          Title
+          Titel
         </label>
         <input
           id="title"
           name="title"
           required
-          placeholder="HYROX preparation"
+          placeholder="HYROX-Vorbereitung"
           aria-invalid={state.errors?.['title'] ? true : undefined}
-          className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none aria-invalid:border-destructive"
+          className={`${TOUCH_FIELD} flex w-full rounded-md border border-input bg-background px-3 shadow-sm aria-invalid:border-destructive ${FOCUS_RING}`}
         />
         {state.errors?.['title'] ? (
           <p role="alert" className="text-xs text-destructive">
@@ -66,7 +68,7 @@ export function CaseForm({ athleteId }: { athleteId: string }) {
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor="description" className="text-sm font-medium text-foreground">
-          Description <span className="text-muted-foreground">· optional</span>
+          Beschreibung <span className="text-muted-foreground">· optional</span>
         </label>
         <textarea
           id="description"
@@ -78,16 +80,16 @@ export function CaseForm({ athleteId }: { athleteId: string }) {
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor="type" className="text-sm font-medium text-foreground">
-          Type
+          Art
         </label>
         <select
           id="type"
           name="type"
           defaultValue="ONGOING"
-          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          className={`${TOUCH_FIELD} w-full rounded-md border border-input bg-background px-3 shadow-sm ${FOCUS_RING}`}
         >
-          <option value="ONGOING">Ongoing engagement</option>
-          <option value="SINGLE_ASSESSMENT">Single assessment</option>
+          <option value="ONGOING">Laufende Betreuung</option>
+          <option value="SINGLE_ASSESSMENT">Einzelnes Assessment</option>
         </select>
       </div>
 
@@ -98,11 +100,16 @@ export function CaseForm({ athleteId }: { athleteId: string }) {
       ) : null}
 
       <div className="flex gap-3">
-        <Button type="submit" variant="accent" size="sm" disabled={pending}>
-          {pending ? 'Saving…' : 'Create case'}
+        <Button type="submit" variant="accent" className={TOUCH_BUTTON} disabled={pending}>
+          {pending ? 'Wird gespeichert…' : 'Betreuungsfall anlegen'}
         </Button>
-        <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(false)}>
-          Cancel
+        <Button
+          type="button"
+          variant="ghost"
+          className={TOUCH_BUTTON}
+          onClick={() => setOpen(false)}
+        >
+          Abbrechen
         </Button>
       </div>
     </form>
