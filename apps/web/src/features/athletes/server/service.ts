@@ -329,3 +329,88 @@ export async function findAthleteDuplicates(
     (a, b) => DUPLICATE_REASONS.indexOf(a.reason) - DUPLICATE_REASONS.indexOf(b.reason),
   );
 }
+
+/**
+ * How many athletes the workspace holds, active and archived apart.
+ *
+ * Two counts rather than one, because they answer different questions: the
+ * active number is the roster a coach works with, the archived one is history
+ * that must not inflate it (§22). Reported separately so neither has to be
+ * guessed from the other.
+ *
+ * `groupBy` rather than two counts: one round trip, and the two numbers can
+ * never disagree because they come from the same read.
+ */
+export async function countAthletes(
+  db: AthleteDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+): Promise<{ active: number; archived: number }> {
+  const [active, archived] = await Promise.all([
+    db.athlete.count({ where: scoped(tenant, { archivedAt: null }) }),
+    db.athlete.count({ where: scoped(tenant, { archivedAt: { not: null } }) }),
+  ]);
+
+  return { active, archived };
+}
+
+/** An athlete on the workspace overview, with the one figure that is derivable. */
+export interface AthleteOverviewRecord extends AthleteRecord {
+  /**
+   * How many assessments this athlete has, across all their performance cases.
+   *
+   * Derived, not invented: an Assessment belongs to a Case and a Case to an
+   * Athlete (§3), so the count has exactly one meaning. Nothing else on the
+   * tile — uploads, comments, share status — has a query behind it yet, and
+   * none is shown.
+   */
+  assessmentCount: number;
+}
+
+/**
+ * The athletes a coach most recently worked on.
+ *
+ * **Ordered by `updatedAt`, and that is the honest choice available.** The
+ * obvious ordering — "who has an appointment next week" — needs the Appointment
+ * slice, which has a model but no service. Last touched is real, cheap and
+ * useful: it is the athlete whose record the coach edited, archived or had a
+ * measurement recorded against.
+ *
+ * Archived athletes are excluded: they are not deleted, but they are not what a
+ * coach opens the overview for.
+ *
+ * This is a *shortcut*, never the roster. The full list with search and filters
+ * stays at `/athletes`.
+ */
+export async function listRecentAthletes(
+  db: AthleteDb & Pick<PrismaClientInstance, 'performanceCase'>,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  limit: number,
+): Promise<AthleteOverviewRecord[]> {
+  const rows = await db.athlete.findMany({
+    where: scoped(tenant, { archivedAt: null }),
+    select: athleteSelect,
+    orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+    take: limit,
+  });
+
+  if (rows.length === 0) return [];
+
+  const athletes = rows.map(toRecord);
+
+  // One query for every tile rather than one per tile: an Assessment hangs off
+  // a Case, so the count is summed per athlete from their cases.
+  const cases = await db.performanceCase.findMany({
+    where: scoped(tenant, { athleteId: { in: athletes.map((athlete) => athlete.id) } }),
+    select: { athleteId: true, _count: { select: { assessments: true } } },
+  });
+
+  const counts = new Map<string, number>();
+  for (const entry of cases) {
+    counts.set(entry.athleteId, (counts.get(entry.athleteId) ?? 0) + entry._count.assessments);
+  }
+
+  return athletes.map((athlete) => ({
+    ...athlete,
+    assessmentCount: counts.get(athlete.id) ?? 0,
+  }));
+}

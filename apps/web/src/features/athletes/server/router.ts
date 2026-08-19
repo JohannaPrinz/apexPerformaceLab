@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { TRPCError } from '@trpc/server';
+import { z } from 'zod';
 
 import { AppError } from '@apex/types';
 
@@ -15,8 +16,10 @@ import {
 } from '../schemas';
 
 import {
+  countAthletes,
   createAthlete,
   findAthleteDuplicates,
+  listRecentAthletes,
   getAthlete,
   listAthletes,
   setAthleteArchived,
@@ -42,6 +45,24 @@ export const athletesRouter = createTRPCRouter({
   list: withPermission('athlete:read')
     .input(listAthletesSchema)
     .query(({ ctx, input }) => listAthletes(ctx.db, ctx.tenant, input)),
+
+  /**
+   * The workspace overview's two figures and its shortcut list.
+   *
+   * One procedure rather than three: the overview always wants all of it, and a
+   * page that fires three round trips for one screen is three chances to be
+   * half-rendered. Same permission and same tenant scope as the roster.
+   */
+  overview: withPermission('athlete:read')
+    .input(z.object({ limit: z.number().int().min(1).max(12).default(6) }).optional())
+    .query(async ({ ctx, input }) => {
+      const [counts, recent] = await Promise.all([
+        countAthletes(ctx.db, ctx.tenant),
+        listRecentAthletes(ctx.db, ctx.tenant, input?.limit ?? 6),
+      ]);
+
+      return { counts, recent };
+    }),
 
   byId: withPermission('athlete:read')
     .input(athleteIdSchema)

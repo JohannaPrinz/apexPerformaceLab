@@ -11,6 +11,7 @@
 export { ArchiveButton } from './components/archive-button';
 export { AthleteForm, type AthleteFormValues } from './components/athlete-form';
 export { DuplicateWarning } from './components/duplicate-warning';
+export { AthleteTile, type AthleteTileData } from './components/athlete-tile';
 export { LoadMoreAthletes } from './components/load-more-athletes';
 export {
   athleteIdSchema,
