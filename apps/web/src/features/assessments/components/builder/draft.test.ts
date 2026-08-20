@@ -386,7 +386,7 @@ describe('steps', () => {
     const empty = emptyDraft('lactate');
 
     expect(canLeaveStep(empty, 'measurements')).toBe(false);
-    expect(stepIssues(empty, 'measurements')[0]).toContain('at least one measurement');
+    expect(stepIssues(empty, 'measurements')[0]).toContain('mindestens eine Messgröße');
   });
 
   it('lets the coach leave once a measurement is chosen', () => {
@@ -396,8 +396,11 @@ describe('steps', () => {
     expect(canLeaveStep(draft, 'summary')).toBe(true);
   });
 
-  it('never blocks the first step — choosing a test is always possible', () => {
-    expect(canLeaveStep(emptyDraft('custom'), 'test')).toBe(true);
+  it('holds the coach on the first step until the test has a name', () => {
+    // The name is what tells two tests of one type apart, so it is the one
+    // thing the first step cannot be left without.
+    expect(canLeaveStep(emptyDraft('custom'), 'test')).toBe(false);
+    expect(canLeaveStep({ ...emptyDraft('custom'), name: 'Laufen – Sprint' }, 'test')).toBe(true);
   });
 });
 
@@ -406,8 +409,11 @@ describe('the summary', () => {
   const lines = summarise(draft, names);
   const line = (label: string) => lines.find((entry) => entry.label === label);
 
-  it('names the test, not the module key', () => {
-    expect(line('Test')?.value).toBe('Laktat');
+  it('names the test and its type separately', () => {
+    // Two lines now: what the coach called it, and what kind of test it is.
+    // A template proposes the name, which is why it reads as the template does.
+    expect(line('Testtyp')?.value).toBe('Laktat');
+    expect(line('Name')?.value).toBe('Lactate step test');
   });
 
   it('lists every quantity with its role', () => {

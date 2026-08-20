@@ -50,15 +50,18 @@ export async function createAssessmentAction(
 
 export async function addModuleAction(
   assessmentId: string,
+  name: string,
   moduleKey: string,
   templateKey: string | undefined,
 ): Promise<{ message?: string }> {
   const key = moduleKeySchema.safeParse(moduleKey);
-  if (!key.success) return { message: 'Unknown module.' };
+  if (!key.success) return { message: 'Unbekannter Testtyp.' };
+  if (name.trim() === '') return { message: 'Bitte einen Namen für den Test eingeben.' };
 
   try {
     await api.assessments.addModule({
       assessmentId,
+      name: name.trim(),
       moduleKey: key.data,
       ...(templateKey ? { templateKey: templateKey as never } : { configuration: undefined }),
     });
@@ -80,20 +83,25 @@ export async function addModuleAction(
  */
 export async function addConfiguredModuleAction(
   assessmentId: string,
+  name: string,
   moduleKey: string,
   configuration: unknown,
 ): Promise<{ message?: string; moduleId?: string }> {
   const key = moduleKeySchema.safeParse(moduleKey);
-  if (!key.success) return { message: 'Unknown test.' };
+  if (!key.success) return { message: 'Unbekannter Testtyp.' };
+  if (name.trim() === '') return { message: 'Bitte einen Namen für den Test eingeben.' };
 
   const parsed = moduleConfigurationSchema.safeParse(configuration);
   if (!parsed.success) {
-    return { message: parsed.error.issues[0]?.message ?? 'This test is not configured yet.' };
+    return {
+      message: parsed.error.issues[0]?.message ?? 'Dieser Test ist noch nicht konfiguriert.',
+    };
   }
 
   try {
     const created = await api.assessments.addModule({
       assessmentId,
+      name: name.trim(),
       moduleKey: key.data,
       configuration: parsed.data,
     });
@@ -118,7 +126,9 @@ export async function updateModuleConfigurationAction(
 ): Promise<{ message?: string }> {
   const parsed = moduleConfigurationSchema.safeParse(configuration);
   if (!parsed.success) {
-    return { message: parsed.error.issues[0]?.message ?? 'This test is not configured yet.' };
+    return {
+      message: parsed.error.issues[0]?.message ?? 'Dieser Test ist noch nicht konfiguriert.',
+    };
   }
 
   try {

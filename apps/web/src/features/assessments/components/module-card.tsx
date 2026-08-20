@@ -33,6 +33,8 @@ export interface ModuleCardData {
     notes?: string;
   } | null;
   status: AssessmentModuleStatus;
+  /** What the coach called it; `null` on rows written before names existed. */
+  name: string | null;
   /** A test holding values is never removable, whatever its status (§13). */
   measurementCount: number;
 }
@@ -86,8 +88,18 @@ export function ModuleCard({
     <div className="flex flex-col gap-3 rounded-md border border-border bg-card p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-medium">
-            {MODULE_LABELS_DE[module.moduleKey as ModuleKey] ?? module.moduleKey}
+          {/* The name identifies the test, the type says what kind it is —
+              both, because three tests may share a type and only the name tells
+              them apart. Older rows have no name and fall back to the type. */}
+          <span className="flex min-w-0 flex-col">
+            <span className="font-medium break-words">
+              {module.name ?? MODULE_LABELS_DE[module.moduleKey as ModuleKey] ?? module.moduleKey}
+            </span>
+            {module.name === null ? null : (
+              <span className="text-xs text-muted-foreground">
+                {MODULE_LABELS_DE[module.moduleKey as ModuleKey] ?? module.moduleKey}
+              </span>
+            )}
           </span>
           {configuration && configuration.passes > 1 ? (
             <Badge variant="accent">{configuration.passes} Stufen</Badge>

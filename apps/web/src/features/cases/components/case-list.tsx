@@ -24,9 +24,9 @@ export interface CaseListItem {
 export function CaseList({ athleteId, cases }: { athleteId: string; cases: CaseListItem[] }) {
   if (cases.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">
-        No case yet. One is created automatically with the first assessment (§8) — or open one
-        deliberately for an ongoing engagement.
+      <p className="rounded-md border border-dashed border-border px-4 py-10 text-center text-sm text-pretty text-muted-foreground">
+        Noch kein Betreuungsfall. Er entsteht automatisch mit dem ersten Assessment (§8) — oder Sie
+        eröffnen ihn bewusst für eine laufende Betreuung.
       </p>
     );
   }
@@ -36,11 +36,13 @@ export function CaseList({ athleteId, cases }: { athleteId: string; cases: CaseL
       {cases.map((performanceCase) => (
         <li
           key={performanceCase.id}
-          className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-border bg-card px-4 py-3"
+          className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3 rounded-md border border-border bg-card px-4 py-3"
         >
-          <div className="flex flex-col gap-1">
+          {/* `min-w-0` with `break-words`: a long case title must wrap inside
+              the row rather than push the status control off it. */}
+          <div className="flex min-w-0 flex-col gap-1">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="font-medium">{performanceCase.title}</span>
+              <span className="font-medium break-words">{performanceCase.title}</span>
               <StatusBadge status={performanceCase.status} />
               {performanceCase.type === 'SINGLE_ASSESSMENT' ? (
                 <Badge variant="outline">Einzelnes Assessment</Badge>
@@ -48,14 +50,16 @@ export function CaseList({ athleteId, cases }: { athleteId: string; cases: CaseL
             </div>
 
             {performanceCase.description ? (
-              <p className="text-sm text-muted-foreground">{performanceCase.description}</p>
+              <p className="text-sm break-words text-muted-foreground">
+                {performanceCase.description}
+              </p>
             ) : null}
 
             <p className="text-xs text-muted-foreground" data-numeric>
               {performanceCase.startedAt.toLocaleDateString('de-DE')}
               {performanceCase.endedAt
                 ? ` – ${performanceCase.endedAt.toLocaleDateString('de-DE')}`
-                : ' – open'}
+                : ' – offen'}
             </p>
           </div>
 

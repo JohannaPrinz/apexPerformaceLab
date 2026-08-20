@@ -401,6 +401,8 @@ export async function listModuleNotes(
 export interface ModuleWorkspace {
   moduleId: string;
   moduleKey: string;
+  /** What the coach called this test; `null` before names existed. */
+  moduleName: string | null;
   moduleVersion: number;
   status: string;
   createdByCoachId: string;
@@ -427,6 +429,7 @@ export async function moduleWorkspace(
     select: {
       id: true,
       moduleKey: true,
+      name: true,
       moduleVersion: true,
       status: true,
       payload: true,
@@ -479,6 +482,7 @@ export async function moduleWorkspace(
   return {
     moduleId: row.id,
     moduleKey: row.moduleKey,
+    moduleName: row.name ?? null,
     moduleVersion: row.moduleVersion,
     status: row.status,
     createdByCoachId: row.createdByCoachId,

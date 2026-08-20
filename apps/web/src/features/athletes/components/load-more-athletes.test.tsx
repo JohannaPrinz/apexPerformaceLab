@@ -22,13 +22,13 @@ describe('loading further athletes', () => {
     expect(loadMore()).toHaveAttribute('href', '/athletes?cursor=ath_25');
   });
 
-  it('keeps the search and the archive filter across the jump', () => {
-    render(<LoadMoreAthletes nextCursor="ath_25" query={params({ q: 'Prinz', archived: '1' })} />);
+  it('keeps the search and the status filter across the jump', () => {
+    render(<LoadMoreAthletes nextCursor="ath_25" query={params({ q: 'Prinz', status: 'all' })} />);
 
     const href = loadMore()?.getAttribute('href') ?? '';
 
     expect(href).toContain('q=Prinz');
-    expect(href).toContain('archived=1');
+    expect(href).toContain('status=all');
     expect(href).toContain('cursor=ath_25');
   });
 
@@ -56,5 +56,45 @@ describe('loading further athletes', () => {
       'href',
       '/athletes?q=Prinz',
     );
+  });
+});
+
+/**
+ * Paging must not quietly drop the narrowing it was reached through.
+ *
+ * A coach who searched, paged, and then found themselves back at the unfiltered
+ * roster would blame the search, not the link.
+ */
+describe('carrying the narrowing through the pages', () => {
+  it('keeps every parameter on the way forward', () => {
+    render(
+      <LoadMoreAthletes
+        nextCursor="ath_50"
+        query={params({ q: 'Prinz', status: 'archived', cursor: 'ath_25' })}
+      />,
+    );
+
+    const next = new URLSearchParams((loadMore()?.getAttribute('href') ?? '').split('?')[1]);
+
+    expect(next.get('q')).toBe('Prinz');
+    expect(next.get('status')).toBe('archived');
+    expect(next.get('cursor')).toBe('ath_50');
+  });
+
+  it('keeps them on the way back to the start, minus the cursor', () => {
+    render(
+      <LoadMoreAthletes
+        nextCursor={null}
+        query={params({ q: 'Prinz', status: 'archived', cursor: 'ath_50' })}
+      />,
+    );
+
+    const back = new URLSearchParams(
+      (screen.getByRole('link', { name: 'Zum Anfang' }).getAttribute('href') ?? '').split('?')[1],
+    );
+
+    expect(back.get('q')).toBe('Prinz');
+    expect(back.get('status')).toBe('archived');
+    expect(back.get('cursor')).toBeNull();
   });
 });

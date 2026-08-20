@@ -27,6 +27,7 @@ vi.mock('../server/actions', () => ({
 
 const moduleData = (over: Partial<ModuleCardData> = {}): ModuleCardData => ({
   id: 'mod_1',
+  name: 'Laufen – Laktat',
   moduleKey: 'lactate',
   moduleVersion: 1,
   status: 'PLANNED',
@@ -142,5 +143,36 @@ describe('the confirmation', () => {
 
     expect(mocks.removed).toEqual([]);
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+});
+
+/**
+ * A test is identified by its name, not by its type.
+ *
+ * Three tests of one type in one assessment is the case the schema used to
+ * forbid, and the card is where a coach tells them apart.
+ */
+describe('naming a test on the card', () => {
+  it('leads with the name and keeps the type beside it', () => {
+    renderCard({ name: 'Laufen – Sprint', moduleKey: 'running' });
+
+    expect(screen.getByText('Laufen – Sprint')).toBeVisible();
+    expect(screen.getByText('Laufen')).toBeVisible();
+  });
+
+  it('falls back to the type for a test written before names existed', () => {
+    // Existing rows carry no name and must still read sensibly.
+    renderCard({ name: null, moduleKey: 'running' });
+
+    expect(screen.getByText('Laufen')).toBeVisible();
+  });
+
+  it('tells three tests of one type apart', () => {
+    for (const name of ['Laufen – Laktat', 'Laufen – Sprint', 'Laufen – Ausdauer']) {
+      const { unmount } = renderCard({ name, moduleKey: 'running' });
+
+      expect(screen.getByText(name)).toBeVisible();
+      unmount();
+    }
   });
 });

@@ -34,6 +34,14 @@ import { MEASUREMENT_ROLE_LABELS_DE, MODULE_LABELS_DE } from '../labels';
  */
 
 export interface BuilderDraft {
+  /**
+   * What the coach calls this test.
+   *
+   * Not part of `ModuleConfiguration` — the configuration says how a test is
+   * measured, the name says which test it is. They are stored in different
+   * columns for the same reason.
+   */
+  readonly name: string;
   readonly moduleKey: ModuleKey;
   /** Which template seeded it, for the summary. Never stored on the module. */
   readonly templateKey: string | null;
@@ -47,6 +55,7 @@ export interface BuilderDraft {
 
 export function emptyDraft(moduleKey: ModuleKey): BuilderDraft {
   return {
+    name: '',
     moduleKey,
     templateKey: null,
     measurementTypes: [],
@@ -75,6 +84,9 @@ export function draftFromTemplate(
   idForTypeKey: (key: string) => string | undefined,
 ): BuilderDraft {
   return {
+    // A template names the test unless the coach renames it — "Laktatstufentest"
+    // is a better starting point than an empty field.
+    name: template.name,
     moduleKey: template.moduleKey,
     templateKey: template.key,
     measurementTypes: template.measurements.flatMap((entry) => {
@@ -105,8 +117,11 @@ export function draftFromTemplateKey(
 export function draftFromConfiguration(
   moduleKey: ModuleKey,
   configuration: ModuleConfiguration,
+  /** The stored name, so reopening a test does not lose what it is called. */
+  name = '',
 ): BuilderDraft {
   return {
+    name,
     moduleKey,
     // A stored configuration has no template: the link was never kept.
     templateKey: null,
@@ -313,18 +328,22 @@ export const BUILDER_STEP_LABELS: Readonly<Record<BuilderStep, string>> = {
 export function stepIssues(draft: BuilderDraft, step: BuilderStep): readonly string[] {
   const issues: string[] = [];
 
+  if (step === 'test' && draft.name.trim() === '') {
+    issues.push('Bitte einen Namen für den Test eingeben.');
+  }
+
   if (step === 'measurements' && draft.measurementTypes.length === 0) {
-    issues.push('Choose at least one measurement — a test without one records nothing.');
+    issues.push('Bitte mindestens eine Messgröße wählen — ein Test ohne erfasst nichts.');
   }
 
   if (step === 'protocol') {
     for (const dimension of draft.dimensions) {
-      if (dimension.label.trim() === '') issues.push('Give every dimension a name.');
+      if (dimension.label.trim() === '') issues.push('Bitte jedem Merkmal einen Namen geben.');
     }
   }
 
   if (step === 'summary' && toConfiguration(draft) === null) {
-    issues.push('This test is not complete yet.');
+    issues.push('Dieser Test ist noch nicht vollständig.');
   }
 
   return issues;
@@ -358,7 +377,8 @@ export function summarise(
   },
 ): readonly SummaryLine[] {
   const lines: SummaryLine[] = [
-    { label: 'Test', value: MODULE_LABELS_DE[draft.moduleKey] },
+    { label: 'Name', value: draft.name.trim() === '' ? '—' : draft.name.trim() },
+    { label: 'Testtyp', value: MODULE_LABELS_DE[draft.moduleKey] },
     {
       label: 'Messgrößen',
       value:

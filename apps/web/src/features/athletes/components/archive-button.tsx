@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 
 import { Button } from '@apex/ui';
 
+import { TOUCH_BUTTON } from '@/components/common/touch';
+
 import { setAthleteArchivedAction } from '../server/actions';
 
 /**
@@ -24,7 +26,7 @@ export function ArchiveButton({ athleteId, archived }: { athleteId: string; arch
     <div className="flex flex-col items-end gap-1">
       <Button
         variant={archived ? 'accent' : 'outline'}
-        size="sm"
+        className={TOUCH_BUTTON}
         disabled={pending}
         onClick={() => {
           setError(null);

@@ -14,97 +14,149 @@ import { addModuleAction } from '../server/actions';
 import { MODULE_LABELS_DE } from './labels';
 
 /**
- * Adds a module — one test — to an assessment.
+ * The quick way to add a test.
  *
- * A template is a **starting point**, never a binding: its configuration is
- * copied in and then belongs to this module, so editing the template later
- * cannot change a test that has already been performed. The coach adjusts the
- * measurements, the number of passes and the dimensions before performing it.
+ * Three fields in one row: what it is called, what kind of test it is, and which
+ * template it starts from. That is everything needed for a test built on a
+ * template, which is the ordinary case — anything beyond it goes through the
+ * builder, and the link to it is right here rather than hidden.
  *
- * The module list is the canonical eleven (§11); templates are offered for the
- * chosen module only, because that is the pairing that makes sense.
+ * ## Why the name comes first
+ *
+ * A test used to *be* its type: one lactate test per assessment, and the type
+ * was its identity. A diagnostic session records a lactate run, a sprint and an
+ * endurance run — three tests of type "Laufen" — so the name is what tells them
+ * apart and it is the first thing asked for.
+ *
+ * The type is proposed as the name until the coach types their own, because a
+ * name is required and "Laufen" is a truthful default rather than an empty
+ * field standing between them and the test.
  */
 export function AddModuleForm({ assessmentId }: { assessmentId: string }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [moduleKey, setModuleKey] = useState<string>(MODULE_KEYS[0]);
-  const [templateKey, setTemplateKey] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
+  const [moduleKey, setModuleKey] = useState<string>(MODULE_KEYS[0]);
+  const [name, setName] = useState<string>('');
+  const [templateKey, setTemplateKey] = useState<string>('');
 
   const templates = MEASUREMENT_TEMPLATES.filter((template) => template.moduleKey === moduleKey);
+  const proposed = MODULE_LABELS_DE[moduleKey as keyof typeof MODULE_LABELS_DE] ?? moduleKey;
+  const effectiveName = name.trim() === '' ? proposed : name.trim();
 
   return (
-    <div className="flex flex-wrap items-end gap-3 rounded-md border border-border p-4">
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="moduleKey" className="text-sm font-medium text-foreground">
-          Test
-        </label>
-        <select
-          id="moduleKey"
-          value={moduleKey}
-          onChange={(event) => {
-            setModuleKey(event.target.value);
-            setTemplateKey('');
+    <div className="flex flex-col gap-4 rounded-lg border border-border p-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <Field id="moduleName" label="Name des Tests">
+          <input
+            id="moduleName"
+            value={name}
+            onChange={(event) => {
+              setName(event.target.value);
+            }}
+            placeholder={proposed}
+            className={`${TOUCH_FIELD} ${FOCUS_RING} w-full rounded-md border border-input bg-background px-3 shadow-sm`}
+          />
+        </Field>
+
+        <Field id="moduleKey" label="Testtyp">
+          <select
+            id="moduleKey"
+            value={moduleKey}
+            onChange={(event) => {
+              setModuleKey(event.target.value);
+              // A template belongs to one type, so a type change invalidates it.
+              setTemplateKey('');
+            }}
+            className={`${TOUCH_FIELD} ${FOCUS_RING} w-full rounded-md border border-input bg-background px-3 shadow-sm`}
+          >
+            {MODULE_KEYS.map((key) => (
+              <option key={key} value={key}>
+                {MODULE_LABELS_DE[key]}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field id="templateKey" label="Vorlage">
+          <select
+            id="templateKey"
+            value={templateKey}
+            onChange={(event) => {
+              setTemplateKey(event.target.value);
+            }}
+            disabled={templates.length === 0}
+            className={`${TOUCH_FIELD} ${FOCUS_RING} w-full rounded-md border border-input bg-background px-3 shadow-sm disabled:opacity-50`}
+          >
+            <option value="">
+              {templates.length === 0 ? 'Keine Vorlage vorhanden' : 'Ohne Vorlage'}
+            </option>
+            {templates.map((template) => (
+              <option key={template.key} value={template.key}>
+                {template.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          variant="accent"
+          className={TOUCH_BUTTON}
+          disabled={pending || templateKey === ''}
+          onClick={() => {
+            setError(null);
+            startTransition(async () => {
+              const result = await addModuleAction(
+                assessmentId,
+                effectiveName,
+                moduleKey,
+                templateKey,
+              );
+              if (result.message) setError(result.message);
+              else {
+                setName('');
+                setTemplateKey('');
+                router.refresh();
+              }
+            });
           }}
-          className={`${TOUCH_FIELD} rounded-md border border-input bg-background px-3 shadow-sm ${FOCUS_RING}`}
         >
-          {MODULE_KEYS.map((key) => (
-            <option key={key} value={key}>
-              {MODULE_LABELS_DE[key]}
-            </option>
-          ))}
-        </select>
+          {pending ? 'Wird hinzugefügt…' : 'Test hinzufügen'}
+        </Button>
+
+        <span className="text-sm text-muted-foreground">
+          {templateKey === ''
+            ? 'Ohne Vorlage konfigurieren Sie den Test im nächsten Schritt.'
+            : `Wird als „${effectiveName}“ angelegt.`}
+        </span>
       </div>
-
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="templateKey" className="text-sm font-medium text-foreground">
-          Vorlage
-        </label>
-        <select
-          id="templateKey"
-          value={templateKey}
-          onChange={(event) => setTemplateKey(event.target.value)}
-          disabled={templates.length === 0}
-          className={`${TOUCH_FIELD} rounded-md border border-input bg-background px-3 shadow-sm disabled:opacity-50 ${FOCUS_RING}`}
-        >
-          <option value="">
-            {templates.length === 0 ? 'Keine verfügbar' : 'Manuell konfigurieren'}
-          </option>
-          {templates.map((template) => (
-            <option key={template.key} value={template.key}>
-              {template.name}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <Button
-        variant="outline"
-        className={TOUCH_BUTTON}
-        disabled={pending || !templateKey}
-        onClick={() => {
-          setError(null);
-          startTransition(async () => {
-            const result = await addModuleAction(assessmentId, moduleKey, templateKey);
-            if (result.message) setError(result.message);
-            else router.refresh();
-          });
-        }}
-      >
-        {pending ? 'Wird hinzugefügt…' : 'Test hinzufügen'}
-      </Button>
-
-      {!templateKey ? (
-        <p className="text-xs text-muted-foreground">
-          Die manuelle Konfiguration erfolgt im nächsten Schritt.
-        </p>
-      ) : null}
 
       {error ? (
-        <p role="alert" className="w-full text-xs text-destructive">
+        <p role="alert" className="text-sm text-destructive">
           {error}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+function Field({
+  id,
+  label,
+  children,
+}: {
+  readonly id: string;
+  readonly label: string;
+  readonly children: React.ReactNode;
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <label htmlFor={id} className="text-sm font-medium">
+        {label}
+      </label>
+      {children}
     </div>
   );
 }

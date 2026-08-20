@@ -176,14 +176,22 @@ export const updateAthleteSchema = z.object({
 export type UpdateAthleteInput = z.infer<typeof updateAthleteSchema>;
 
 /**
- * Roster query.
+ * Which athletes the roster shows.
  *
- * `includeArchived` defaults to false: an archived athlete is not deleted (§22)
- * but does not belong in the working roster either.
+ * Replaces the earlier `includeArchived` boolean, which could express two of
+ * these three and not the useful third: a coach looking for someone they
+ * deactivated last season had to wade through everyone else to find them.
+ *
+ * `active` is the default for the same reason the boolean defaulted to false —
+ * an archived athlete is never deleted (§22) but does not belong in the working
+ * roster either.
  */
+export const ATHLETE_STATUS_FILTERS = ['active', 'archived', 'all'] as const;
+export type AthleteStatusFilter = (typeof ATHLETE_STATUS_FILTERS)[number];
+
 export const listAthletesSchema = paginationInputSchema.extend({
   search: z.string().trim().max(100).optional(),
-  includeArchived: z.boolean().default(false),
+  status: z.enum(ATHLETE_STATUS_FILTERS).default('active'),
 });
 
 export type ListAthletesInput = z.infer<typeof listAthletesSchema>;

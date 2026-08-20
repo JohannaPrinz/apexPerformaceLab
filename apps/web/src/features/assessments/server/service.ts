@@ -49,6 +49,7 @@ type CatalogueDb = Pick<PrismaClientInstance, 'measurementType' | 'exercise'>;
 
 const moduleSelect = {
   id: true,
+  name: true,
   moduleKey: true,
   moduleVersion: true,
   payload: true,
@@ -77,6 +78,8 @@ const assessmentSelect = {
 
 export interface AssessmentModuleRecord {
   id: string;
+  /** What the coach called this test; `null` on rows written before names existed. */
+  name: string | null;
   moduleKey: string;
   moduleVersion: number;
   /** The stored configuration, or null on a module created before one existed. */
@@ -128,6 +131,7 @@ function toRecord(row: {
   case: { athleteId: string };
   modules: {
     id: string;
+    name?: string | null;
     moduleKey: string;
     moduleVersion: number;
     payload: unknown;
@@ -143,6 +147,7 @@ function toRecord(row: {
     athleteId: row.case.athleteId,
     modules: row.modules.map((entry) => ({
       id: entry.id,
+      name: entry.name ?? null,
       moduleKey: entry.moduleKey,
       moduleVersion: entry.moduleVersion,
       configuration: readConfiguration(entry.payload, entry.moduleVersion),
@@ -236,7 +241,7 @@ export async function addModule(
   db: AssessmentDb & CatalogueDb,
   tenant: Pick<TenantContext, 'organizationId'>,
   createdByCoachId: string,
-  { assessmentId, moduleKey, templateKey, configuration }: AddModuleInput,
+  { assessmentId, name, moduleKey, templateKey, configuration }: AddModuleInput,
   resolveTemplateTypeIds: (keys: readonly string[]) => Promise<string[]>,
 ): Promise<ModuleCreation> {
   const assessment = await db.assessment.findFirst({
@@ -261,6 +266,7 @@ export async function addModule(
   const created = await db.assessmentModule.create({
     data: withTenant(tenant, {
       assessmentId,
+      name,
       moduleKey,
       moduleVersion: MODULE_CONFIGURATION_VERSION,
       payload: resolved,
@@ -274,6 +280,7 @@ export async function addModule(
 
 function toModuleRecord(row: {
   id: string;
+  name?: string | null;
   moduleKey: string;
   moduleVersion: number;
   payload: unknown;
@@ -284,6 +291,7 @@ function toModuleRecord(row: {
 }): AssessmentModuleRecord {
   return {
     id: row.id,
+    name: row.name ?? null,
     moduleKey: row.moduleKey,
     moduleVersion: row.moduleVersion,
     configuration: readConfiguration(row.payload, row.moduleVersion),

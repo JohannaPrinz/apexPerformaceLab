@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PrismaClientInstance } from '@apex/database';
 
 import {
+  athleteWhere,
+  countAthletesMatching,
   createAthlete,
   findAthleteDuplicates,
   getAthlete,
@@ -51,6 +53,7 @@ function fakeDb() {
     updateMany: vi
       .fn<(args: QueryArgs) => Promise<{ count: number }>>()
       .mockResolvedValue({ count: 0 }),
+    count: vi.fn<(args: QueryArgs) => Promise<number>>().mockResolvedValue(0),
   };
 
   return { db: { athlete } as unknown as Pick<PrismaClientInstance, 'athlete'>, athlete };
@@ -64,7 +67,7 @@ const argsOf = (mock: { mock: { calls: [QueryArgs][] } }, index = 0): QueryArgs 
   return args;
 };
 
-const listInput = { cursor: null, limit: 25, includeArchived: false };
+const listInput = { cursor: null, limit: 25, status: 'active' as const };
 
 describe('athlete service — tenant scoping', () => {
   it('scopes the roster query', async () => {
@@ -172,7 +175,7 @@ describe('athlete service — behaviour', () => {
     await listAthletes(db, TENANT, listInput);
     expect(argsOf(athlete.findMany).where).toMatchObject({ archivedAt: null });
 
-    await listAthletes(db, TENANT, { ...listInput, includeArchived: true });
+    await listAthletes(db, TENANT, { ...listInput, status: 'all' as const });
     expect(argsOf(athlete.findMany, 1).where).not.toHaveProperty('archivedAt');
   });
 
@@ -421,5 +424,94 @@ describe('finding likely duplicates', () => {
 
   it('finds nothing when nothing is similar', async () => {
     expect((await find([], { firstName: 'Neu', lastName: 'Person' })).result).toEqual([]);
+  });
+});
+
+/**
+ * Finding a person by the name a coach would actually type.
+ *
+ * The clause is asserted rather than the result, because the clause is what the
+ * database sees — and the previous shape could not match a full name at all:
+ * one `contains` per column, and no column holds both names.
+ */
+describe('searching the roster', () => {
+  const clauseFor = (search: string) =>
+    athleteWhere(TENANT, { search, status: 'active' }) as Record<string, unknown>;
+
+  it('asks both name columns for a single word', () => {
+    expect(clauseFor('Prinz')['AND']).toEqual([
+      {
+        OR: [
+          { firstName: { contains: 'Prinz', mode: 'insensitive' } },
+          { lastName: { contains: 'Prinz', mode: 'insensitive' } },
+        ],
+      },
+    ]);
+  });
+
+  it('requires every word of a full name to match something', () => {
+    // "Johanna Prinz" is the commonest search a coach types and it used to
+    // return nothing.
+    const and = clauseFor('Johanna Prinz')['AND'] as unknown[];
+
+    expect(and).toHaveLength(2);
+    expect(JSON.stringify(and)).toContain('Johanna');
+    expect(JSON.stringify(and)).toContain('Prinz');
+  });
+
+  it('does not care in which order the names were typed', () => {
+    // AND is commutative, so the two clauses differ only in order — comparing
+    // them as sets is the honest assertion.
+    const asSet = (search: string) =>
+      (clauseFor(search)['AND'] as unknown[]).map((entry) => JSON.stringify(entry)).sort();
+
+    expect(asSet('Prinz Johanna')).toEqual(asSet('Johanna Prinz'));
+  });
+
+  it('ignores stray whitespace rather than searching for it', () => {
+    expect((clauseFor('  Prinz   Johanna  ')['AND'] as unknown[]).length).toBe(2);
+  });
+
+  it('searches nothing when nothing was typed', () => {
+    expect(athleteWhere(TENANT, { status: 'active' })).not.toHaveProperty('AND');
+  });
+
+  it('stays inside the workspace whatever was searched for', () => {
+    expect(clauseFor('Prinz')['organizationId']).toBe('org_a');
+  });
+});
+
+/**
+ * The three states of the roster filter.
+ *
+ * `active` is the default and the working list; `archived` is the one the
+ * previous boolean could not express, and it is the case a coach hits when
+ * looking for someone they deactivated last season.
+ */
+describe('filtering by status', () => {
+  it('hides archived athletes by default', () => {
+    expect(athleteWhere(TENANT, {})).toMatchObject({ archivedAt: null });
+  });
+
+  it('shows only archived ones when asked', () => {
+    expect(athleteWhere(TENANT, { status: 'archived' })).toMatchObject({
+      archivedAt: { not: null },
+    });
+  });
+
+  it('places no status condition at all on "Alle"', () => {
+    expect(athleteWhere(TENANT, { status: 'all' })).not.toHaveProperty('archivedAt');
+  });
+
+  it('counts through the same clause the list uses', async () => {
+    // The headline and the rows must describe one set. Sharing the clause is
+    // what makes that structural rather than a promise.
+    const { db, athlete } = fakeDb();
+
+    await countAthletesMatching(db, TENANT, { search: 'Prinz', status: 'archived' });
+
+    expect(argsOf(athlete.count).where).toEqual(
+      athleteWhere(TENANT, { search: 'Prinz', status: 'archived' }),
+    );
   });
 });

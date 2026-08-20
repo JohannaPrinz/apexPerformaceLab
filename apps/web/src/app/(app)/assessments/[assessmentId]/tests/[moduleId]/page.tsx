@@ -49,6 +49,7 @@ export default async function TestPage({
       <TestRunner
         moduleId={workspace.moduleId}
         moduleKey={workspace.moduleKey}
+        moduleName={workspace.moduleName ?? null}
         status={workspace.status as AssessmentModuleStatus}
         configuration={workspace.configuration}
         types={workspace.types}

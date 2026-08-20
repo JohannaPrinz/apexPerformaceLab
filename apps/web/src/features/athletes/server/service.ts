@@ -9,7 +9,12 @@ import type { PrismaClientInstance } from '@apex/database';
 import { scoped, withTenant } from '@apex/database/tenant';
 import type { Page, TenantContext } from '@apex/types';
 
-import type { CreateAthleteInput, ListAthletesInput, UpdateAthleteInput } from '../schemas';
+import type {
+  AthleteStatusFilter,
+  CreateAthleteInput,
+  ListAthletesInput,
+  UpdateAthleteInput,
+} from '../schemas';
 
 /**
  * Athlete data access — the only module in this slice that touches the
@@ -86,6 +91,48 @@ const toRecord = (row: Record<string, unknown>): AthleteRecord =>
   }) as AthleteRecord;
 
 /**
+ * The `where` behind both the roster and its count.
+ *
+ * Shared, so the number above the list can never describe a different set from
+ * the list itself — the mistake that turns "12 Treffer" over three rows into a
+ * bug report.
+ *
+ * ## Searching a full name
+ *
+ * Every whitespace-separated word must match *some* name. "Johanna Prinz"
+ * therefore finds Johanna Prinz, and so does "Prinz Johanna": each word is
+ * asked of both columns, and the words are combined with AND.
+ *
+ * The obvious shape — one `contains` per column — cannot match a full name at
+ * all, because no single column holds one. That was the previous behaviour and
+ * it made the commonest search a coach would type return nothing.
+ */
+export function athleteWhere(
+  tenant: Pick<TenantContext, 'organizationId'>,
+  { search, status = 'active' }: { search?: string | undefined; status?: AthleteStatusFilter },
+) {
+  const words = (search ?? '')
+    .split(/\s+/)
+    .map((word) => word.trim())
+    .filter((word) => word !== '');
+
+  return scoped(tenant, {
+    ...(status === 'active' ? { archivedAt: null } : {}),
+    ...(status === 'archived' ? { archivedAt: { not: null } } : {}),
+    ...(words.length === 0
+      ? {}
+      : {
+          AND: words.map((word) => ({
+            OR: [
+              { firstName: { contains: word, mode: 'insensitive' as const } },
+              { lastName: { contains: word, mode: 'insensitive' as const } },
+            ],
+          })),
+        }),
+  });
+}
+
+/**
  * Roster page.
  *
  * Cursor pagination, ordered by surname. The `id` tiebreaker is not decoration:
@@ -94,20 +141,10 @@ const toRecord = (row: Record<string, unknown>): AthleteRecord =>
 export async function listAthletes(
   db: AthleteDb,
   tenant: Pick<TenantContext, 'organizationId'>,
-  { cursor, limit, search, includeArchived }: ListAthletesInput,
+  { cursor, limit, search, status }: ListAthletesInput,
 ): Promise<Page<AthleteRecord>> {
   const rows = await db.athlete.findMany({
-    where: scoped(tenant, {
-      ...(includeArchived ? {} : { archivedAt: null }),
-      ...(search
-        ? {
-            OR: [
-              { firstName: { contains: search, mode: 'insensitive' as const } },
-              { lastName: { contains: search, mode: 'insensitive' as const } },
-            ],
-          }
-        : {}),
-    }),
+    where: athleteWhere(tenant, { search, status }),
     select: athleteSelect,
     orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
     // One extra row answers "is there a next page" without a second query.
@@ -121,6 +158,22 @@ export async function listAthletes(
     items,
     nextCursor: rows.length > limit ? (items.at(-1)?.id ?? null) : null,
   };
+}
+
+/**
+ * How many athletes the same filters match, ignoring paging.
+ *
+ * Cursor pagination knows how to reach the next page but not how far the list
+ * goes, and a roster that can only say "25 shown, more available" leaves a
+ * coach guessing whether their search worked. One extra count answers it
+ * honestly.
+ */
+export async function countAthletesMatching(
+  db: AthleteDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  filter: { search?: string | undefined; status?: AthleteStatusFilter },
+): Promise<number> {
+  return db.athlete.count({ where: athleteWhere(tenant, filter) });
 }
 
 /**
@@ -346,8 +399,8 @@ export async function countAthletes(
   tenant: Pick<TenantContext, 'organizationId'>,
 ): Promise<{ active: number; archived: number }> {
   const [active, archived] = await Promise.all([
-    db.athlete.count({ where: scoped(tenant, { archivedAt: null }) }),
-    db.athlete.count({ where: scoped(tenant, { archivedAt: { not: null } }) }),
+    countAthletesMatching(db, tenant, { status: 'active' }),
+    countAthletesMatching(db, tenant, { status: 'archived' }),
   ]);
 
   return { active, archived };
@@ -387,7 +440,7 @@ export async function listRecentAthletes(
   limit: number,
 ): Promise<AthleteOverviewRecord[]> {
   const rows = await db.athlete.findMany({
-    where: scoped(tenant, { archivedAt: null }),
+    where: athleteWhere(tenant, { status: 'active' }),
     select: athleteSelect,
     orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
     take: limit,

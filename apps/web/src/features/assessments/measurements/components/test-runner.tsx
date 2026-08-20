@@ -47,6 +47,7 @@ import {
 export function TestRunner({
   moduleId,
   moduleKey,
+  moduleName,
   status,
   configuration,
   types,
@@ -58,6 +59,8 @@ export function TestRunner({
 }: {
   moduleId: string;
   moduleKey: string;
+  /** What the coach called this test; falls back to the type when absent. */
+  moduleName?: string | null;
   status: AssessmentModuleStatus;
   configuration: ModuleConfiguration | null;
   types: Record<string, { name: string; unit: string; valueType: string }>;
@@ -99,13 +102,15 @@ export function TestRunner({
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <span className="eyebrow">Test</span>
+        <div className="flex min-w-0 flex-col gap-1">
+          <span className="eyebrow">{MODULE_LABELS_DE[moduleKey as ModuleKey] ?? moduleKey}</span>
           {/* `h1`, not `h2`: this component *is* the page — the route around
               it renders only a back link. A page whose first heading is level
               two leaves a screen reader without a title to jump to. */}
-          <h1 className="text-xl font-semibold">
-            {MODULE_LABELS_DE[moduleKey as ModuleKey] ?? moduleKey}
+          <h1 className="text-xl font-semibold break-words">
+            {(moduleName ?? '') !== ''
+              ? moduleName
+              : (MODULE_LABELS_DE[moduleKey as ModuleKey] ?? moduleKey)}
           </h1>
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant={status === 'COMPLETED' ? 'accent' : 'secondary'}>

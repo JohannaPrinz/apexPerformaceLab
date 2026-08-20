@@ -2,6 +2,8 @@ import Link from 'next/link';
 
 import { Button } from '@apex/ui';
 
+import { FOCUS_RING, TOUCH_BUTTON, TOUCH_TARGET } from '@/components/common/touch';
+
 /**
  * Forward navigation through the roster's cursor pages.
  *
@@ -42,7 +44,9 @@ export function LoadMoreAthletes({
 
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <Button asChild variant="outline" size="sm">
+      {/* The most-tapped control on a long roster, so it carries the touch
+          size rather than the compact one. Measured at 375px: it was 32px. */}
+      <Button asChild variant="outline" className={TOUCH_BUTTON}>
         <Link href={`/athletes?${next.toString()}`}>Weitere Athleten laden</Link>
       </Button>
 
@@ -59,7 +63,7 @@ function BackToStart({ query }: { readonly query: URLSearchParams }) {
   return (
     <Link
       href={suffix === '' ? '/athletes' : `/athletes?${suffix}`}
-      className="text-sm text-muted-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      className={`${TOUCH_TARGET} ${FOCUS_RING} inline-flex items-center rounded px-2 text-sm text-muted-foreground hover:underline`}
     >
       Zum Anfang
     </Link>

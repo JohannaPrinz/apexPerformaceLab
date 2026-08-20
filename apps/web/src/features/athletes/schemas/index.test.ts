@@ -80,7 +80,7 @@ describe('createAthleteSchema', () => {
 
 describe('listAthletesSchema', () => {
   it('hides deactivated athletes unless asked', () => {
-    expect(listAthletesSchema.parse({}).includeArchived).toBe(false);
+    expect(listAthletesSchema.parse({}).status).toBe('active');
   });
 
   it('caps the page size', () => {

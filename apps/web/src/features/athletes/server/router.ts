@@ -17,6 +17,7 @@ import {
 
 import {
   countAthletes,
+  countAthletesMatching,
   createAthlete,
   findAthleteDuplicates,
   listRecentAthletes,
@@ -45,6 +46,18 @@ export const athletesRouter = createTRPCRouter({
   list: withPermission('athlete:read')
     .input(listAthletesSchema)
     .query(({ ctx, input }) => listAthletes(ctx.db, ctx.tenant, input)),
+
+  /**
+   * How many athletes the same filters match.
+   *
+   * Separate from `list` rather than folded into its return: `Page<T>` is the
+   * shape every cursor-paginated list uses, and one screen wanting a total is
+   * not a reason to change it for all of them. The `where` is shared, so the
+   * number and the list can never describe different sets.
+   */
+  count: withPermission('athlete:read')
+    .input(listAthletesSchema.pick({ search: true, status: true }))
+    .query(({ ctx, input }) => countAthletesMatching(ctx.db, ctx.tenant, input)),
 
   /**
    * The workspace overview's two figures and its shortcut list.

@@ -534,8 +534,23 @@ model Assessment {
 /// body_composition, nutrition, recovery, sleep, cycle, custom.
 /// Device manufacturers and competition formats are never module keys (§11).
 model AssessmentModule {
-  id            String                 @id @default(cuid(2))
-  moduleKey     String
+  id        String @id @default(cuid(2))
+  moduleKey String
+
+  /// What the coach calls this test — "Laufen – Laktat" beside "Laufen – Sprint".
+  ///
+  /// The type (`moduleKey`) says what kind of test it is; the name says which
+  /// one. Before this existed the type *was* the identity, and a unique index
+  /// over (assessment, key) made a second running test impossible — which is
+  /// the ordinary case in a diagnostic session, not an edge case.
+  ///
+  /// Nullable, so rows written before this field keep working: everything that
+  /// displays a test falls back to the type's label. New tests always carry one.
+  ///
+  /// **Not the comparison key.** Assessments are still compared type by type
+  /// (§11); with several tests of one type they are shown side by side rather
+  /// than matched by name, so renaming a test can never tear a history apart.
+  name          String?
   /// The registry version this module was captured under (§11, "Each Module
   /// additionally defines Version"). Recorded on the row, not only in the
   /// registry: a published Report must stay re-renderable with the payload
@@ -589,7 +604,9 @@ model AssessmentModule {
   appointments     Appointment[]
 
   /// A module appears at most once per Assessment.
-  @@unique([assessmentId, moduleKey])
+  /// Deliberately **not** unique on (assessmentId, moduleKey): an assessment
+  /// may hold several tests of one type, told apart by `name` (§11).
+  @@index([assessmentId, moduleKey])
   @@index([organizationId])
   @@index([moduleKey])
   @@index([createdByCoachId])

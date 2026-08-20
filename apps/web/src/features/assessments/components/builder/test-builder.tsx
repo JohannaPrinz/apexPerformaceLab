@@ -12,7 +12,7 @@ import {
 } from '@apex/domain';
 import { Badge, Button } from '@apex/ui';
 
-import { FOCUS_RING, TOUCH_BUTTON, TOUCH_TARGET } from '@/components/common/touch';
+import { FOCUS_RING, TOUCH_BUTTON, TOUCH_FIELD, TOUCH_TARGET } from '@/components/common/touch';
 
 import { addConfiguredModuleAction, updateModuleConfigurationAction } from '../../server/actions';
 import { MEASUREMENT_ROLE_LABELS_DE, MODULE_LABELS_DE } from '../labels';
@@ -109,7 +109,7 @@ export function TestBuilder({
     startTransition(async () => {
       const result = existing
         ? await updateModuleConfigurationAction(existing.moduleId, assessmentId, configuration)
-        : await addConfiguredModuleAction(assessmentId, draft.moduleKey, configuration);
+        : await addConfiguredModuleAction(assessmentId, draft.name, draft.moduleKey, configuration);
 
       if (result.message) setError(result.message);
       else {
@@ -249,11 +249,29 @@ function TestStep({
   return (
     <div className="flex flex-col gap-6">
       <section className="flex flex-col gap-3">
-        <div className="flex flex-col gap-1">
-          <h3 className="text-sm font-medium">Welcher Test</h3>
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="testName" className="text-sm font-medium">
+            Name des Tests
+          </label>
+          <input
+            id="testName"
+            value={draft.name}
+            onChange={(event) => onChange({ ...draft, name: event.target.value })}
+            placeholder="z. B. Laufen – Laktat"
+            className={`${TOUCH_FIELD} ${FOCUS_RING} w-full max-w-md rounded-md border border-input bg-background px-3 shadow-sm`}
+          />
           <p className="text-xs text-muted-foreground">
-            An assessment records each test once. One already in this assessment cannot be added
-            again — copy it into another assessment instead.
+            Der Name unterscheidet mehrere Tests desselben Typs in einem Assessment.
+          </p>
+        </div>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <div className="flex flex-col gap-1">
+          <h3 className="text-sm font-medium">Testtyp</h3>
+          <p className="text-xs text-muted-foreground">
+            Der Typ bestimmt, womit dieses Assessment später verglichen wird. Mehrere Tests
+            desselben Typs sind ausdrücklich möglich.
           </p>
         </div>
 

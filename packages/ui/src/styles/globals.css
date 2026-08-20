@@ -1,6 +1,23 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
+/**
+ * The design system's own components are a source Tailwind must scan.
+ *
+ * Automatic source detection starts from the importing application and does not
+ * reach across the workspace into `packages/ui`, so every class that appears
+ * *only* here was silently never generated. That was every filled button in the
+ * product: `bg-primary`, `bg-accent`, `bg-secondary` and `bg-destructive` exist
+ * in `button.tsx` and nowhere else, so the primary action of every screen
+ * rendered with no background at all — visible in a browser, invisible to
+ * typecheck, lint and every test.
+ *
+ * Classes that happened to be used in the application too — `bg-muted`,
+ * `bg-card`, `bg-background` — were generated, which is why only some of the
+ * palette appeared to work.
+ */
+@source '../**/*.{ts,tsx}';
+
 /* Dark mode is class-driven (`<html class="dark">`) rather than media-driven, so
    the user's explicit choice can override the OS setting. `next-themes` toggles
    the class. */

@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { PrismaClientInstance } from '@apex/database';
 
+import { addModuleSchema } from '../schemas';
+
 import {
   addModule,
   availableMeasurementTypes,
@@ -345,7 +347,7 @@ describe('adding a module', () => {
       db,
       TENANT,
       'coach_1',
-      { assessmentId: 'as_1', moduleKey: 'lactate', configuration },
+      { assessmentId: 'as_1', name: 'Testname', moduleKey: 'lactate', configuration },
       () => Promise.resolve([]),
     );
 
@@ -363,7 +365,7 @@ describe('adding a module', () => {
       db,
       TENANT,
       'coach_1',
-      { assessmentId: 'as_elsewhere', moduleKey: 'lactate', configuration },
+      { assessmentId: 'as_elsewhere', name: 'Testname', moduleKey: 'lactate', configuration },
       () => Promise.resolve([]),
     );
 
@@ -379,7 +381,12 @@ describe('adding a module', () => {
       db,
       TENANT,
       'coach_1',
-      { assessmentId: 'as_1', moduleKey: 'lactate', templateKey: 'lactate_step_test' },
+      {
+        assessmentId: 'as_1',
+        name: 'Testname',
+        moduleKey: 'lactate',
+        templateKey: 'lactate_step_test',
+      },
       resolve,
     );
 
@@ -398,7 +405,12 @@ describe('adding a module', () => {
       db,
       TENANT,
       'coach_1',
-      { assessmentId: 'as_1', moduleKey: 'lactate', templateKey: 'lactate_step_test' },
+      {
+        assessmentId: 'as_1',
+        name: 'Testname',
+        moduleKey: 'lactate',
+        templateKey: 'lactate_step_test',
+      },
       () => Promise.resolve(['mt_1', 'mt_2', 'mt_3', 'mt_4']),
     );
 
@@ -646,7 +658,12 @@ describe('a template’s roles travel with it', () => {
       db,
       TENANT,
       'coach_1',
-      { assessmentId: 'as_1', moduleKey: 'body_composition', templateKey: 'body_fat_measurement' },
+      {
+        assessmentId: 'as_1',
+        name: 'Testname',
+        moduleKey: 'body_composition',
+        templateKey: 'body_fat_measurement',
+      },
       () => Promise.resolve(['mt_body_fat', 'mt_weight']),
     );
 
@@ -667,7 +684,12 @@ describe('a template’s roles travel with it', () => {
       db,
       TENANT,
       'coach_1',
-      { assessmentId: 'as_1', moduleKey: 'body_composition', templateKey: 'body_fat_measurement' },
+      {
+        assessmentId: 'as_1',
+        name: 'Testname',
+        moduleKey: 'body_composition',
+        templateKey: 'body_fat_measurement',
+      },
       // Only one of the template's two quantities exists in this catalogue.
       () => Promise.resolve(['mt_body_fat']),
     );
@@ -691,7 +713,7 @@ describe('a configuration may only name what this workspace can use', () => {
       db,
       TENANT,
       'coach_1',
-      { assessmentId: 'as_1', moduleKey: 'lactate', configuration },
+      { assessmentId: 'as_1', name: 'Testname', moduleKey: 'lactate', configuration },
       () => Promise.resolve([]),
     );
 
@@ -708,7 +730,7 @@ describe('a configuration may only name what this workspace can use', () => {
       db,
       TENANT,
       'coach_1',
-      { assessmentId: 'as_1', moduleKey: 'lactate', configuration },
+      { assessmentId: 'as_1', name: 'Testname', moduleKey: 'lactate', configuration },
       () => Promise.resolve([]),
     );
 
@@ -726,6 +748,7 @@ describe('a configuration may only name what this workspace can use', () => {
       'coach_1',
       {
         assessmentId: 'as_1',
+        name: 'Testname',
         moduleKey: 'strength',
         configuration: { ...configuration, exerciseIds: ['ex_from_another_workspace'] },
       },
@@ -751,7 +774,7 @@ describe('a configuration may only name what this workspace can use', () => {
       db,
       TENANT,
       'coach_1',
-      { assessmentId: 'as_1', moduleKey: 'lactate', configuration },
+      { assessmentId: 'as_1', name: 'Testname', moduleKey: 'lactate', configuration },
       () => Promise.resolve([]),
     );
 
@@ -911,5 +934,72 @@ describe('the catalogue the builder offers', () => {
 
     expect(options).toHaveLength(1);
     expect(options[0]).toMatchObject({ id: 'mt_own', ownedByWorkspace: true });
+  });
+});
+
+/**
+ * A test has a name of its own, and an assessment may hold several of one type.
+ *
+ * This reverses what the schema enforced: `@@unique([assessmentId, moduleKey])`
+ * made the type the identity, so a diagnostic session could record one running
+ * test and not three. The name carries identity now; the type stays what
+ * assessments are compared by (§11).
+ */
+describe('naming a test', () => {
+  const add = async (name: string, moduleKey: 'lactate' | 'running' = 'lactate') => {
+    const { db, assessmentModule } = fakeDb();
+
+    await addModule(
+      db,
+      TENANT,
+      'coach_1',
+      { assessmentId: 'as_1', name, moduleKey, configuration },
+      () => Promise.resolve([]),
+    );
+
+    return argsOf(assessmentModule.create).data;
+  };
+
+  it('stores what the coach called the test', async () => {
+    expect(await add('Laufen – Laktat')).toMatchObject({ name: 'Laufen – Laktat' });
+  });
+
+  it('keeps the type alongside the name', async () => {
+    // The type is the comparison key between assessments; the name only tells
+    // two tests of one type apart.
+    expect(await add('Laufen – Sprint', 'running')).toMatchObject({
+      name: 'Laufen – Sprint',
+      moduleKey: 'running',
+    });
+  });
+
+  it('writes the tenant onto the test like every other row', async () => {
+    expect(await add('Laufen – Ausdauer')).toMatchObject({ organizationId: 'org_a' });
+  });
+
+  it('refuses an empty name at the boundary', () => {
+    // The schema is where this is caught, so the service never sees a blank.
+    const result = addModuleSchema.safeParse({
+      assessmentId: 'as_1',
+      name: '   ',
+      moduleKey: 'lactate',
+      templateKey: 'lactate_step_test',
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts three tests of one type in one assessment', () => {
+    // The case the unique index made impossible.
+    for (const name of ['Laufen – Laktat', 'Laufen – Sprint', 'Laufen – Ausdauer']) {
+      const result = addModuleSchema.safeParse({
+        assessmentId: 'as_1',
+        name,
+        moduleKey: 'running',
+        templateKey: 'lactate_step_test',
+      });
+
+      expect(result.success, name).toBe(true);
+    }
   });
 });

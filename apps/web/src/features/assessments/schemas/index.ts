@@ -35,6 +35,15 @@ export const createAssessmentSchema = z.object({
   athleteId: z.string().min(1),
   question: z.string().trim().min(1, 'What should this assessment answer?').max(500),
   type: assessmentTypeSchema.default('INITIAL'),
+  /**
+   * Which engagement this assessment belongs to.
+   *
+   * Optional, and that is the whole point: §8 says a case appears on its own
+   * with the first assessment, and it still does when none is named. What the
+   * coach gains is the ability to *say* which one when they have several — the
+   * default is proposed, never demanded.
+   */
+  caseId: z.string().min(1).optional(),
   /** Defaults to now when the coach records as they go. */
   performedAt: z.iso.datetime({ offset: true }).optional(),
 });
@@ -64,12 +73,19 @@ export type ListAssessmentsInput = z.infer<typeof listAssessmentsSchema>;
 export const addModuleSchema = z
   .object({
     assessmentId: z.string().min(1),
+    /**
+     * What the coach calls this test.
+     *
+     * Required for a new test, because it is what tells two tests of the same
+     * type apart. Trimmed and capped like every other name in the product.
+     */
+    name: z.string().trim().min(1, 'Bitte einen Namen für den Test eingeben.').max(120),
     moduleKey: moduleKeySchema,
     templateKey: measurementTemplateKeySchema.optional(),
     configuration: moduleConfigurationSchema.optional(),
   })
   .refine((input) => input.templateKey ?? input.configuration, {
-    message: 'Choose a template or configure the test.',
+    message: 'Bitte eine Vorlage wählen oder den Test konfigurieren.',
     path: ['configuration'],
   });
 
