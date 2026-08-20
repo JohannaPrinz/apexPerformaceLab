@@ -491,16 +491,34 @@ A Case may be reopened while not archived.
 
 ### Automatic Creation
 
-A Case is mandatory in the domain model but never a manual step for the user.
+A Case is mandatory in the domain model but never a _forced_ step for the user.
 
-If a Coach creates an Assessment for an Athlete without an open Case,
-the system creates a Case of type `SINGLE_ASSESSMENT` automatically,
-taking its title from the Assessment.
+If a Coach creates an Assessment for an Athlete without naming a Case, the
+system adopts the open one, or creates a Case of type `SINGLE_ASSESSMENT`
+automatically, taking its title from the Assessment.
 
 This mirrors the Personal Workspace (§5): the structure exists,
 the user is not asked to build it.
 
-The Case becomes visible in the interface as soon as an Athlete has more than one.
+### Naming a Case is allowed, never demanded
+
+**Amended 2026-08-20.** The Case _may_ be named when the Assessment is created,
+and the interface does so by placing "Assessment anlegen" inside the Case it
+belongs to — the Coach chooses the engagement by choosing where to click, and
+the dialog states it rather than asking for it.
+
+The earlier wording said the Case was "never a manual step", which had become
+untrue in one direction and unhelpful in the other: an Athlete with two open
+engagements has no correct automatic answer, and the Coach is the only one who
+knows which one a new examination belongs to.
+
+The default remains automatic. A named Case is verified against the Athlete and
+the Workspace before it is used — an id arriving from a form proves nothing
+(docs/SECURITY.md §4).
+
+The Case is visible in the interface from the first one: it is the bracket around
+a set of Assessments, and hiding it made it look like a container nobody asked
+for.
 
 ---
 
@@ -617,7 +635,49 @@ Modules are completely independent.
 
 Assessments may contain any combination of modules.
 
-Comparisons between Assessments always happen module by module.
+### An Assessment may hold several Tests of one type
+
+**Decided 2026-08-20. This is a central product rule.**
+
+A diagnostic session records a lactate run, a sprint and an endurance run in one
+sitting. All three are of type `running`; they are three different tests. The
+Assessment therefore holds several Modules of one `moduleKey`, told apart by a
+name the Coach gives them:
+
+```
+Assessment „Leistungsdiagnostik August"
+├── Laufen – Laktat      moduleKey: running
+├── Laufen – Sprint      moduleKey: running
+└── Laufen – Ausdauer    moduleKey: running
+```
+
+This reverses what the schema enforced until now — `@@unique([assessmentId,
+moduleKey])` made the _type_ the identity of a test, so the second running test
+was impossible. The constraint is gone and `AssessmentModule.name` carries
+identity instead.
+
+**Type and name do different work, and neither can take the other's job:**
+
+|             | Answers                      | Vocabulary                     |
+| ----------- | ---------------------------- | ------------------------------ |
+| `moduleKey` | _What kind of test is this?_ | the canonical list above, code |
+| `name`      | _Which test is this?_        | free text, the Coach's words   |
+
+`name` is nullable, so Modules written before this rule keep working: everything
+that displays a test falls back to the type's label. It is never backfilled — a
+name nobody chose would be an invention, not a record.
+
+### Comparisons stay type by type
+
+Comparisons between Assessments happen **module by module, keyed on
+`moduleKey`** — not on the name.
+
+Keying on the name was considered and rejected. It reads as the more precise
+option, and it is the more fragile one: renaming a test, or a typo, would
+silently break a history that had been building for a season. Where an
+Assessment holds several tests of one type, a comparison shows them side by side
+rather than guessing which pairs with which. A wrong guess is worse than an
+honest set.
 
 Each Module additionally defines
 
@@ -1827,6 +1887,10 @@ The following rules are mandatory.
 6. Every Assessment contains at least one Module and answers one Question.
 
 7. Modules are independent. New modules require no migration.
+   An Assessment may hold **several Modules of one `moduleKey`**, told apart by
+   `AssessmentModule.name` (§11). The type says what kind of test it is, the
+   name says which one, and comparisons between Assessments stay keyed on the
+   type.
 
 8. Module names are domain terms. Devices, vendors and competition formats are not Modules.
 
