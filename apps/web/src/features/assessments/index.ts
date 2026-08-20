@@ -6,6 +6,8 @@
  */
 export { AddModuleForm } from './components/add-module-form';
 export { AssessmentForm } from './components/assessment-form';
+export { CreateAssessmentDialog } from './components/create-assessment-dialog';
+export { CreateTestDialog, type SelectableExercise } from './components/create-test-dialog';
 export { CopyAssessmentButton } from './components/copy-assessment-button';
 export { CopyModuleButton, type CopyTarget } from './components/copy-module-button';
 export { ModuleCard, type ModuleCardData } from './components/module-card';

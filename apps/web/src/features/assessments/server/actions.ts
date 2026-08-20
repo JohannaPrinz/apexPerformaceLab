@@ -26,6 +26,9 @@ export async function createAssessmentAction(
     athleteId: formData.get('athleteId'),
     question: formData.get('question'),
     type: formData.get('type') ?? undefined,
+    // Set when the dialog was opened inside an engagement. Absent otherwise,
+    // and then §8 applies unchanged: the service adopts or opens one.
+    caseId: formData.get('caseId') ?? undefined,
   });
 
   if (!parsed.success) {

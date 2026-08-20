@@ -16,6 +16,14 @@ export {
   CardHeader,
   CardTitle,
 } from './components/card';
+export {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogFooter,
+  DialogTrigger,
+  type DialogContentProps,
+} from './components/dialog';
 export { Input } from './components/input';
 export { Separator, type SeparatorProps } from './components/separator';
 export { Skeleton } from './components/skeleton';

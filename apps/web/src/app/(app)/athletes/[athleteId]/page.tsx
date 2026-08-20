@@ -7,10 +7,8 @@ import { ArrowLeft, Pencil } from 'lucide-react';
 import { Badge, Button } from '@apex/ui';
 
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_TARGET } from '@/components/common/touch';
-import { AssessmentForm } from '@/features/assessments';
-import { ASSESSMENT_TYPE_LABELS_DE } from '@/features/assessments/components/labels';
 import { ArchiveButton } from '@/features/athletes';
-import { CaseForm, CaseList } from '@/features/cases';
+import { CaseForm, CaseSection, NoCases, type CaseAssessment } from '@/features/cases';
 import { api } from '@/trpc/server';
 
 import type { Metadata } from 'next';
@@ -56,13 +54,23 @@ export default async function AthletePage({ params }: { params: Promise<{ athlet
   ]);
 
   /**
-   * Which engagement an assessment belongs to.
+   * The assessments of each engagement.
    *
-   * Derived from data both lists already carry — no query and no new concept.
-   * Without it the two sections read as unrelated lists, and the chain
-   * `Athlete → Case → Assessment` is invisible on the one page where it matters.
+   * Grouped from data the page already loads — no query and no new concept. The
+   * chain `Athlete → Case → Assessment` (§3) becomes the shape of the page
+   * rather than something a coach has to infer from two parallel lists.
    */
-  const caseTitles = new Map(cases.map((entry) => [entry.id, entry.title]));
+  const byCase = new Map<string, CaseAssessment[]>();
+  for (const assessment of assessments) {
+    const entry = {
+      id: assessment.id,
+      question: assessment.question,
+      type: assessment.type,
+      performedAt: assessment.performedAt,
+      testCount: assessment.modules.length,
+    };
+    byCase.set(assessment.caseId, [...(byCase.get(assessment.caseId) ?? []), entry]);
+  }
 
   return (
     <main className="mx-auto flex w-full max-w-content flex-col gap-10 px-6 py-12">
@@ -161,6 +169,14 @@ export default async function AthletePage({ params }: { params: Promise<{ athlet
         )}
       </section>
 
+      {/*
+        One hierarchy, not two lists.
+        `Athlete → Performance Case → Assessment` (§3) is what the model says,
+        and the page used to contradict it by showing cases and assessments as
+        siblings. Nesting them makes the case what it is — the bracket around a
+        set of assessments — and gives "Assessment anlegen" a place where the
+        engagement is unambiguous.
+      */}
       <section aria-labelledby="cases" className="flex flex-col gap-4">
         <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
           <div className="flex min-w-0 flex-col gap-1">
@@ -172,58 +188,24 @@ export default async function AthletePage({ params }: { params: Promise<{ athlet
             </p>
           </div>
 
-          <CaseForm athleteId={athlete.id} />
+          {cases.length === 0 ? null : <CaseForm athleteId={athlete.id} />}
         </div>
 
-        <CaseList athleteId={athlete.id} cases={cases} />
-      </section>
-
-      <section aria-labelledby="assessments" className="flex flex-col gap-4">
-        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
-          <div className="flex min-w-0 flex-col gap-1">
-            <h2 id="assessments" className="text-lg font-semibold">
-              Assessments
-            </h2>
-            <p className="text-sm text-pretty text-muted-foreground">
-              Jedes Assessment beantwortet genau eine Frage und gehört zu einem Betreuungsfall.
-            </p>
-          </div>
-
-          <AssessmentForm athleteId={athlete.id} />
-        </div>
-
-        {assessments.length === 0 ? (
-          <p className="rounded-md border border-dashed border-border px-4 py-10 text-center text-sm text-pretty text-muted-foreground">
-            Noch kein Assessment. Der Betreuungsfall entsteht automatisch mit dem ersten (§8).
-          </p>
+        {cases.length === 0 ? (
+          <NoCases>
+            <CaseForm athleteId={athlete.id} />
+          </NoCases>
         ) : (
-          <ul className="flex flex-col gap-2">
-            {assessments.map((assessment) => (
-              <li key={assessment.id}>
-                <Link
-                  href={`/assessments/${assessment.id}`}
-                  className={`${FOCUS_RING} flex min-h-11 flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-md border border-border bg-card px-4 py-3 transition-colors hover:border-border-strong`}
-                >
-                  <span className="flex min-w-0 flex-col gap-0.5">
-                    <span className="font-medium break-words">{assessment.question}</span>
-                    <span className="text-xs break-words text-muted-foreground">
-                      <span data-numeric>{assessment.performedAt.toLocaleDateString('de-DE')}</span>
-                      {' · '}
-                      {assessment.modules.length}{' '}
-                      {assessment.modules.length === 1 ? 'Test' : 'Tests'}
-                      {caseTitles.has(assessment.caseId)
-                        ? ` · ${caseTitles.get(assessment.caseId) ?? ''}`
-                        : ''}
-                    </span>
-                  </span>
-
-                  <Badge variant="secondary" className="shrink-0">
-                    {ASSESSMENT_TYPE_LABELS_DE[assessment.type] ?? assessment.type}
-                  </Badge>
-                </Link>
-              </li>
+          <div className="flex flex-col gap-4">
+            {cases.map((performanceCase) => (
+              <CaseSection
+                key={performanceCase.id}
+                performanceCase={performanceCase}
+                athleteId={athlete.id}
+                assessments={byCase.get(performanceCase.id) ?? []}
+              />
             ))}
-          </ul>
+          </div>
         )}
       </section>
     </main>

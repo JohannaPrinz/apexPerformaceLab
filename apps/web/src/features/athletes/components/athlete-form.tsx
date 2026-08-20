@@ -58,7 +58,20 @@ const dateValue = (value: Date | null): string => value?.toISOString().slice(0, 
 const decimalValue = (value: number | null): string =>
   value === null ? '' : String(value).replace('.', ',');
 
-export function AthleteForm({ athlete }: { athlete?: AthleteFormValues }) {
+export function AthleteForm({
+  athlete,
+  onCancel,
+}: {
+  athlete?: AthleteFormValues;
+  /**
+   * What "Abbrechen" does.
+   *
+   * On a route the answer is `router.back()`. Inside a dialog that would
+   * navigate the page *behind* the dialog and leave it open on the wrong
+   * screen, so the dialog passes its own close instead.
+   */
+  onCancel?: () => void;
+}) {
   const router = useRouter();
   const editing = athlete !== undefined;
 
@@ -156,7 +169,14 @@ export function AthleteForm({ athlete }: { athlete?: AthleteFormValues }) {
         <Button type="submit" variant="accent" disabled={pending}>
           {pending ? 'Wird gespeichert…' : editing ? 'Änderungen speichern' : 'Athlet anlegen'}
         </Button>
-        <Button type="button" variant="ghost" onClick={() => router.back()}>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => {
+            if (onCancel) onCancel();
+            else router.back();
+          }}
+        >
           Abbrechen
         </Button>
       </div>

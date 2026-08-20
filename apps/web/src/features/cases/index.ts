@@ -7,6 +7,7 @@
  * exported through the tRPC procedure rather than directly.
  */
 export { CaseForm } from './components/case-form';
+export { CaseSection, NoCases, type CaseAssessment } from './components/case-section';
 export { CaseList, type CaseListItem } from './components/case-list';
 export { CaseStatusButton } from './components/case-status-button';
 export {

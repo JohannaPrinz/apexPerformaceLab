@@ -1,11 +1,11 @@
 import Link from 'next/link';
 
-import { Plus, Search } from 'lucide-react';
+import { Search } from 'lucide-react';
 
 import { Badge, Button } from '@apex/ui';
 
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_FIELD } from '@/components/common/touch';
-import { LoadMoreAthletes } from '@/features/athletes';
+import { CreateAthleteDialog, LoadMoreAthletes } from '@/features/athletes';
 import { ATHLETE_STATUS_FILTERS, type AthleteStatusFilter } from '@/features/athletes/schemas';
 import { api } from '@/trpc/server';
 
@@ -73,12 +73,7 @@ export default async function AthletesPage({
           <h1 className="text-3xl font-semibold">Athleten</h1>
         </div>
 
-        <Button asChild variant="accent" className={TOUCH_BUTTON}>
-          <Link href="/athletes/new">
-            <Plus aria-hidden="true" className="size-4" />
-            Athlet anlegen
-          </Link>
-        </Button>
+        <CreateAthleteDialog />
       </header>
 
       {/* A GET form, so a search is a URL. The cursor is deliberately not a

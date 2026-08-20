@@ -6,7 +6,8 @@ import { TRPCError } from '@trpc/server';
 import { assessmentHasBegun } from '@apex/domain';
 import { Badge, Button } from '@apex/ui';
 
-import { CopyAssessmentButton, ModuleCard } from '@/features/assessments';
+import { TOUCH_BUTTON } from '@/components/common/touch';
+import { CopyAssessmentButton, CreateTestDialog, ModuleCard } from '@/features/assessments';
 import { ASSESSMENT_TYPE_LABELS_DE } from '@/features/assessments/components/labels';
 import { api } from '@/trpc/server';
 
@@ -39,7 +40,20 @@ export default async function AssessmentPage({
   // A configured test is copied into another assessment of the same athlete —
   // an assessment records each test once, so a copy alongside the original is
   // not something the model permits.
-  const siblings = await api.assessments.listForAthlete({ athleteId: assessment.athleteId });
+  const [siblings, exerciseCatalogue] = await Promise.all([
+    api.assessments.listForAthlete({ athleteId: assessment.athleteId }),
+    // The ordinary catalogue procedure — this workspace plus system-wide, and
+    // never another tenant's. The dialog picks from what it is given; it does
+    // not query and does not decide reachability.
+    api.exercises.list({ includeArchived: false, limit: 200, offset: 0 }),
+  ]);
+
+  const exerciseOptions = exerciseCatalogue.map((exercise) => ({
+    id: exercise.id,
+    name: exercise.name,
+    category: exercise.category,
+    scope: exercise.scope,
+  }));
   const copyTargets = siblings
     .filter((entry) => entry.id !== assessment.id)
     .map((entry) => ({
@@ -101,9 +115,13 @@ export default async function AssessmentPage({
           </div>
         )}
 
-        <div>
-          <Button variant="accent" size="sm" asChild>
-            <Link href={`/assessments/${assessment.id}/tests/new`}>Test hinzufügen</Link>
+        {/* The dialog is the ordinary way in; the builder route stays for a
+            configuration the dialog deliberately does not carry. */}
+        <div className="flex flex-wrap items-center gap-3">
+          <CreateTestDialog assessmentId={assessment.id} exercises={exerciseOptions} />
+
+          <Button variant="ghost" className={TOUCH_BUTTON} asChild>
+            <Link href={`/assessments/${assessment.id}/tests/new`}>Ausführlich konfigurieren</Link>
           </Button>
         </div>
       </section>

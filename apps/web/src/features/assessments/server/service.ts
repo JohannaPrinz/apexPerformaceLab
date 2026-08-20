@@ -200,9 +200,26 @@ export async function createAssessment(
   db: AssessmentDb,
   tenant: Pick<TenantContext, 'organizationId'>,
   createdByCoachId: string,
-  { athleteId, question, type, performedAt }: CreateAssessmentInput,
+  { athleteId, question, type, performedAt, caseId }: CreateAssessmentInput,
 ): Promise<AssessmentRecord | null> {
-  const performanceCase = await ensureOpenCase(db, tenant, createdByCoachId, athleteId, question);
+  /**
+   * The engagement this assessment belongs to.
+   *
+   * A named case is used when it belongs to this athlete and this workspace —
+   * checked here rather than trusted, because the id arrives from a form
+   * (docs/SECURITY.md §4). Without one, §8 applies unchanged: the open case is
+   * adopted, or a new one is opened.
+   */
+  const named =
+    caseId === undefined
+      ? null
+      : await db.performanceCase.findFirst({
+          where: scoped(tenant, { id: caseId, athleteId }),
+          select: { id: true },
+        });
+
+  const performanceCase =
+    named ?? (await ensureOpenCase(db, tenant, createdByCoachId, athleteId, question));
 
   if (!performanceCase) return null;
 
