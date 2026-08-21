@@ -10,6 +10,7 @@ import {
 } from '@apex/domain';
 import { Button, Card, CardContent } from '@apex/ui';
 
+import { TOUCH_BUTTON } from '@/components/common/touch';
 import {
   ExerciseFilters,
   hasActiveFilters,
@@ -242,7 +243,7 @@ export default async function ExercisesPage({
           {pages > 1 ? (
             <nav className="flex items-center justify-between gap-4" aria-label="Seiten">
               {page > 1 ? (
-                <Button asChild variant="outline" size="sm">
+                <Button asChild variant="outline" className={TOUCH_BUTTON}>
                   <Link href={pageHref(page - 1)}>Zurück</Link>
                 </Button>
               ) : (
@@ -254,7 +255,7 @@ export default async function ExercisesPage({
               </span>
 
               {page < pages ? (
-                <Button asChild variant="outline" size="sm">
+                <Button asChild variant="outline" className={TOUCH_BUTTON}>
                   <Link href={pageHref(page + 1)}>Weiter</Link>
                 </Button>
               ) : (

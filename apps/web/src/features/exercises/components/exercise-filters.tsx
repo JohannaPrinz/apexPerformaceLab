@@ -2,6 +2,8 @@ import Link from 'next/link';
 
 import { Button } from '@apex/ui';
 
+import { TOUCH_BUTTON, TOUCH_FIELD, TOUCH_TARGET } from '@/components/common/touch';
+
 import {
   CATEGORY_LABELS,
   ORIGIN_LABELS,
@@ -75,7 +77,7 @@ function Select({
       <select
         name={name}
         defaultValue={value ?? ''}
-        className="h-9 w-full min-w-40 rounded-md border border-input bg-background px-2 text-sm text-foreground shadow-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        className={`${TOUCH_FIELD} w-full min-w-40 rounded-md border border-input bg-background px-2 text-foreground shadow-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none`}
       >
         <option value="">{placeholder}</option>
         {options.map((option) => (
@@ -192,7 +194,7 @@ function FilterFields({
         />
 
         {layout === 'row' ? (
-          <Button type="submit" variant="outline" size="sm" className="h-9">
+          <Button type="submit" variant="outline" className={TOUCH_BUTTON}>
             Anwenden
           </Button>
         ) : null}
@@ -205,7 +207,9 @@ function FilterFields({
           values.mechanic !== undefined
         }
       >
-        <summary className="w-fit cursor-pointer text-sm text-muted-foreground">
+        <summary
+          className={`${TOUCH_TARGET} flex w-fit cursor-pointer items-center text-sm text-muted-foreground`}
+        >
           Weitere Filter
         </summary>
 
@@ -270,9 +274,9 @@ export function ExerciseFilters({ values }: { readonly values: ExerciseFilterVal
           defaultValue={values.q ?? ''}
           placeholder="Übung suchen"
           aria-label="Übungen nach Namen suchen"
-          className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          className={`${TOUCH_FIELD} w-full rounded-md border border-input bg-background px-3 text-foreground shadow-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none`}
         />
-        <Button type="submit" className="h-10 shrink-0">
+        <Button type="submit" className={`${TOUCH_BUTTON} shrink-0`}>
           Suchen
         </Button>
       </div>
@@ -286,7 +290,9 @@ export function ExerciseFilters({ values }: { readonly values: ExerciseFilterVal
           fill the screen before the first result. The count tells the coach
           something is narrowed without opening it. */}
       <details className="sm:hidden">
-        <summary className="w-fit cursor-pointer text-sm text-muted-foreground">
+        <summary
+          className={`${TOUCH_TARGET} flex w-fit cursor-pointer items-center text-sm text-muted-foreground`}
+        >
           Suchen und filtern{chips.length > 0 ? ` (${String(chips.length)})` : ''}
         </summary>
 
@@ -303,7 +309,7 @@ export function ExerciseFilters({ values }: { readonly values: ExerciseFilterVal
                   quickest correction after narrowing one step too far. */}
               <Link
                 href={withoutField(values, chip.field)}
-                className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted px-3 py-1 text-xs transition-colors hover:border-border-strong focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                className={`${TOUCH_TARGET} inline-flex items-center gap-1.5 rounded-full border border-border bg-muted px-3 text-xs transition-colors hover:border-border-strong focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none`}
               >
                 <span className="text-muted-foreground">{chip.label}:</span>
                 <span>{chip.value}</span>
@@ -316,14 +322,14 @@ export function ExerciseFilters({ values }: { readonly values: ExerciseFilterVal
       ) : null}
 
       <div className="flex items-center gap-2">
-        <Button type="submit" variant="outline" size="sm" className="sm:hidden">
+        <Button type="submit" variant="outline" className={`${TOUCH_BUTTON} sm:hidden`}>
           Anwenden
         </Button>
 
         {/* A reset is a navigation to the unfiltered list, so it is a link — the
             browser and a screen reader both take it as one. */}
         {active ? (
-          <Button asChild variant="ghost" size="sm">
+          <Button asChild variant="ghost" className={TOUCH_BUTTON}>
             <Link href="/exercises">Filter zurücksetzen</Link>
           </Button>
         ) : null}
