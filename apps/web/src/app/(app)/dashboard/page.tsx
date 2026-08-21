@@ -1,11 +1,11 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
-import { ArrowRight, Dumbbell, Plus } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Dumbbell, Plus } from 'lucide-react';
 
 import { Button } from '@apex/ui';
 
-import { FOCUS_RING } from '@/components/common/touch';
+import { FOCUS_RING, TOUCH_TARGET } from '@/components/common/touch';
 import { AthleteTile } from '@/features/athletes';
 import { WORKSPACE_ROLE_LABELS } from '@/features/auth/labels';
 import { api } from '@/trpc/server';
@@ -50,11 +50,14 @@ export default async function DashboardPage() {
   return (
     <main className="mx-auto flex w-full max-w-content flex-col gap-10 px-6 py-12">
       <header className="flex flex-col gap-1">
+        {/* A real touch target. At 375px this was 16px tall — a link a thumb
+            cannot reliably hit is not a way back. */}
         <Link
           href="/start"
-          className={`${FOCUS_RING} w-fit rounded text-xs text-muted-foreground hover:underline`}
+          className={`${FOCUS_RING} ${TOUCH_TARGET} -ml-2 inline-flex w-fit max-w-full items-center gap-1.5 rounded px-2 text-sm text-muted-foreground hover:text-foreground`}
         >
-          ← Meine Übersicht
+          <ArrowLeft aria-hidden="true" className="size-4 shrink-0" />
+          Meine Übersicht
         </Link>
         <span className="eyebrow">Arbeitsbereich</span>
         <h1 className="text-3xl font-semibold text-pretty">{workspace.name}</h1>

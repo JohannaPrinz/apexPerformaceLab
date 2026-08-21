@@ -1,5 +1,6 @@
 import Link from 'next/link';
 
+import { FOCUS_RING, TOUCH_TARGET } from '@/components/common/touch';
 import { SignOutButton } from '@/features/auth';
 
 /**
@@ -18,9 +19,10 @@ export default function PersonalLayout({ children }: { children: React.ReactNode
   return (
     <div className="flex min-h-dvh flex-col">
       <header className="flex items-center justify-between gap-4 border-b border-border px-6 py-3">
+        {/* `TOUCH_TARGET`: the wordmark is the way home and was 20px tall. */}
         <Link
           href="/start"
-          className="text-sm font-semibold focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          className={`${FOCUS_RING} ${TOUCH_TARGET} -ml-2 inline-flex items-center rounded px-2 text-sm font-semibold`}
         >
           Apex OS
         </Link>

@@ -8,7 +8,7 @@ import { Badge, Button } from '@apex/ui';
 
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_TARGET } from '@/components/common/touch';
 import { ArchiveButton } from '@/features/athletes';
-import { CaseForm, CaseSection, NoCases, type CaseAssessment } from '@/features/cases';
+import { CaseDialog, CaseSection, NoCases, type CaseAssessment } from '@/features/cases';
 import { api } from '@/trpc/server';
 
 import type { Metadata } from 'next';
@@ -40,8 +40,32 @@ const formatFigure = (value: number | null, unit: string): string =>
  * workspace produces `NOT_FOUND` — indistinguishable from an id that never
  * existed, which is deliberate (docs/SECURITY.md §4).
  */
-export default async function AthletePage({ params }: { params: Promise<{ athleteId: string }> }) {
+export default async function AthletePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ athleteId: string }>;
+  searchParams: Promise<{ cases?: string; assessments?: string }>;
+}) {
   const { athleteId } = await params;
+
+  /**
+   * Whether closed and archived engagements are shown.
+   *
+   * Hidden by default: a coach opening an athlete wants what is running, and an
+   * engagement from two seasons ago pushes it down the page. Nothing is lost —
+   * §8 keeps closed cases part of the history, and one link brings them back.
+   */
+  const query = await searchParams;
+  const showAll = query.cases === 'all';
+
+  /**
+   * Whether archived examinations are shown.
+   *
+   * Same rule and same mechanism as engagements — in the URL, so a reload and
+   * the back button both keep it.
+   */
+  const showArchived = query.assessments === 'all';
 
   const athlete = await api.athletes.byId({ athleteId }).catch((error: unknown) => {
     if (error instanceof TRPCError && error.code === 'NOT_FOUND') notFound();
@@ -49,8 +73,10 @@ export default async function AthletePage({ params }: { params: Promise<{ athlet
   });
 
   const [cases, assessments] = await Promise.all([
-    api.cases.listForAthlete({ athleteId }),
-    api.assessments.listForAthlete({ athleteId }),
+    // The status filter exists in the schema already; only the interface was
+    // missing. `OPEN` alone is the working view.
+    api.cases.listForAthlete({ athleteId, ...(showAll ? {} : { status: 'OPEN' as const }) }),
+    api.assessments.listForAthlete({ athleteId, includeArchived: showArchived }),
   ]);
 
   /**
@@ -79,7 +105,7 @@ export default async function AthletePage({ params }: { params: Promise<{ athlet
           href="/athletes"
           // The only way back to the roster, so it is a touch target rather
           // than a line of text. Measured at 375px: it was 20px tall.
-          className={`${FOCUS_RING} ${TOUCH_TARGET} -ml-2 inline-flex w-fit items-center gap-1.5 rounded px-2 text-sm text-muted-foreground hover:text-foreground`}
+          className={`${FOCUS_RING} ${TOUCH_TARGET} -ml-2 inline-flex w-fit max-w-full items-center gap-1.5 rounded px-2 text-sm text-muted-foreground hover:text-foreground`}
         >
           <ArrowLeft aria-hidden="true" className="size-4" />
           Athleten
@@ -188,12 +214,34 @@ export default async function AthletePage({ params }: { params: Promise<{ athlet
             </p>
           </div>
 
-          {cases.length === 0 ? null : <CaseForm athleteId={athlete.id} />}
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href={athleteHref(athlete.id, {
+                cases: showAll ? null : 'all',
+                assessments: showArchived ? 'all' : null,
+              })}
+              className={`${FOCUS_RING} ${TOUCH_TARGET} inline-flex items-center rounded px-2 text-sm text-muted-foreground hover:text-foreground`}
+            >
+              {showAll ? 'Nur laufende Fälle' : 'Abgeschlossene Fälle einblenden'}
+            </Link>
+
+            <Link
+              href={athleteHref(athlete.id, {
+                cases: showAll ? 'all' : null,
+                assessments: showArchived ? null : 'all',
+              })}
+              className={`${FOCUS_RING} ${TOUCH_TARGET} inline-flex items-center rounded px-2 text-sm text-muted-foreground hover:text-foreground`}
+            >
+              {showArchived ? 'Archivierte ausblenden' : 'Archivierte Assessments einblenden'}
+            </Link>
+
+            {cases.length === 0 ? null : <CaseDialog athleteId={athlete.id} />}
+          </div>
         </div>
 
         {cases.length === 0 ? (
           <NoCases>
-            <CaseForm athleteId={athlete.id} />
+            <CaseDialog athleteId={athlete.id} />
           </NoCases>
         ) : (
           <div className="flex flex-col gap-4">
@@ -210,6 +258,25 @@ export default async function AthletePage({ params }: { params: Promise<{ athlet
       </section>
     </main>
   );
+}
+
+/**
+ * The athlete's page with a narrowing changed and the rest kept.
+ *
+ * Both toggles live in the URL, so flipping one must not silently drop the
+ * other — the mistake a hand-built `?cases=all` link makes the moment a second
+ * filter exists.
+ */
+function athleteHref(
+  athleteId: string,
+  narrowing: { cases: string | null; assessments: string | null },
+): string {
+  const query = new URLSearchParams();
+  if (narrowing.cases !== null) query.set('cases', narrowing.cases);
+  if (narrowing.assessments !== null) query.set('assessments', narrowing.assessments);
+  const suffix = query.toString();
+
+  return suffix === '' ? `/athletes/${athleteId}` : `/athletes/${athleteId}?${suffix}`;
 }
 
 /**

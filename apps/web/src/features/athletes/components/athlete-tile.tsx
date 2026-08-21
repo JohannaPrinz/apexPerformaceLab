@@ -29,11 +29,29 @@ export interface AthleteTileData {
   readonly firstName: string;
   readonly lastName: string;
   readonly createdAt: Date;
-  readonly assessmentCount: number;
+  /**
+   * How many assessments this athlete has.
+   *
+   * Optional, because the roster does not carry it: counting across every
+   * athlete's cases is a second query the overview already pays for and the
+   * roster has no use for. Absent means the badge is not shown — never zero.
+   */
+  readonly assessmentCount?: number;
+  /** Shown when known; absent facts are omitted rather than dashed. */
+  readonly dateOfBirth?: Date | null;
+  readonly heightCm?: number | null;
+  readonly weightKg?: number | null;
+  readonly archivedAt?: Date | null;
 }
 
 export function AthleteTile({ athlete }: { readonly athlete: AthleteTileData }) {
   const initials = `${athlete.firstName.slice(0, 1)}${athlete.lastName.slice(0, 1)}`.toUpperCase();
+
+  const facts = [
+    athlete.dateOfBirth == null ? null : `geb. ${athlete.dateOfBirth.toLocaleDateString('de-DE')}`,
+    athlete.heightCm == null ? null : `${athlete.heightCm.toLocaleString('de-DE')} cm`,
+    athlete.weightKg == null ? null : `${athlete.weightKg.toLocaleString('de-DE')} kg`,
+  ].filter((fact): fact is string => fact !== null);
 
   return (
     // The whole tile is the link, so the target is the card rather than the
@@ -63,11 +81,23 @@ export function AthleteTile({ athlete }: { readonly athlete: AthleteTileData }) 
           seit {athlete.createdAt.toLocaleDateString('de-DE')}
         </span>
 
-        {athlete.assessmentCount > 0 ? (
-          <Badge variant="secondary" className="mt-1 w-fit">
-            {athlete.assessmentCount} {athlete.assessmentCount === 1 ? 'Assessment' : 'Assessments'}
-          </Badge>
-        ) : null}
+        {/* Only what is known. An absent height is left out rather than shown
+            as a dash — a tile of em dashes reads as a broken record. */}
+        {facts.length === 0 ? null : (
+          <span className="text-xs text-muted-foreground" data-numeric>
+            {facts.join(' · ')}
+          </span>
+        )}
+
+        <span className="mt-1 flex flex-wrap items-center gap-1.5">
+          {athlete.archivedAt ? <Badge variant="secondary">Deaktiviert</Badge> : null}
+          {athlete.assessmentCount !== undefined && athlete.assessmentCount > 0 ? (
+            <Badge variant="secondary">
+              {athlete.assessmentCount}{' '}
+              {athlete.assessmentCount === 1 ? 'Assessment' : 'Assessments'}
+            </Badge>
+          ) : null}
+        </span>
       </span>
     </Link>
   );

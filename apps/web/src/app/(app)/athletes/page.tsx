@@ -2,10 +2,10 @@ import Link from 'next/link';
 
 import { Search } from 'lucide-react';
 
-import { Badge, Button } from '@apex/ui';
+import { Button } from '@apex/ui';
 
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_FIELD } from '@/components/common/touch';
-import { CreateAthleteDialog, LoadMoreAthletes } from '@/features/athletes';
+import { AthleteTile, CreateAthleteDialog, LoadMoreAthletes } from '@/features/athletes';
 import { ATHLETE_STATUS_FILTERS, type AthleteStatusFilter } from '@/features/athletes/schemas';
 import { api } from '@/trpc/server';
 
@@ -171,33 +171,13 @@ export default async function AthletesPage({
         </div>
       ) : (
         <>
-          <ul className="flex flex-col gap-2">
+          {/* Tiles rather than rows: the roster is a place to recognise
+              someone at a glance, and a grid shows six at once where a list
+              shows six lines. One column on a phone, more as there is room. */}
+          <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {items.map((athlete) => (
-              <li key={athlete.id}>
-                <Link
-                  href={`/athletes/${athlete.id}`}
-                  className={`${FOCUS_RING} flex min-h-11 flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-md border border-border bg-card px-4 py-3 transition-colors hover:border-border-strong`}
-                >
-                  {/* `min-w-0` with `break-words`: a long double surname wraps
-                      inside the row instead of widening the page, and the badge
-                      cannot squeeze it off. */}
-                  <span className="flex min-w-0 flex-col">
-                    <span className="font-medium break-words">
-                      {athlete.lastName}, {athlete.firstName}
-                    </span>
-                    <span className="text-xs break-words text-muted-foreground">
-                      {facts(athlete)}
-                    </span>
-                  </span>
-
-                  {/* Wording, not only colour: a status a coach can only see is
-                      a status a screen reader cannot. */}
-                  {athlete.archivedAt ? (
-                    <Badge variant="secondary" className="shrink-0">
-                      Deaktiviert
-                    </Badge>
-                  ) : null}
-                </Link>
+              <li key={athlete.id} className="min-w-0">
+                <AthleteTile athlete={athlete} />
               </li>
             ))}
           </ul>
@@ -207,16 +187,6 @@ export default async function AthletesPage({
       )}
     </main>
   );
-}
-
-/** The identifying details a coach scans for, and nothing invented. */
-function facts(athlete: { dateOfBirth: Date | null; email: string | null }): string {
-  return [
-    athlete.dateOfBirth === null ? null : `geb. ${athlete.dateOfBirth.toLocaleDateString('de-DE')}`,
-    athlete.email,
-  ]
-    .filter((fact): fact is string => fact !== null && fact !== '')
-    .join(' · ');
 }
 
 /** The same narrowing, back at the first page. */
