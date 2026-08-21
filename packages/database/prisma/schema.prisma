@@ -499,12 +499,34 @@ model Assessment {
   id          String         @id @default(cuid(2))
   /// Mandatory (§10, DOMAIN_RULES #6): data is never collected without a
   /// purpose. There is no separate Question object.
+  ///
+  /// Doubles as the examination's name — it is what every screen titles it
+  /// with. A separate name would either repeat the question or contradict it.
   question    String
+  /// Anything the question does not say: the circumstances, what to watch for,
+  /// what was agreed with the athlete beforehand.
+  ///
+  /// Optional, and deliberately not a `Note`: a `Note` is a domain object with
+  /// its own lifecycle that can be shared with the athlete (§17, §20). This
+  /// belongs to the examination itself and travels with it.
+  description String?
   /// Position in the process only — the content comes solely from the Modules.
   type        AssessmentType @default(INITIAL)
+
+  /// Where the examination stands: PLANNED → IN_PROGRESS → COMPLETED | ABORTED,
+  /// with ARCHIVED as the terminal state that takes it out of the working view.
+  ///
+  /// Mirrors `AssessmentModuleStatus` one level up; the transitions live in
+  /// `@apex/domain`, not in this column — the same split the test's status uses.
+  ///
+  /// `PLANNED` is the default because that is what a new assessment is. Rows
+  /// written before this column existed are backfilled from their tests, never
+  /// from the default.
+  status AssessmentStatus @default(PLANNED)
+
   performedAt DateTime
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   organizationId String
   organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -520,6 +542,7 @@ model Assessment {
 
   @@index([organizationId])
   @@index([caseId, performedAt])
+  @@index([status])
   @@map("assessments")
 }
 
@@ -551,6 +574,12 @@ model AssessmentModule {
   /// (§11); with several tests of one type they are shown side by side rather
   /// than matched by name, so renaming a test can never tear a history apart.
   name          String?
+  /// What this test is for, in the coach's own words.
+  ///
+  /// Distinct from the configuration's `notes` ("Protokollnotizen"), which say
+  /// **how** the test is carried out — loads, device settings, conditions. This
+  /// says what it is and why it is in this examination.
+  description   String?
   /// The registry version this module was captured under (§11, "Each Module
   /// additionally defines Version"). Recorded on the row, not only in the
   /// registry: a published Report must stay re-renderable with the payload
@@ -570,8 +599,42 @@ model AssessmentModule {
   /// `evaluateReadiness` in `@apex/domain`. A COMPLETED test may still be
   /// missing values, and an ABORTED one may hold enough to be useful.
   status        AssessmentModuleStatus @default(PLANNED)
-  createdAt     DateTime               @default(now())
-  updatedAt     DateTime               @updatedAt
+
+  /// When the coach first called this test finished.
+  ///
+  /// Kept even after the test is reopened, and **not** reset on a second
+  /// completion: it is the line that divides values recorded during the test
+  /// from values changed afterwards, and moving it would erase exactly the
+  /// history it exists to make visible. A measurement whose `ingestedAt` is
+  /// later than this was entered after the test was called done.
+  ///
+  /// Null while the test has never been completed. Not derivable from `status`:
+  /// a reopened test is `IN_PROGRESS` again and would otherwise look like one
+  /// that was never finished.
+  completedAt DateTime?
+  /// When it was last reopened after being completed.
+  ///
+  /// Together with `completedAt` this is what the test overview reports: that
+  /// the test was finished, that it was opened again, and when.
+  reopenedAt  DateTime?
+
+  /// Taken out of the working view without being deleted.
+  ///
+  /// A **date, not a status** — the same shape `Athlete`, `Exercise` and
+  /// `Coach` use, and deliberately not the `ARCHIVED` status that
+  /// `PerformanceCase` and `Assessment` carry. The two say different things
+  /// here: a test's status is how far the coach got, and an `ARCHIVED` status
+  /// would overwrite `COMPLETED` — so a test shown again after archiving could
+  /// no longer say whether it was performed or skipped. That is exactly the
+  /// fact an evaluation needs.
+  ///
+  /// Archived tests are excluded from the assessment's working list and from
+  /// evaluation, and can be shown on request. Never deleted: the measurements
+  /// are the record (§13).
+  archivedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -603,10 +666,11 @@ model AssessmentModule {
   notes            Note[]
   appointments     Appointment[]
 
-  /// A module appears at most once per Assessment.
   /// Deliberately **not** unique on (assessmentId, moduleKey): an assessment
   /// may hold several tests of one type, told apart by `name` (§11).
   @@index([assessmentId, moduleKey])
+  /// The assessment view lists the tests that are not archived.
+  @@index([assessmentId, archivedAt])
   @@index([organizationId])
   @@index([moduleKey])
   @@index([createdByCoachId])
@@ -1366,6 +1430,15 @@ model Program {
 model Note {
   id        String   @id @default(cuid(2))
   body      String
+  /// Which pass of the Module this note is about. **1-based**, null for a note
+  /// about the test as a whole — which is what every note was before stages
+  /// could be annotated.
+  ///
+  /// Only meaningful together with `assessmentModuleId`. A pass is a structure
+  /// inside the Module and never an entity — the same reasoning
+  /// `Measurement.passIndex` is built on — so the note points at the module and
+  /// names the pass, rather than at a row that would have to exist for it.
+  passIndex Int?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1540,6 +1613,17 @@ enum AssessmentModuleStatus {
   COMPLETED
   SKIPPED
   ABORTED
+}
+
+/// Mirrors `AssessmentModuleStatus` one level up. `SKIPPED` is deliberately
+/// absent: an examination that does not happen is not created, or is archived
+/// without ever running.
+enum AssessmentStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  ABORTED
+  ARCHIVED
 }
 
 enum AssessmentType {

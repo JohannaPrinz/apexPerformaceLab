@@ -91,6 +91,7 @@ export {
 
   // Assessment & measurement
   AssessmentType,
+  AssessmentStatus,
   AssessmentModuleStatus,
   MeasurementValueType,
   BodySide,
