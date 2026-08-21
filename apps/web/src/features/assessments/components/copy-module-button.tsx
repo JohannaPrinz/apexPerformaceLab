@@ -13,31 +13,29 @@ import { copyModuleAction } from '../server/actions';
 export interface CopyTarget {
   id: string;
   question: string;
-  /** Module keys that assessment already holds — it records each test once. */
-  moduleKeys: readonly string[];
 }
 
 /**
- * Copies a configured test into another assessment.
+ * Copies a configured test — into this assessment or another one.
  *
- * **Not into the same one.** An assessment records each test once
- * (`@@unique([assessmentId, moduleKey])`), so a copy alongside the original is
- * not something the model permits — and that constraint is deliberate, not an
- * obstacle to work around. The useful case is the one this offers: carrying a
- * test a coach has configured carefully over to the athlete's next assessment.
+ * **This assessment is the first option, and it is why the button exists.** The
+ * common case is a second run of a test in the same session: three sprints, two
+ * jumps. Copying used to be refused there, because an assessment recorded each
+ * test type once; §11 abolished that and the unique index went with it, but the
+ * refusal outlived both — which made this button do nothing at all for an
+ * athlete with a single assessment.
  *
- * Targets that already hold this test are shown and disabled rather than hidden,
- * so the reason is visible instead of the option merely being absent.
+ * The other assessments of the athlete follow, for carrying a carefully
+ * configured test over to the next session.
  */
 export function CopyModuleButton({
   moduleId,
-  moduleKey,
   assessmentId,
   targets,
 }: {
   moduleId: string;
-  moduleKey: string;
   assessmentId: string;
+  /** The athlete's *other* assessments. This one is added as the first option. */
   targets: readonly CopyTarget[];
 }) {
   const router = useRouter();
@@ -59,19 +57,6 @@ export function CopyModuleButton({
       document.removeEventListener('keydown', onKeyDown);
     };
   }, [open]);
-
-  if (targets.length === 0) {
-    return (
-      <Button
-        variant="ghost"
-        className={TOUCH_BUTTON}
-        disabled
-        title="Dieser Athlet hat kein weiteres Assessment, in das der Test kopiert werden könnte."
-      >
-        Kopieren
-      </Button>
-    );
-  }
 
   return (
     <div className="relative">
@@ -97,18 +82,15 @@ export function CopyModuleButton({
           className="absolute right-0 z-10 mt-1 flex w-72 max-w-[calc(100vw-3rem)] flex-col gap-1 rounded-md border border-border bg-card p-2 shadow-md"
         >
           <p className="px-2 py-1 text-xs text-muted-foreground">
-            In ein anderes Assessment kopieren. Die Konfiguration wird übernommen, die Messwerte
-            nicht.
+            Die Konfiguration wird übernommen, die Messwerte nicht.
           </p>
 
-          {targets.map((target) => {
-            const alreadyHolds = target.moduleKeys.includes(moduleKey);
-
-            return (
+          {[{ id: assessmentId, question: 'In dieses Assessment' }, ...targets].map(
+            (target, index) => (
               <button
                 key={target.id}
                 type="button"
-                disabled={alreadyHolds || pending}
+                disabled={pending}
                 onClick={() => {
                   setError(null);
                   startTransition(async () => {
@@ -123,12 +105,14 @@ export function CopyModuleButton({
                 className={`${TOUCH_TARGET} ${FOCUS_RING} flex flex-col justify-center rounded px-2 text-left text-sm transition-colors hover:bg-muted disabled:opacity-40 disabled:hover:bg-transparent`}
               >
                 <span className="line-clamp-1">{target.question}</span>
-                {alreadyHolds ? (
-                  <span className="text-xs text-muted-foreground">enthält diesen Test bereits</span>
+                {index === 0 ? (
+                  <span className="text-xs text-muted-foreground">
+                    zweiter Durchgang desselben Tests
+                  </span>
                 ) : null}
               </button>
-            );
-          })}
+            ),
+          )}
 
           {error ? (
             <p role="alert" className="px-2 text-xs text-destructive">
