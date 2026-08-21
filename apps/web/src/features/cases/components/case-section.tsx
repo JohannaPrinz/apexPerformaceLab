@@ -8,9 +8,26 @@ import { FOCUS_RING } from '@/components/common/touch';
 import { CreateAssessmentDialog } from '@/features/assessments';
 import { ASSESSMENT_TYPE_LABELS_DE } from '@/features/assessments/components/labels';
 
+import { CaseDialog } from './case-dialog';
 import { CaseStatusButton } from './case-status-button';
 
-import type { CaseListItem } from './case-list';
+import type { CaseStatusInput, CaseTypeInput } from '../schemas';
+
+/**
+ * One engagement, as the athlete page reads it.
+ *
+ * Lived in `case-list.tsx` while a flat list existed; that list was replaced by
+ * the nested view and the type came with it rather than outliving its file.
+ */
+export interface CaseListItem {
+  id: string;
+  title: string;
+  description: string | null;
+  type: CaseTypeInput;
+  status: CaseStatusInput;
+  startedAt: Date;
+  endedAt: Date | null;
+}
 
 /**
  * One engagement, with the assessments that belong to it.
@@ -70,11 +87,23 @@ export function CaseSection({
           </p>
         </div>
 
-        <CaseStatusButton
-          caseId={performanceCase.id}
-          athleteId={athleteId}
-          status={performanceCase.status}
-        />
+        <div className="flex flex-wrap items-center gap-1">
+          <CaseDialog
+            athleteId={athleteId}
+            performanceCase={{
+              id: performanceCase.id,
+              title: performanceCase.title,
+              description: performanceCase.description,
+              type: performanceCase.type,
+            }}
+          />
+
+          <CaseStatusButton
+            caseId={performanceCase.id}
+            athleteId={athleteId}
+            status={performanceCase.status}
+          />
+        </div>
       </header>
 
       <div className="flex flex-col gap-3 border-t border-border pt-4">

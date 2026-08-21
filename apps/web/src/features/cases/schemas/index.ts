@@ -40,6 +40,36 @@ export const createCaseSchema = z.object({
 
 export type CreateCaseInput = z.infer<typeof createCaseSchema>;
 
+/**
+ * Correcting what a case says about itself.
+ *
+ * Title, description and type — the three things a coach writes. Status is not
+ * here: it has its own transition rules (`OPEN → CLOSED → ARCHIVED`) and its own
+ * procedure, and folding it in would make an ordinary edit able to close an
+ * engagement by accident.
+ *
+ * Every field optional, so a caller may change one thing. An empty description
+ * becomes `null` — the same "clearing is an instruction" rule the athlete form
+ * follows, for the same reason: a description entered by mistake must be
+ * removable, not only correctable.
+ */
+export const updateCaseSchema = z.object({
+  caseId: z.string().min(1),
+  title: z
+    .string()
+    .trim()
+    .min(1, 'Bitte einen Titel für den Betreuungsfall angeben.')
+    .max(160)
+    .optional(),
+  description: z
+    .union([z.string().trim().max(2000), z.literal(''), z.null()])
+    .transform((value) => (value === '' || value === null ? null : value))
+    .optional(),
+  type: caseTypeSchema.optional(),
+});
+
+export type UpdateCaseInput = z.infer<typeof updateCaseSchema>;
+
 export const listCasesSchema = z.object({
   athleteId: z.string().min(1),
   /** Closed and archived cases are part of the history and stay reachable. */

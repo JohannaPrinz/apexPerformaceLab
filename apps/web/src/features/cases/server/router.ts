@@ -6,9 +6,15 @@ import { AppError } from '@apex/types';
 
 import { createTRPCRouter, withCoachPermission, withPermission } from '@/server/api/trpc';
 
-import { caseIdSchema, createCaseSchema, listCasesSchema, setCaseStatusSchema } from '../schemas';
+import {
+  caseIdSchema,
+  createCaseSchema,
+  listCasesSchema,
+  setCaseStatusSchema,
+  updateCaseSchema,
+} from '../schemas';
 
-import { createCase, getCase, listCasesForAthlete, setCaseStatus } from './service';
+import { createCase, getCase, listCasesForAthlete, setCaseStatus, updateCase } from './service';
 
 const notFound = (resource: 'Athlete' | 'Performance case') =>
   new TRPCError({
@@ -41,6 +47,18 @@ export const casesRouter = createTRPCRouter({
       if (!performanceCase) throw notFound('Athlete');
 
       return performanceCase;
+    }),
+
+  /**
+   * Corrects a case. Status has its own procedure and its own transitions.
+   */
+  update: withPermission('case:write')
+    .input(updateCaseSchema)
+    .mutation(async ({ ctx, input }) => {
+      const updated = await updateCase(ctx.db, ctx.tenant, input);
+      if (!updated) throw notFound('Performance case');
+
+      return updated;
     }),
 
   setStatus: withPermission('case:write')

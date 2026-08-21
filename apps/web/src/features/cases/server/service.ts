@@ -8,7 +8,7 @@ import type { TenantContext } from '@apex/types';
 
 import { caseSelect, type CaseRecord } from '@/services/case-provisioning';
 
-import type { ListCasesInput } from '../schemas';
+import type { ListCasesInput, UpdateCaseInput } from '../schemas';
 
 /**
  * Performance case reads.
@@ -74,6 +74,35 @@ export async function setCaseStatus(
   const { count } = await db.performanceCase.updateMany({
     where: scoped(tenant, { id: caseId }),
     data: { status, endedAt: status === 'OPEN' ? null : new Date() },
+  });
+
+  return count === 0 ? null : getCase(db, tenant, caseId);
+}
+
+/**
+ * Corrects what a case says about itself.
+ *
+ * `updateMany` with `scoped()`, never a bare `update`: the latter takes a unique
+ * `where` and cannot carry the tenant filter, so it would happily write another
+ * workspace's row. A zero count means "not in this workspace" and is reported as
+ * not found — never as forbidden, which would confirm the row exists
+ * (docs/SECURITY.md §4).
+ *
+ * Status is deliberately not writable here; it has its own transitions and its
+ * own procedure.
+ */
+export async function updateCase(
+  db: CaseDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  { caseId, ...fields }: UpdateCaseInput,
+): Promise<CaseRecord | null> {
+  const { count } = await db.performanceCase.updateMany({
+    where: scoped(tenant, { id: caseId }),
+    data: {
+      ...(fields.title === undefined ? {} : { title: fields.title }),
+      ...(fields.description === undefined ? {} : { description: fields.description }),
+      ...(fields.type === undefined ? {} : { type: fields.type }),
+    },
   });
 
   return count === 0 ? null : getCase(db, tenant, caseId);
