@@ -6,11 +6,19 @@
  */
 export { AddModuleForm } from './components/add-module-form';
 export { AssessmentForm } from './components/assessment-form';
+export { AssessmentStatusActions } from './components/assessment-status-actions';
 export { CreateAssessmentDialog } from './components/create-assessment-dialog';
 export { CreateTestDialog, type SelectableExercise } from './components/create-test-dialog';
 export { CopyAssessmentButton } from './components/copy-assessment-button';
+export {
+  EditAssessmentDialog,
+  type AssessmentDialogValues,
+} from './components/edit-assessment-dialog';
+export { EditModuleDialog } from './components/edit-module-dialog';
+export { ExercisePicker, type PickableExercise } from './components/exercise-picker';
 export { CopyModuleButton, type CopyTarget } from './components/copy-module-button';
 export { ModuleCard, type ModuleCardData } from './components/module-card';
+export { moduleLabel } from './components/labels';
 export { TestBuilder } from './components/builder/test-builder';
 export {
   BUILDER_STEPS,
@@ -24,6 +32,9 @@ export {
 } from './components/builder/draft';
 export { MeasurementCell } from './measurements/components/measurement-cell';
 export { TestRunner } from './measurements/components/test-runner';
+export { TestOverview } from './measurements/components/test-overview';
+export { ArchiveModuleButton } from './measurements/components/archive-module-button';
+export { RunTestButton } from './measurements/components/run-test-button';
 export {
   findRecorded,
   formatValue,

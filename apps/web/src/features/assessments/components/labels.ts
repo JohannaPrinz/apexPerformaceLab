@@ -91,3 +91,31 @@ export const SIDE_LABELS_DE: Readonly<Record<string, string>> = {
   RIGHT: 'Rechts',
   BILATERAL: 'Beidseitig',
 };
+
+/**
+ * Where an examination stands.
+ *
+ * "Läuft" matches the test's wording one level down — the same word for the
+ * same state, so a coach learns it once.
+ */
+export const ASSESSMENT_STATUS_LABELS_DE: Readonly<Record<string, string>> = {
+  PLANNED: 'Geplant',
+  IN_PROGRESS: 'Läuft',
+  COMPLETED: 'Abgeschlossen',
+  ABORTED: 'Abgebrochen',
+  ARCHIVED: 'Archiviert',
+};
+
+/**
+ * What a test is called — its own name, or its type when it has none.
+ *
+ * Lives here rather than beside a screen because a Server Component needs it
+ * too: it used to sit in a `'use client'` module, and the test overview crashed
+ * with "Attempted to call moduleLabel() from the server". A label helper has no
+ * business being client-only.
+ */
+export function moduleLabel(entry: { name: string | null; moduleKey: string }): string {
+  if (entry.name !== null && entry.name !== '') return entry.name;
+
+  return MODULE_LABELS_DE[entry.moduleKey as ModuleKey] ?? entry.moduleKey;
+}

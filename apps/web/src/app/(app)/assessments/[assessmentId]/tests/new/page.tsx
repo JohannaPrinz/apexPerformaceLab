@@ -2,7 +2,9 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { TRPCError } from '@trpc/server';
+import { ArrowLeft } from 'lucide-react';
 
+import { FOCUS_RING, TOUCH_TARGET } from '@/components/common/touch';
 import { TestBuilder } from '@/features/assessments';
 import { api } from '@/trpc/server';
 
@@ -38,11 +40,15 @@ export default async function NewTestPage({
   return (
     <main className="mx-auto flex w-full max-w-content flex-col gap-8 px-6 py-12">
       <div className="flex flex-col gap-1">
+        {/* The same shape as every other back link: a real touch target, and
+            allowed to shrink rather than widening the page. Measured at 375px
+            it was 32px tall and unbounded. */}
         <Link
           href={`/assessments/${assessmentId}`}
-          className="text-xs text-muted-foreground hover:underline"
+          className={`${FOCUS_RING} ${TOUCH_TARGET} -ml-2 inline-flex w-fit max-w-full items-center gap-1.5 rounded px-2 text-sm text-muted-foreground hover:text-foreground`}
         >
-          ← {assessment.question}
+          <ArrowLeft aria-hidden="true" className="size-4 shrink-0" />
+          <span className="min-w-0 truncate">{assessment.question}</span>
         </Link>
         <h1 className="text-2xl font-semibold">Test hinzufügen</h1>
       </div>

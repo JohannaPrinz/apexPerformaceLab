@@ -2,9 +2,11 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { TRPCError } from '@trpc/server';
+import { ArrowLeft } from 'lucide-react';
 
 import type { ModuleKey } from '@apex/domain';
 
+import { FOCUS_RING, TOUCH_TARGET } from '@/components/common/touch';
 import { TestBuilder } from '@/features/assessments';
 import { api } from '@/trpc/server';
 
@@ -48,11 +50,14 @@ export default async function ConfigureTestPage({
   if (!assessmentModule.configuration) {
     return (
       <main className="mx-auto flex w-full max-w-content flex-col gap-4 px-6 py-12">
+        {/* The same shape as every other back link: a real touch target, and
+            allowed to shrink instead of widening the page. */}
         <Link
-          href={`/assessments/${assessmentId}`}
-          className="text-xs text-muted-foreground hover:underline"
+          href={`/assessments/${assessmentId}/tests/${moduleId}`}
+          className={`${FOCUS_RING} ${TOUCH_TARGET} -ml-2 inline-flex w-fit max-w-full items-center gap-1.5 rounded px-2 text-sm text-muted-foreground hover:text-foreground`}
         >
-          ← {assessment.question}
+          <ArrowLeft aria-hidden="true" className="size-4 shrink-0" />
+          <span className="min-w-0 truncate">{assessmentModule.name ?? assessment.question}</span>
         </Link>
         <p className="text-sm text-muted-foreground">
           Dieser Test wurde mit einer Struktur konfiguriert, die nicht mehr gelesen werden kann, und
@@ -65,11 +70,14 @@ export default async function ConfigureTestPage({
   return (
     <main className="mx-auto flex w-full max-w-content flex-col gap-8 px-6 py-12">
       <div className="flex flex-col gap-1">
+        {/* The same shape as every other back link: a real touch target, and
+            allowed to shrink instead of widening the page. */}
         <Link
-          href={`/assessments/${assessmentId}`}
-          className="text-xs text-muted-foreground hover:underline"
+          href={`/assessments/${assessmentId}/tests/${moduleId}`}
+          className={`${FOCUS_RING} ${TOUCH_TARGET} -ml-2 inline-flex w-fit max-w-full items-center gap-1.5 rounded px-2 text-sm text-muted-foreground hover:text-foreground`}
         >
-          ← {assessment.question}
+          <ArrowLeft aria-hidden="true" className="size-4 shrink-0" />
+          <span className="min-w-0 truncate">{assessmentModule.name ?? assessment.question}</span>
         </Link>
         <h1 className="text-2xl font-semibold">Test konfigurieren</h1>
       </div>
