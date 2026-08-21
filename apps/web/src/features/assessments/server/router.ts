@@ -12,6 +12,7 @@ import { AppError } from '@apex/types';
 
 import { createTRPCRouter, withCoachPermission, withPermission } from '@/server/api/trpc';
 
+import { MODULE_STATUS_LABELS_DE } from '../components/labels';
 import { measurementsRouter } from '../measurements/server/router';
 import {
   addModuleSchema,
@@ -21,7 +22,11 @@ import {
   createAssessmentSchema,
   listAssessmentsSchema,
   moduleIdSchema,
+  setAssessmentStatusSchema,
+  setModuleArchivedSchema,
+  updateAssessmentSchema,
   updateModuleConfigurationSchema,
+  updateModuleSchema,
 } from '../schemas';
 
 import {
@@ -35,7 +40,11 @@ import {
   listAssessmentsForAthlete,
   measurementTypeNames,
   removeModule,
+  setAssessmentStatus,
+  setModuleArchived,
   setModuleStatus,
+  updateAssessment,
+  updateModule,
   updateModuleConfiguration,
   type UnavailableReferences,
 } from './service';
@@ -66,7 +75,9 @@ const notFound = (resource: string) =>
 export const assessmentsRouter = createTRPCRouter({
   listForAthlete: withPermission('assessment:read')
     .input(listAssessmentsSchema)
-    .query(({ ctx, input }) => listAssessmentsForAthlete(ctx.db, ctx.tenant, input.athleteId)),
+    .query(({ ctx, input }) =>
+      listAssessmentsForAthlete(ctx.db, ctx.tenant, input.athleteId, input.includeArchived),
+    ),
 
   byId: withPermission('assessment:read')
     .input(assessmentIdSchema)
@@ -117,6 +128,46 @@ export const assessmentsRouter = createTRPCRouter({
     }),
 
   /**
+   * Changes the question, the description, the type or the date.
+   *
+   * Never the status — `setStatus` owns that, because a status has transition
+   * rules and an ordinary edit must not close a session by accident.
+   */
+  update: withCoachPermission('assessment:write')
+    .input(updateAssessmentSchema)
+    .mutation(async ({ ctx, input }) => {
+      const assessment = await updateAssessment(ctx.db, ctx.tenant, input);
+      if (!assessment) throw notFound('Assessment');
+
+      return assessment;
+    }),
+
+  /**
+   * Takes a test out of the working view, or brings it back.
+   *
+   * Never deletes and never refuses: a test holding measurements is precisely
+   * the one that should be archived instead of removed (§13).
+   */
+  setModuleArchived: withCoachPermission('assessment:write')
+    .input(setModuleArchivedSchema)
+    .mutation(async ({ ctx, input }) => {
+      const result = await setModuleArchived(ctx.db, ctx.tenant, input.moduleId, input.archived);
+      if (!result) throw notFound('Test');
+
+      return result;
+    }),
+
+  /** Renames a test, or records what it is for. Never touches its protocol. */
+  updateModule: withCoachPermission('assessment:write')
+    .input(updateModuleSchema)
+    .mutation(async ({ ctx, input }) => {
+      const updated = await updateModule(ctx.db, ctx.tenant, input);
+      if (!updated) throw notFound('Test');
+
+      return updated;
+    }),
+
+  /**
    * The measurement types this workspace may configure a test with — the
    * builder's catalogue. System and workspace types together (§12).
    */
@@ -148,6 +199,11 @@ export const assessmentsRouter = createTRPCRouter({
 
   /**
    * Copies a configured test. No measurement travels with it (§13).
+   *
+   * Into the same assessment or another one. Copying alongside the original
+   * used to be refused; §11 permits several tests of one type, so the useful
+   * case — a second run of a test the coach has configured carefully — is now
+   * the ordinary one.
    */
   copyModule: withCoachPermission('assessment:write')
     .input(copyModuleSchema)
@@ -162,13 +218,7 @@ export const assessmentsRouter = createTRPCRouter({
 
       if (!result.ok) {
         if (result.reason === 'NOT_FOUND') throw notFound('Test');
-        if (result.reason === 'TARGET_NOT_FOUND') throw notFound('Assessment');
-
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message:
-            'That assessment already holds this test. An assessment records each test once — copy it into another assessment instead.',
-        });
+        throw notFound('Assessment');
       }
 
       return result.module;
@@ -220,7 +270,7 @@ export const assessmentsRouter = createTRPCRouter({
 
         throw new TRPCError({
           code: 'BAD_REQUEST',
-          message: `A ${String(result.from).toLowerCase().replace('_', ' ')} test cannot become ${input.status.toLowerCase().replace('_', ' ')}.`,
+          message: `Ein Test im Status „${MODULE_STATUS_LABELS_DE[result.from ?? 'PLANNED']}“ kann nicht zu „${MODULE_STATUS_LABELS_DE[input.status]}“ werden.`,
         });
       }
 
@@ -252,6 +302,40 @@ export const assessmentsRouter = createTRPCRouter({
       }
 
       return { moduleId: input.moduleId };
+    }),
+
+  /**
+   * Starts, finishes, abandons or archives an examination.
+   *
+   * Separate from `update` on purpose: a status has transition rules, and an
+   * ordinary edit must not be able to close a session by accident.
+   */
+  setStatus: withPermission('assessment:write')
+    .input(setAssessmentStatusSchema)
+    .mutation(async ({ ctx, input }) => {
+      const result = await setAssessmentStatus(
+        ctx.db,
+        ctx.tenant,
+        input.assessmentId,
+        input.status,
+      );
+
+      if (!result.ok) {
+        if (result.reason === 'NOT_FOUND') throw notFound('Assessment');
+
+        throw new TRPCError({
+          // The request is well formed and the caller is allowed; the
+          // examination is simply in a state that does not permit it — and it
+          // may permit it later.
+          code: 'PRECONDITION_FAILED',
+          message:
+            result.reason === 'TESTS_STILL_OPEN'
+              ? 'Es sind noch Tests offen. Schließen Sie sie ab oder überspringen Sie sie.'
+              : 'Dieser Schritt ist aus dem aktuellen Status heraus nicht möglich.',
+        });
+      }
+
+      return result.assessment;
     }),
 
   measurements: measurementsRouter,

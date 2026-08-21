@@ -14,10 +14,16 @@ import {
   getAssessment,
   listAssessmentsForAthlete,
   removeModule,
+  setAssessmentStatus,
+  setModuleArchived,
+  updateAssessment,
+  updateModule,
   updateModuleConfiguration,
 } from './service';
 
 const TENANT = { organizationId: 'org_a' };
+/** A second workspace, to prove nothing reaches across the boundary. */
+const OTHER_TENANT = { organizationId: 'org_b' };
 
 interface QueryArgs {
   where: Record<string, unknown>;
@@ -42,7 +48,9 @@ function fakeDb(overrides: { sourceModules?: unknown[] } = {}) {
     findFirst: vi.fn<(args: QueryArgs) => Promise<unknown>>().mockResolvedValue({
       id: 'as_1',
       question: 'Where is the aerobic threshold?',
+      description: null,
       type: 'INITIAL',
+      status: 'PLANNED',
       performedAt: new Date('2026-01-01'),
       createdAt: new Date('2026-01-01'),
       caseId: 'case_1',
@@ -62,6 +70,9 @@ function fakeDb(overrides: { sourceModules?: unknown[] } = {}) {
       ],
       case: { athleteId: 'ath_1' },
     }),
+    updateMany: vi
+      .fn<(args: QueryArgs) => Promise<{ count: number }>>()
+      .mockResolvedValue({ count: 1 }),
     create: vi.fn<(args: QueryArgs) => Promise<unknown>>().mockResolvedValue({
       id: 'as_new',
       question: 'Where is the aerobic threshold?',
@@ -121,6 +132,10 @@ function fakeDb(overrides: { sourceModules?: unknown[] } = {}) {
     // What the module has actually recorded — the configuration guard is stated
     // against this, not against the status.
     findMany: vi.fn<(args: QueryArgs) => Promise<unknown[]>>().mockResolvedValue([]),
+    // How many values currently stand per test, and when the newest was
+    // written. One aggregate for the whole assessment; superseded rows are
+    // filtered out by the caller's `where`.
+    groupBy: vi.fn<(args: QueryArgs) => Promise<unknown[]>>().mockResolvedValue([]),
   };
 
   /**
@@ -230,19 +245,32 @@ describe('assessment service — tenant scoping', () => {
    * A started test is history. Aborting keeps it and its measurements; deleting
    * would erase a test that was actually performed (§22).
    */
-  it('refuses to delete a test that has been started', async () => {
-    const { db, assessmentModule } = fakeDb();
+  it('refuses to delete a test that has been started, once the examination is closed', async () => {
+    const { db, assessment, assessmentModule } = fakeDb();
     assessmentModule.findFirst.mockResolvedValue({
       id: 'mod_1',
       status: 'IN_PROGRESS',
       assessmentId: 'ass_1',
     });
-    assessmentModule.findMany.mockResolvedValue([{ status: 'IN_PROGRESS' }]);
+    assessment.findFirst.mockResolvedValue({ status: 'COMPLETED' });
 
     const result = await removeModule(db, TENANT, 'mod_1');
 
-    expect(result).toMatchObject({ ok: false, reason: 'ASSESSMENT_BEGUN' });
+    expect(result).toMatchObject({ ok: false, reason: 'ASSESSMENT_CLOSED' });
     expect(assessmentModule.deleteMany).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The case that used to be refused. Whether the examination is closed is a
+   * property of the Assessment, and reading it from "has any test started"
+   * froze every planned test the moment the coach began the session.
+   */
+  it('deletes an untouched test from a running examination', async () => {
+    const { db, assessment, assessmentModule } = fakeDb();
+    assessment.findFirst.mockResolvedValue({ status: 'IN_PROGRESS' });
+
+    expect((await removeModule(db, TENANT, 'mod_1')).ok).toBe(true);
+    expect(assessmentModule.deleteMany).toHaveBeenCalled();
   });
 
   it('refuses to delete a planned test that already holds values', async () => {
@@ -269,40 +297,40 @@ describe('assessment service — tenant scoping', () => {
     expect(assessmentModule.deleteMany).toHaveBeenCalled();
   });
 
-  it('refuses a test that took place once the assessment has been performed', async () => {
-    const { db, assessmentModule } = fakeDb();
+  it('refuses a test that took place once the examination is closed', async () => {
+    const { db, assessment, assessmentModule } = fakeDb();
     assessmentModule.findFirst.mockResolvedValue({
       id: 'mod_1',
       status: 'COMPLETED',
       assessmentId: 'ass_1',
     });
-    assessmentModule.findMany.mockResolvedValue([{ status: 'COMPLETED' }]);
+    assessment.findFirst.mockResolvedValue({ status: 'COMPLETED' });
 
     const result = await removeModule(db, TENANT, 'mod_1');
 
-    expect(result).toMatchObject({ ok: false, reason: 'ASSESSMENT_BEGUN' });
+    expect(result).toMatchObject({ ok: false, reason: 'ASSESSMENT_CLOSED' });
     expect(assessmentModule.deleteMany).not.toHaveBeenCalled();
   });
 
-  it('still deletes a skipped test after the assessment was performed', async () => {
-    const { db, assessmentModule } = fakeDb();
+  it('still deletes a skipped test after the examination is closed', async () => {
+    const { db, assessment, assessmentModule } = fakeDb();
     assessmentModule.findFirst.mockResolvedValue({
       id: 'mod_1',
       status: 'SKIPPED',
       assessmentId: 'ass_1',
     });
-    assessmentModule.findMany.mockResolvedValue([{ status: 'COMPLETED' }, { status: 'SKIPPED' }]);
+    assessment.findFirst.mockResolvedValue({ status: 'COMPLETED' });
 
     expect((await removeModule(db, TENANT, 'mod_1')).ok).toBe(true);
   });
 
-  it('scopes the sibling lookup to the workspace', async () => {
-    // The statuses that decide the rule must not be read across tenants.
-    const { db, assessmentModule } = fakeDb();
+  it('scopes the status lookup that decides the rule', async () => {
+    // The status the rule turns on must not be read across tenants.
+    const { db, assessment } = fakeDb();
 
     await removeModule(db, TENANT, 'mod_1');
 
-    expect(argsOf(assessmentModule.findMany).where).toMatchObject({ organizationId: 'org_a' });
+    expect(argsOf(assessment.findFirst).where).toMatchObject({ organizationId: 'org_a' });
   });
 });
 
@@ -803,6 +831,7 @@ describe('copying one test', () => {
   const sourceRow = {
     id: 'mod_1',
     assessmentId: 'as_1',
+    name: 'Laufen – Laktat',
     moduleKey: 'lactate',
     moduleVersion: 2,
     payload: configuration,
@@ -811,10 +840,10 @@ describe('copying one test', () => {
     createdAt: new Date(),
   };
 
-  /** Source found, then no clash in the target assessment. */
+  /** Source found, then the target assessment found. */
   const withSource = () => {
     const harness = fakeDb();
-    harness.assessmentModule.findFirst.mockResolvedValueOnce(sourceRow).mockResolvedValueOnce(null);
+    harness.assessmentModule.findFirst.mockResolvedValueOnce(sourceRow);
 
     return harness;
   };
@@ -878,17 +907,40 @@ describe('copying one test', () => {
   });
 
   /**
-   * An assessment records each test once. Reported as a sentence rather than
-   * left to the unique constraint.
+   * An assessment used to record each test type once, and a copy alongside the
+   * original was refused. §11 abolished that rule and the unique index went
+   * with it — a second run of the same test in one session is the ordinary
+   * case, and copying a carefully configured test is how a coach sets it up.
    */
-  it('refuses a copy into an assessment that already holds the test', async () => {
-    const { db, assessmentModule } = fakeDb();
-    assessmentModule.findFirst.mockResolvedValue(sourceRow);
+  it('copies a test alongside the original in the same assessment', async () => {
+    const { db, assessmentModule } = withSource();
 
     const result = await copyModule(db, TENANT, 'coach_2', 'mod_1', 'as_1');
 
-    expect(result).toEqual({ ok: false, reason: 'ALREADY_PRESENT' });
-    expect(assessmentModule.create).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(argsOf(assessmentModule.create).data).toMatchObject({ assessmentId: 'as_1' });
+  });
+
+  it('marks the copy so two tests of one type are told apart', () => {
+    // The name is now the only thing distinguishing them, so an exact duplicate
+    // of it would leave the coach with two identical rows.
+    const { db, assessmentModule } = withSource();
+
+    return copyModule(db, TENANT, 'coach_2', 'mod_1', 'as_1').then(() => {
+      expect(argsOf(assessmentModule.create).data).toMatchObject({
+        name: 'Laufen – Laktat (Kopie)',
+      });
+    });
+  });
+
+  it('keeps the name unchanged when the copy lands in another assessment', async () => {
+    // There it is unambiguous on its own, and „(Kopie)" would describe how it
+    // got there rather than what it is.
+    const { db, assessmentModule } = withSource();
+
+    await copyModule(db, TENANT, 'coach_2', 'mod_1', 'as_2');
+
+    expect(argsOf(assessmentModule.create).data).toMatchObject({ name: 'Laufen – Laktat' });
   });
 });
 
@@ -1001,5 +1053,437 @@ describe('naming a test', () => {
 
       expect(result.success, name).toBe(true);
     }
+  });
+});
+
+/**
+ * Moving an examination through its lifecycle, against the service.
+ *
+ * The transition rule itself is tested in `@apex/domain`; what is asserted here
+ * is that the service *asks* it, refuses what it forbids, and never writes
+ * outside the workspace.
+ */
+describe('setting an assessment status', () => {
+  /**
+   * The row is read twice: once to check the transition, once to return the
+   * updated record. Both go through `findFirst`, so the fixture carries the
+   * whole shape rather than only the two fields the rule looks at.
+   */
+  const withStatus = (status: string, moduleStatuses: string[]) => {
+    const { db, assessment } = fakeDb();
+    assessment.findFirst.mockResolvedValue({
+      id: 'as_1',
+      question: 'Wo liegt die aerobe Schwelle?',
+      type: 'INITIAL',
+      status,
+      performedAt: new Date('2026-03-17'),
+      createdAt: new Date('2026-03-17'),
+      caseId: 'case_1',
+      case: { athleteId: 'ath_1' },
+      modules: moduleStatuses.map((moduleStatus, index) => ({
+        id: `mod_${String(index)}`,
+        moduleKey: 'lactate',
+        moduleVersion: 1,
+        payload: configuration,
+        status: moduleStatus,
+        createdByCoachId: 'coach_1',
+        createdAt: new Date('2026-03-17'),
+        _count: { measurements: 0 },
+      })),
+    });
+
+    return { db, assessment };
+  };
+
+  it('starts a planned examination', async () => {
+    const { db, assessment } = withStatus('PLANNED', ['PLANNED']);
+
+    const result = await setAssessmentStatus(db, TENANT, 'as_1', 'IN_PROGRESS');
+
+    expect(result.ok).toBe(true);
+    expect(argsOf(assessment.updateMany).data).toMatchObject({ status: 'IN_PROGRESS' });
+  });
+
+  it('refuses a move the lifecycle does not allow', async () => {
+    // Straight from planned to finished skips the session itself.
+    const { db, assessment } = withStatus('PLANNED', ['PLANNED']);
+
+    const result = await setAssessmentStatus(db, TENANT, 'as_1', 'COMPLETED');
+
+    expect(result).toMatchObject({ ok: false, reason: 'ILLEGAL_TRANSITION', from: 'PLANNED' });
+    expect(assessment.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses to finish while a test is still open', async () => {
+    const { db, assessment } = withStatus('IN_PROGRESS', ['COMPLETED', 'PLANNED']);
+
+    const result = await setAssessmentStatus(db, TENANT, 'as_1', 'COMPLETED');
+
+    expect(result).toMatchObject({ ok: false, reason: 'TESTS_STILL_OPEN' });
+    expect(assessment.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('finishes once every test is decided, skipped included', async () => {
+    const { db, assessment } = withStatus('IN_PROGRESS', ['COMPLETED', 'SKIPPED']);
+
+    expect((await setAssessmentStatus(db, TENANT, 'as_1', 'COMPLETED')).ok).toBe(true);
+    expect(argsOf(assessment.updateMany).data).toMatchObject({ status: 'COMPLETED' });
+  });
+
+  it('abandons a running examination without touching its measurements', async () => {
+    const { db, assessment } = withStatus('IN_PROGRESS', ['IN_PROGRESS']);
+
+    await setAssessmentStatus(db, TENANT, 'as_1', 'ABORTED');
+
+    // Only the status is written — nothing about the values recorded so far.
+    expect(Object.keys(argsOf(assessment.updateMany).data ?? {})).toEqual(['status']);
+  });
+
+  it('stays inside the workspace when reading and when writing', async () => {
+    const { db, assessment } = withStatus('PLANNED', ['PLANNED']);
+
+    await setAssessmentStatus(db, TENANT, 'as_1', 'IN_PROGRESS');
+
+    expect(argsOf(assessment.findFirst).where).toMatchObject({ organizationId: 'org_a' });
+    expect(argsOf(assessment.updateMany).where).toMatchObject({ organizationId: 'org_a' });
+  });
+
+  it("reports another workspace's assessment as not found", async () => {
+    const { db, assessment } = fakeDb();
+    assessment.findFirst.mockResolvedValue(null);
+
+    const result = await setAssessmentStatus(db, OTHER_TENANT, 'as_1', 'IN_PROGRESS');
+
+    expect(result).toMatchObject({ ok: false, reason: 'NOT_FOUND' });
+    expect(assessment.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Archived examinations leave the working view.
+ *
+ * Same rule engagements follow (§8): archiving is the act of putting something
+ * away, and a list that ignores it makes the act pointless. What is asserted is
+ * the `where` — the place the guarantee actually lives.
+ */
+describe('listing an athlete’s assessments', () => {
+  it('hides archived examinations by default', async () => {
+    const { db, assessment } = fakeDb();
+
+    await listAssessmentsForAthlete(db, TENANT, 'ath_1');
+
+    expect(argsOf(assessment.findMany).where).toMatchObject({
+      status: { not: 'ARCHIVED' },
+    });
+  });
+
+  it('includes them when asked', async () => {
+    const { db, assessment } = fakeDb();
+
+    await listAssessmentsForAthlete(db, TENANT, 'ath_1', true);
+
+    expect(argsOf(assessment.findMany).where).not.toHaveProperty('status');
+  });
+
+  it('stays inside the workspace either way', async () => {
+    for (const includeArchived of [false, true]) {
+      const { db, assessment } = fakeDb();
+
+      await listAssessmentsForAthlete(db, OTHER_TENANT, 'ath_1', includeArchived);
+
+      expect(argsOf(assessment.findMany).where).toMatchObject({ organizationId: 'org_b' });
+    }
+  });
+
+  it('reaches the athlete through the case, never a second column', async () => {
+    // §26.4: the athlete is not stored twice.
+    const { db, assessment } = fakeDb();
+
+    await listAssessmentsForAthlete(db, TENANT, 'ath_1');
+
+    expect(argsOf(assessment.findMany).where).toMatchObject({ case: { athleteId: 'ath_1' } });
+  });
+});
+
+/**
+ * Editing what a coach wrote.
+ *
+ * Two guarantees, and both are the kind that a form cannot provide: the write
+ * never leaves the workspace, and a field that was not sent is not touched.
+ * The second one matters because the dialogs render three fields and the record
+ * has more — a request that wrote every column would clear whatever it did not
+ * show.
+ */
+describe('editing an assessment', () => {
+  it('writes only inside the workspace', async () => {
+    const { db, assessment } = fakeDb();
+
+    await updateAssessment(db, TENANT, { assessmentId: 'as_1', question: 'Neue Frage' });
+
+    expect(argsOf(assessment.updateMany).where).toMatchObject({
+      organizationId: 'org_a',
+      id: 'as_1',
+    });
+  });
+
+  it('leaves out every field that was not sent', async () => {
+    const { db, assessment } = fakeDb();
+
+    await updateAssessment(db, TENANT, { assessmentId: 'as_1', question: 'Neue Frage' });
+
+    expect(argsOf(assessment.updateMany).data).toEqual({ question: 'Neue Frage' });
+  });
+
+  it('clears the description when it was explicitly emptied', async () => {
+    // Null is a value the coach chose. Only `undefined` means "not sent".
+    const { db, assessment } = fakeDb();
+
+    await updateAssessment(db, TENANT, { assessmentId: 'as_1', description: null });
+
+    expect(argsOf(assessment.updateMany).data).toEqual({ description: null });
+  });
+
+  it('reports an assessment in another workspace as missing, never as forbidden', async () => {
+    const { db, assessment } = fakeDb();
+    assessment.updateMany.mockResolvedValue({ count: 0 });
+
+    expect(await updateAssessment(db, OTHER_TENANT, { assessmentId: 'as_1' })).toBeNull();
+  });
+
+  it('cannot change the status', async () => {
+    // A status has transition rules and its own function. An ordinary edit must
+    // not be able to close a session because a form posted every field.
+    const { db, assessment } = fakeDb();
+
+    await updateAssessment(db, TENANT, {
+      assessmentId: 'as_1',
+      question: 'Neue Frage',
+      // @ts-expect-error — exactly the point: there is no such field to send.
+      status: 'COMPLETED',
+    });
+
+    expect(argsOf(assessment.updateMany).data).not.toHaveProperty('status');
+  });
+});
+
+describe('editing a test', () => {
+  it('writes only inside the workspace', async () => {
+    const { db, assessmentModule } = fakeDb();
+
+    await updateModule(db, TENANT, { moduleId: 'mod_1', name: 'Sprint 2' });
+
+    expect(argsOf(assessmentModule.updateMany).where).toMatchObject({
+      organizationId: 'org_a',
+      id: 'mod_1',
+    });
+  });
+
+  it('clears the name when it was emptied, so the test falls back to its type', async () => {
+    const { db, assessmentModule } = fakeDb();
+
+    await updateModule(db, TENANT, { moduleId: 'mod_1', name: null });
+
+    expect(argsOf(assessmentModule.updateMany).data).toEqual({ name: null });
+  });
+
+  it('never touches the configuration', async () => {
+    // Renaming must not be able to fail because an exercise was archived last
+    // week — which is what revalidating the protocol here would risk.
+    const { db, assessmentModule, exercise, measurementType } = fakeDb();
+
+    await updateModule(db, TENANT, { moduleId: 'mod_1', name: 'Sprint 2' });
+
+    expect(argsOf(assessmentModule.updateMany).data).not.toHaveProperty('payload');
+    expect(exercise.findMany).not.toHaveBeenCalled();
+    expect(measurementType.findMany).not.toHaveBeenCalled();
+  });
+
+  it('reports a test in another workspace as missing', async () => {
+    const { db, assessmentModule } = fakeDb();
+    assessmentModule.updateMany.mockResolvedValue({ count: 0 });
+
+    expect(await updateModule(db, OTHER_TENANT, { moduleId: 'mod_1' })).toBeNull();
+  });
+});
+
+/**
+ * Two facts the status alone cannot carry: that a test was once called
+ * finished, and that it was opened again afterwards. Everything the overview
+ * says about changes made after the fact hangs on being able to tell a reopened
+ * test from one that was never finished.
+ */
+describe('recording when a test was finished', () => {
+  const moduleAt = (status: string, completedAt: Date | null = null) => ({
+    id: 'mod_1',
+    status,
+    assessmentId: 'as_1',
+    completedAt,
+  });
+
+  it('stamps the completion the first time', async () => {
+    const { db, assessmentModule } = fakeDb();
+    assessmentModule.findFirst.mockResolvedValue(moduleAt('IN_PROGRESS'));
+
+    await setModuleStatus(db, TENANT, 'mod_1', 'COMPLETED');
+
+    expect(argsOf(assessmentModule.updateMany).data).toMatchObject({ status: 'COMPLETED' });
+    expect(argsOf(assessmentModule.updateMany).data?.['completedAt']).toBeInstanceOf(Date);
+  });
+
+  it('never moves a completion that is already recorded', async () => {
+    // It is the line dividing values taken during the test from values changed
+    // afterwards. Moving it would erase the history it exists to show.
+    const first = new Date('2026-08-01T10:00:00.000Z');
+    const { db, assessmentModule } = fakeDb();
+    assessmentModule.findFirst.mockResolvedValue(moduleAt('IN_PROGRESS', first));
+
+    await setModuleStatus(db, TENANT, 'mod_1', 'COMPLETED');
+
+    expect(argsOf(assessmentModule.updateMany).data).not.toHaveProperty('completedAt');
+  });
+
+  it('stamps the reopening when a finished test is opened again', async () => {
+    const { db, assessmentModule } = fakeDb();
+    assessmentModule.findFirst.mockResolvedValue(moduleAt('COMPLETED', new Date()));
+
+    await setModuleStatus(db, TENANT, 'mod_1', 'IN_PROGRESS');
+
+    expect(argsOf(assessmentModule.updateMany).data?.['reopenedAt']).toBeInstanceOf(Date);
+  });
+
+  it('does not call starting a planned test a reopening', async () => {
+    const { db, assessmentModule } = fakeDb();
+    assessmentModule.findFirst.mockResolvedValue(moduleAt('PLANNED'));
+
+    await setModuleStatus(db, TENANT, 'mod_1', 'IN_PROGRESS');
+
+    expect(argsOf(assessmentModule.updateMany).data).not.toHaveProperty('reopenedAt');
+  });
+});
+
+/**
+ * Copying a test into the assessment it already lives in.
+ *
+ * §11 allows several tests of one type and makes the **name** what tells them
+ * apart. A copy that reuses a name already taken defeats exactly that, and a
+ * real run produced two tests called "… (Kopie)" side by side.
+ */
+describe('naming a copy inside the same assessment', () => {
+  const source = {
+    id: 'mod_1',
+    assessmentId: 'as_1',
+    name: 'Laufen – Laktat',
+    moduleKey: 'lactate',
+    moduleVersion: 2,
+    payload: configuration,
+    status: 'COMPLETED',
+    createdByCoachId: 'coach_original',
+    createdAt: new Date(),
+  };
+
+  const withSiblings = (names: (string | null)[]) => {
+    const harness = fakeDb();
+    harness.assessmentModule.findFirst.mockResolvedValueOnce(source);
+    harness.assessmentModule.findMany.mockResolvedValue(
+      names.map((name) => ({ name })) as unknown as { status: string }[],
+    );
+
+    return harness;
+  };
+
+  it('marks the first copy', async () => {
+    const { db, assessmentModule } = withSiblings(['Laufen – Laktat']);
+
+    await copyModule(db, TENANT, 'coach_2', 'mod_1', 'as_1');
+
+    expect(argsOf(assessmentModule.create).data).toMatchObject({
+      name: 'Laufen – Laktat (Kopie)',
+    });
+  });
+
+  it('counts up when that name is taken as well', async () => {
+    const { db, assessmentModule } = withSiblings(['Laufen – Laktat', 'Laufen – Laktat (Kopie)']);
+
+    await copyModule(db, TENANT, 'coach_2', 'mod_1', 'as_1');
+
+    expect(argsOf(assessmentModule.create).data).toMatchObject({
+      name: 'Laufen – Laktat (Kopie 2)',
+    });
+  });
+
+  it('keeps counting past the second', async () => {
+    const { db, assessmentModule } = withSiblings([
+      'Laufen – Laktat',
+      'Laufen – Laktat (Kopie)',
+      'Laufen – Laktat (Kopie 2)',
+    ]);
+
+    await copyModule(db, TENANT, 'coach_2', 'mod_1', 'as_1');
+
+    expect(argsOf(assessmentModule.create).data).toMatchObject({
+      name: 'Laufen – Laktat (Kopie 3)',
+    });
+  });
+
+  it('reads the sibling names only inside the workspace', async () => {
+    const { db, assessmentModule } = withSiblings([]);
+
+    await copyModule(db, OTHER_TENANT, 'coach_2', 'mod_1', 'as_1');
+
+    expect(argsOf(assessmentModule.findMany).where).toMatchObject({ organizationId: 'org_b' });
+  });
+});
+
+/**
+ * Archiving a test.
+ *
+ * A date, never a status: the status says how far the coach got, and an
+ * `ARCHIVED` status would overwrite `COMPLETED` — a test shown again could then
+ * no longer say whether it was performed or skipped.
+ */
+describe('archiving a test', () => {
+  it('writes only inside the workspace', async () => {
+    const { db, assessmentModule } = fakeDb();
+
+    await setModuleArchived(db, TENANT, 'mod_1', true);
+
+    expect(argsOf(assessmentModule.updateMany).where).toMatchObject({
+      organizationId: 'org_a',
+      id: 'mod_1',
+    });
+  });
+
+  it('sets a date and touches nothing else', async () => {
+    const { db, assessmentModule } = fakeDb();
+
+    await setModuleArchived(db, TENANT, 'mod_1', true);
+
+    const data = argsOf(assessmentModule.updateMany).data ?? {};
+    expect(Object.keys(data)).toEqual(['archivedAt']);
+    expect(data['archivedAt']).toBeInstanceOf(Date);
+  });
+
+  it('clears the date when the test is taken back', async () => {
+    const { db, assessmentModule } = fakeDb();
+
+    await setModuleArchived(db, TENANT, 'mod_1', false);
+
+    expect(argsOf(assessmentModule.updateMany).data).toEqual({ archivedAt: null });
+  });
+
+  it('never deletes a measurement', async () => {
+    const { db, measurement, assessmentModule } = fakeDb();
+
+    await setModuleArchived(db, TENANT, 'mod_1', true);
+
+    expect(assessmentModule.deleteMany).not.toHaveBeenCalled();
+    expect(measurement.count).not.toHaveBeenCalled();
+  });
+
+  it('reports a test in another workspace as missing', async () => {
+    const { db, assessmentModule } = fakeDb();
+    assessmentModule.updateMany.mockResolvedValue({ count: 0 });
+
+    expect(await setModuleArchived(db, OTHER_TENANT, 'mod_1', true)).toBeNull();
   });
 });

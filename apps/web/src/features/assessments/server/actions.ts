@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { TRPCError } from '@trpc/server';
 
 import { moduleConfigurationSchema, moduleKeySchema } from '@apex/domain';
+import type { AssessmentStatus } from '@apex/domain';
 
 import { api } from '@/trpc/server';
 
@@ -164,6 +165,81 @@ export async function copyModuleAction(
   }
 }
 
+/**
+ * Changes what a coach wrote on an examination.
+ *
+ * The empty string means "clear it" for the description and is passed on as
+ * such; the procedure's schema turns it into null. The question is never
+ * cleared — it is mandatory, and the dialog refuses an empty one before this is
+ * reached.
+ */
+export async function updateAssessmentAction(
+  assessmentId: string,
+  input: {
+    question: string;
+    description: string;
+    type: 'INITIAL' | 'RE_ASSESSMENT' | 'FOLLOW_UP';
+    performedAt: string;
+  },
+): Promise<{ message?: string }> {
+  try {
+    await api.assessments.update({
+      assessmentId,
+      question: input.question,
+      description: input.description,
+      type: input.type,
+      performedAt: input.performedAt,
+    });
+    revalidatePath(`/assessments/${assessmentId}`);
+    revalidatePath('/athletes', 'layout');
+
+    return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
+/** Renames a test, or records what it is for. Never touches its protocol. */
+export async function updateModuleAction(
+  moduleId: string,
+  assessmentId: string,
+  input: { name: string; description: string },
+): Promise<{ message?: string }> {
+  try {
+    await api.assessments.updateModule({
+      moduleId,
+      name: input.name,
+      description: input.description,
+    });
+    revalidatePath(`/assessments/${assessmentId}`, 'layout');
+
+    return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
+/**
+ * Puts a test away, or brings it back.
+ *
+ * `layout` revalidation, because the test appears both on the assessment and on
+ * its own overview, and both must agree about whether it is archived.
+ */
+export async function setModuleArchivedAction(
+  moduleId: string,
+  assessmentId: string,
+  archived: boolean,
+): Promise<{ message?: string }> {
+  try {
+    await api.assessments.setModuleArchived({ moduleId, archived });
+    revalidatePath(`/assessments/${assessmentId}`, 'layout');
+
+    return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
 export async function removeModuleAction(
   moduleId: string,
   assessmentId: string,
@@ -203,4 +279,24 @@ function toMessage(error: unknown): string {
   console.error('[assessments] unexpected failure', error);
 
   return 'Something went wrong. Please try again.';
+}
+
+/**
+ * Moves an examination through its lifecycle.
+ *
+ * A thin caller: the transition rule and the "no test may still be open" check
+ * both live in the procedure, where they cannot be skipped.
+ */
+export async function setAssessmentStatusAction(
+  assessmentId: string,
+  status: AssessmentStatus,
+): Promise<{ message?: string }> {
+  try {
+    await api.assessments.setStatus({ assessmentId, status });
+    revalidatePath(`/assessments/${assessmentId}`);
+
+    return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
 }

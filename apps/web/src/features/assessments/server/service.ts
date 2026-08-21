@@ -3,12 +3,15 @@ import 'server-only';
 import type { PrismaClientInstance } from '@apex/database';
 import { scoped, withTenant } from '@apex/database/tenant';
 import {
-  assessmentHasBegun,
+  assessmentProgress,
+  canTransitionAssessment,
+  type AssessmentStatus,
   canRemoveModule,
   type ModuleRemovalRefusal,
   canTransition,
   configurationChangeViolations,
   findMeasurementTemplate,
+  isAssessmentLive,
   measurementTypeIdsOf,
   MODULE_CONFIGURATION_VERSION,
   moduleConfigurationSchema,
@@ -50,7 +53,13 @@ type CatalogueDb = Pick<PrismaClientInstance, 'measurementType' | 'exercise'>;
 const moduleSelect = {
   id: true,
   name: true,
+  description: true,
   moduleKey: true,
+  // When it was first called finished, and when it was last reopened — what the
+  // overview needs to say that a test was changed after the fact.
+  completedAt: true,
+  reopenedAt: true,
+  archivedAt: true,
   moduleVersion: true,
   payload: true,
   status: true,
@@ -65,7 +74,9 @@ const moduleSelect = {
 const assessmentSelect = {
   id: true,
   question: true,
+  description: true,
   type: true,
+  status: true,
   performedAt: true,
   createdAt: true,
   caseId: true,
@@ -80,22 +91,55 @@ export interface AssessmentModuleRecord {
   id: string;
   /** What the coach called this test; `null` on rows written before names existed. */
   name: string | null;
+  /** What it is for, in the coach's words. Not the protocol — that is in the configuration. */
+  description: string | null;
   moduleKey: string;
+  /** When it was first called finished. Null while it never has been. */
+  completedAt: Date | null;
+  /** When it was last reopened after completion. */
+  reopenedAt: Date | null;
+  /** When it was put away. Archived tests leave the working list, never the record. */
+  archivedAt: Date | null;
   moduleVersion: number;
   /** The stored configuration, or null on a module created before one existed. */
   configuration: ModuleConfiguration | null;
   status: AssessmentModuleStatus;
-  /** How many values this test holds; a test holding any is never removable (§13). */
+  /**
+   * How many rows this test holds, superseded ones included.
+   *
+   * The removal rule reads this and no other number: a superseded value is
+   * history, and history is what makes a test un-removable (§13).
+   */
   measurementCount: number;
+  /**
+   * How many values currently stand — superseded rows excluded.
+   *
+   * What "3 von 8 erfasst" is counted from. Zero on records that were not read
+   * through `getAssessment`, which is why it is not the removal rule's number.
+   */
+  recordedCount: number;
+  /** When the most recent standing value was written. Null when there is none. */
+  lastRecordedAt: Date | null;
   /** Recorded, not yet enforced — see the schema comment and §26.24. */
   createdByCoachId: string;
   createdAt: Date;
 }
 
 export interface AssessmentRecord {
+  /** Where the examination stands. Its transitions live in `@apex/domain`. */
+  status: AssessmentStatus;
   id: string;
   question: string;
+  /** Anything the question does not say. Optional and often absent. */
+  description: string | null;
   type: 'INITIAL' | 'RE_ASSESSMENT' | 'FOLLOW_UP';
+  /**
+   * The examination's one date.
+   *
+   * Reads as "geplant für" while the assessment is `PLANNED` and as
+   * "durchgeführt am" once it has begun. One column, because two would
+   * eventually disagree about which one the timeline follows.
+   */
   performedAt: Date;
   createdAt: Date;
   caseId: string;
@@ -124,38 +168,24 @@ function readConfiguration(payload: unknown, moduleVersion?: number): ModuleConf
 function toRecord(row: {
   id: string;
   question: string;
+  description?: string | null;
   type: string;
+  status: string;
   performedAt: Date;
   createdAt: Date;
   caseId: string;
   case: { athleteId: string };
-  modules: {
-    id: string;
-    name?: string | null;
-    moduleKey: string;
-    moduleVersion: number;
-    payload: unknown;
-    status: string;
-    createdByCoachId: string;
-    createdAt: Date;
-    _count: { measurements: number };
-  }[];
+  modules: Parameters<typeof toModuleRecord>[0][];
 }): AssessmentRecord {
   return {
     ...row,
+    description: row.description ?? null,
+    status: row.status as AssessmentStatus,
     type: row.type as AssessmentRecord['type'],
     athleteId: row.case.athleteId,
-    modules: row.modules.map((entry) => ({
-      id: entry.id,
-      name: entry.name ?? null,
-      moduleKey: entry.moduleKey,
-      moduleVersion: entry.moduleVersion,
-      configuration: readConfiguration(entry.payload, entry.moduleVersion),
-      status: entry.status as AssessmentModuleStatus,
-      measurementCount: entry._count.measurements,
-      createdByCoachId: entry.createdByCoachId,
-      createdAt: entry.createdAt,
-    })),
+    // `toModuleRecord`, not a second mapping of the same row: the two used to
+    // be written out separately and one of them was always a field behind.
+    modules: row.modules.map((entry) => toModuleRecord(entry)),
   };
 }
 
@@ -164,11 +194,22 @@ export async function listAssessmentsForAthlete(
   db: AssessmentDb,
   tenant: Pick<TenantContext, 'organizationId'>,
   athleteId: string,
+  /**
+   * Whether archived examinations are included.
+   *
+   * Hidden by default, the same rule engagements follow: archiving is the act
+   * of putting something out of the working view (§8), and a list that ignores
+   * it makes the act pointless. Nothing is lost — one link brings them back.
+   */
+  includeArchived = false,
 ): Promise<AssessmentRecord[]> {
   const rows = await db.assessment.findMany({
     // The athlete is reached through the Case and never stored twice
     // (§26.4) — this is that relation expressed as a filter.
-    where: scoped(tenant, { case: { athleteId } }),
+    where: scoped(tenant, {
+      case: { athleteId },
+      ...(includeArchived ? {} : { status: { not: 'ARCHIVED' as const } }),
+    }),
     select: assessmentSelect,
     orderBy: [{ performedAt: 'desc' }, { id: 'desc' }],
   });
@@ -177,7 +218,7 @@ export async function listAssessmentsForAthlete(
 }
 
 export async function getAssessment(
-  db: AssessmentDb,
+  db: AssessmentDb & Pick<PrismaClientInstance, 'measurement'>,
   tenant: Pick<TenantContext, 'organizationId'>,
   assessmentId: string,
 ): Promise<AssessmentRecord | null> {
@@ -186,7 +227,57 @@ export async function getAssessment(
     select: assessmentSelect,
   });
 
-  return row ? toRecord(row) : null;
+  if (!row) return null;
+
+  const record = toRecord(row);
+
+  return { ...record, modules: await withRecordedValues(db, tenant, record.modules) };
+}
+
+/**
+ * Attaches, per test, how many values currently stand and when the last one
+ * was written.
+ *
+ * **Superseded rows are excluded.** They are never deleted (§13), but counting
+ * them would make a test with one correction look like it holds more values
+ * than it has slots — and the number the tile reports is "how far is this
+ * test", not "how many rows exist".
+ *
+ * `lastRecordedAt` is what makes "changed after completion" answerable: a
+ * correction writes a new row, so a live value newer than `completedAt` is a
+ * value entered after the coach called the test done.
+ *
+ * One `groupBy` for the whole assessment rather than a query per test — the
+ * page renders every module and would otherwise fan out.
+ */
+async function withRecordedValues(
+  db: Pick<PrismaClientInstance, 'measurement'>,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  modules: readonly AssessmentModuleRecord[],
+): Promise<AssessmentModuleRecord[]> {
+  if (modules.length === 0) return [];
+
+  const rows = await db.measurement.groupBy({
+    by: ['assessmentModuleId'],
+    where: scoped(tenant, {
+      assessmentModuleId: { in: modules.map((entry) => entry.id) },
+      supersededById: null,
+    }),
+    _count: { _all: true },
+    _max: { ingestedAt: true },
+  });
+
+  const byModule = new Map(rows.map((entry) => [entry.assessmentModuleId, entry]));
+
+  return modules.map((entry) => {
+    const found = byModule.get(entry.id);
+
+    return {
+      ...entry,
+      recordedCount: found?._count._all ?? 0,
+      lastRecordedAt: found?._max.ingestedAt ?? null,
+    };
+  });
 }
 
 /**
@@ -298,10 +389,14 @@ export async function addModule(
 function toModuleRecord(row: {
   id: string;
   name?: string | null;
+  description?: string | null;
   moduleKey: string;
   moduleVersion: number;
   payload: unknown;
   status: string;
+  completedAt?: Date | null;
+  reopenedAt?: Date | null;
+  archivedAt?: Date | null;
   createdByCoachId: string;
   createdAt: Date;
   _count?: { measurements: number };
@@ -309,13 +404,21 @@ function toModuleRecord(row: {
   return {
     id: row.id,
     name: row.name ?? null,
+    description: row.description ?? null,
+    completedAt: row.completedAt ?? null,
+    reopenedAt: row.reopenedAt ?? null,
+    archivedAt: row.archivedAt ?? null,
     moduleKey: row.moduleKey,
     moduleVersion: row.moduleVersion,
     configuration: readConfiguration(row.payload, row.moduleVersion),
     status: row.status as AssessmentModuleStatus,
     // A module just created holds nothing; the count is only selected where a
-    // screen needs it.
+    // screen needs it. `recordedCount` is filled in by `withRecordedValues`,
+    // which is the only caller that can tell a standing value from a superseded
+    // one.
     measurementCount: row._count?.measurements ?? 0,
+    recordedCount: 0,
+    lastRecordedAt: null,
     createdByCoachId: row.createdByCoachId,
     createdAt: row.createdAt,
   };
@@ -487,7 +590,7 @@ export async function setModuleStatus(
 ): Promise<StatusChange> {
   const current = await db.assessmentModule.findFirst({
     where: scoped(tenant, { id: moduleId }),
-    select: { id: true, status: true, assessmentId: true },
+    select: { id: true, status: true, assessmentId: true, completedAt: true },
   });
 
   if (!current) return { ok: false, reason: 'NOT_FOUND' };
@@ -498,10 +601,34 @@ export async function setModuleStatus(
 
   await db.assessmentModule.updateMany({
     where: scoped(tenant, { id: moduleId }),
-    data: { status },
+    data: { status, ...completionStamps(from, status, current.completedAt) },
   });
 
   return { ok: true, status };
+}
+
+/**
+ * The timestamps a status change leaves behind.
+ *
+ * Two facts the status alone cannot carry: that this test was once called
+ * finished, and that it was opened again afterwards. A reopened test is
+ * `IN_PROGRESS`, indistinguishable from one that was never finished — and
+ * everything the coach asked for ("was hier nach dem Abschluss noch geändert
+ * wurde") hangs on telling those two apart.
+ *
+ * **`completedAt` is set once and never moved.** It is the line dividing values
+ * recorded during the test from values changed afterwards; a second completion
+ * that reset it would erase exactly the history it exists to show.
+ */
+function completionStamps(
+  from: AssessmentModuleStatus,
+  to: AssessmentModuleStatus,
+  completedAt: Date | null,
+): { completedAt?: Date; reopenedAt?: Date } {
+  if (to === 'COMPLETED' && completedAt === null) return { completedAt: new Date() };
+  if (from === 'COMPLETED' && to === 'IN_PROGRESS') return { reopenedAt: new Date() };
+
+  return {};
 }
 
 /**
@@ -536,12 +663,12 @@ export async function removeModule(
     where: scoped(tenant, { assessmentModuleId: moduleId }),
   });
 
-  // Whether the examination took place is a property of its *siblings*, not of
-  // this test: a still-planned test inside a performed assessment must be
-  // refused, and a skipped one inside an assessment nobody has started yet is
-  // simply a plan being edited.
-  const siblings = await db.assessmentModule.findMany({
-    where: scoped(tenant, { assessmentId: current.assessmentId }),
+  // Whether the examination is closed is a property of the *assessment*, not of
+  // this test and not of its siblings. Reading it from the siblings — "has any
+  // test left PLANNED" — froze every other test the moment the coach started
+  // the session, which is not what the rule says.
+  const assessment = await db.assessment.findFirst({
+    where: scoped(tenant, { id: current.assessmentId }),
     select: { status: true },
   });
 
@@ -549,7 +676,7 @@ export async function removeModule(
   const removal = canRemoveModule(
     status,
     measurementCount,
-    assessmentHasBegun(siblings.map((sibling) => sibling.status)),
+    assessment !== null && !isAssessmentLive(assessment.status),
   );
 
   // Enforced here, not only in the confirmation dialog. A rule that lives in a
@@ -831,7 +958,7 @@ export async function unavailableReferences(
  */
 export type ModuleCopy =
   | { ok: true; module: AssessmentModuleRecord }
-  | { ok: false; reason: 'NOT_FOUND' | 'TARGET_NOT_FOUND' | 'ALREADY_PRESENT' };
+  | { ok: false; reason: 'NOT_FOUND' | 'TARGET_NOT_FOUND' };
 
 export async function copyModule(
   db: AssessmentDb,
@@ -856,19 +983,27 @@ export async function copyModule(
 
   if (!target) return { ok: false, reason: 'TARGET_NOT_FOUND' };
 
-  const clash = await db.assessmentModule.findFirst({
-    where: scoped(tenant, { assessmentId, moduleKey: source.moduleKey }),
-    select: { id: true },
+  // No clash check. An assessment used to record each test type once, and this
+  // function refused a second one — but that rule was abolished with §11
+  // ("mehrere Tests desselben Typs"), and the unique index went with it. The
+  // check outlived the rule and made the ordinary case — a second run of the
+  // same test in the same session — impossible to reach.
+  const siblings = await db.assessmentModule.findMany({
+    where: scoped(tenant, { assessmentId }),
+    select: { name: true },
   });
-
-  // Reported rather than left to the unique constraint, so the coach reads a
-  // sentence instead of a database error.
-  if (clash) return { ok: false, reason: 'ALREADY_PRESENT' };
 
   const created = await db.assessmentModule.create({
     data: withTenant(tenant, {
       assessmentId,
       moduleKey: source.moduleKey,
+      // Copies within one assessment would otherwise be indistinguishable, and
+      // the name is what tells two tests of a type apart.
+      name: copyName(
+        source.name,
+        assessmentId === source.assessmentId,
+        siblings.map((sibling) => sibling.name),
+      ),
       moduleVersion: source.moduleVersion,
       payload: source.payload ?? undefined,
       createdByCoachId,
@@ -877,4 +1012,189 @@ export async function copyModule(
   });
 
   return { ok: true, module: toModuleRecord(created) };
+}
+
+/**
+ * What a copied test is called.
+ *
+ * Only within the same assessment does the suffix earn its place: two tests of
+ * one type sitting side by side need to be distinguishable at a glance. Carried
+ * into another assessment the name is unambiguous on its own, and „(Kopie)"
+ * there would describe how it got there rather than what it is.
+ */
+function copyName(
+  name: string | null,
+  sameAssessment: boolean,
+  taken: readonly (string | null)[],
+): string | null {
+  if (name === null) return null;
+  if (!sameAssessment) return name;
+
+  // Counted up until it is free. Copying twice used to produce two tests called
+  // "… (Kopie)", which is precisely the case the name exists to prevent: §11
+  // allows several tests of one type, and the name is what tells them apart.
+  const base = `${name} (Kopie)`;
+  if (!taken.includes(base)) return base;
+
+  for (let index = 2; index < 100; index += 1) {
+    const candidate = `${name} (Kopie ${String(index)})`;
+    if (!taken.includes(candidate)) return candidate;
+  }
+
+  return base;
+}
+
+/**
+ * Changes what a coach wrote on an examination.
+ *
+ * `updateMany` with a tenant-scoped filter, never `update` by id: a bare
+ * `update` would reach any row in the database whose id was guessed, and the
+ * count coming back as zero is how "not in this workspace" is detected without
+ * a second query.
+ *
+ * **Only the fields that were sent.** An absent field is left alone rather than
+ * written as null, so a form that renders three fields cannot clear a fourth it
+ * never showed.
+ *
+ * The status is not editable here — it has transition rules and its own
+ * function. An ordinary edit must not be able to close a session.
+ */
+export async function updateAssessment(
+  db: AssessmentDb & Pick<PrismaClientInstance, 'measurement'>,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  input: {
+    assessmentId: string;
+    question?: string;
+    description?: string | null;
+    type?: 'INITIAL' | 'RE_ASSESSMENT' | 'FOLLOW_UP';
+    performedAt?: string;
+  },
+): Promise<AssessmentRecord | null> {
+  const { count } = await db.assessment.updateMany({
+    where: scoped(tenant, { id: input.assessmentId }),
+    data: {
+      ...(input.question === undefined ? {} : { question: input.question }),
+      ...(input.description === undefined ? {} : { description: input.description }),
+      ...(input.type === undefined ? {} : { type: input.type }),
+      ...(input.performedAt === undefined ? {} : { performedAt: new Date(input.performedAt) }),
+    },
+  });
+
+  if (count === 0) return null;
+
+  return getAssessment(db, tenant, input.assessmentId);
+}
+
+/**
+ * Puts a test away, or brings it back.
+ *
+ * **A date, not a status.** The status says how far the coach got; archiving is
+ * a separate statement about whether the test still belongs in the working
+ * view. Folding the two together would mean a test shown again after archiving
+ * could no longer say whether it was performed or skipped — which is exactly
+ * what an evaluation reads.
+ *
+ * Nothing is deleted, and nothing is refused: a test holding measurements is
+ * precisely the kind that should be archived rather than removed (§13).
+ */
+export async function setModuleArchived(
+  db: AssessmentDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  moduleId: string,
+  archived: boolean,
+): Promise<{ moduleId: string; archivedAt: Date | null } | null> {
+  const archivedAt = archived ? new Date() : null;
+
+  const { count } = await db.assessmentModule.updateMany({
+    where: scoped(tenant, { id: moduleId }),
+    data: { archivedAt },
+  });
+
+  return count === 0 ? null : { moduleId, archivedAt };
+}
+
+/**
+ * Renames a test, or says what it is for.
+ *
+ * Deliberately not part of `updateModuleConfiguration`: that one revalidates the
+ * whole protocol against the catalogue and can refuse because an exercise was
+ * archived since. Fixing a typo in a name must not be able to fail for that
+ * reason — and a test whose configuration no longer validates must still be
+ * nameable.
+ */
+export async function updateModule(
+  db: AssessmentDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  input: { moduleId: string; name?: string | null; description?: string | null },
+): Promise<AssessmentModuleRecord | null> {
+  const { count } = await db.assessmentModule.updateMany({
+    where: scoped(tenant, { id: input.moduleId }),
+    data: {
+      ...(input.name === undefined ? {} : { name: input.name }),
+      ...(input.description === undefined ? {} : { description: input.description }),
+    },
+  });
+
+  if (count === 0) return null;
+
+  const row = await db.assessmentModule.findFirst({
+    where: scoped(tenant, { id: input.moduleId }),
+    select: moduleSelect,
+  });
+
+  return row ? toModuleRecord(row) : null;
+}
+
+/**
+ * Moves an examination through its lifecycle.
+ *
+ * **The transition is checked here, not in the browser.** The interface only
+ * offers what `allowedAssessmentTransitions` permits, but that is a courtesy;
+ * a request naming any other target is refused, because a rule that lives in a
+ * button is not a rule.
+ *
+ * Completing is refused while a test is still open. `settled` counts a skipped
+ * or aborted test as decided — the coach said something about it — and only
+ * `PLANNED` or `IN_PROGRESS` as still awaiting one.
+ */
+export type AssessmentTransition =
+  | { ok: true; assessment: AssessmentRecord }
+  | {
+      ok: false;
+      reason: 'NOT_FOUND' | 'ILLEGAL_TRANSITION' | 'TESTS_STILL_OPEN';
+      from?: AssessmentStatus;
+    };
+
+export async function setAssessmentStatus(
+  db: AssessmentDb & Pick<PrismaClientInstance, 'measurement'>,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  assessmentId: string,
+  next: AssessmentStatus,
+): Promise<AssessmentTransition> {
+  const current = await db.assessment.findFirst({
+    where: scoped(tenant, { id: assessmentId }),
+    select: { id: true, status: true, modules: { select: { status: true } } },
+  });
+
+  if (!current) return { ok: false, reason: 'NOT_FOUND' };
+
+  const from = current.status;
+  if (!canTransitionAssessment(from, next)) {
+    return { ok: false, reason: 'ILLEGAL_TRANSITION', from };
+  }
+
+  if (next === 'COMPLETED') {
+    const progress = assessmentProgress(current.modules.map((module) => module.status));
+
+    if (!progress.settled) return { ok: false, reason: 'TESTS_STILL_OPEN', from };
+  }
+
+  await db.assessment.updateMany({
+    where: scoped(tenant, { id: assessmentId }),
+    data: { status: next },
+  });
+
+  const updated = await getAssessment(db, tenant, assessmentId);
+
+  return updated === null ? { ok: false, reason: 'NOT_FOUND' } : { ok: true, assessment: updated };
 }

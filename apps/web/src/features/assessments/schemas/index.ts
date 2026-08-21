@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import {
+  assessmentStatusSchema,
   measurementTemplateKeySchema,
   moduleConfigurationSchema,
   moduleKeySchema,
@@ -50,6 +51,39 @@ export const createAssessmentSchema = z.object({
 
 export type CreateAssessmentInput = z.infer<typeof createAssessmentSchema>;
 
+/**
+ * Changing what a coach wrote.
+ *
+ * Every field optional, none of them nullable except the description: a request
+ * carries what changed and stays silent about the rest, so two coaches editing
+ * different fields cannot overwrite each other's work with stale values.
+ *
+ * **The status is not here.** It has transition rules of its own
+ * (`setAssessmentStatusSchema`), and an ordinary edit must not be able to close
+ * a session because a form posted every field it rendered.
+ *
+ * `performedAt` is the examination's one date. While the assessment is planned
+ * it reads as "geplant für" and afterwards as "durchgeführt am" — one column,
+ * because two would eventually disagree about which one the timeline follows.
+ */
+export const updateAssessmentSchema = z.object({
+  assessmentId: z.string().min(1),
+  question: z
+    .string()
+    .trim()
+    .min(1, 'Bitte angeben, was dieses Assessment beantworten soll.')
+    .max(500)
+    .optional(),
+  description: z
+    .union([z.string().trim().max(2000), z.literal(''), z.null()])
+    .transform((value) => (value === '' || value === null ? null : value))
+    .optional(),
+  type: assessmentTypeSchema.optional(),
+  performedAt: z.iso.datetime({ offset: true }).optional(),
+});
+
+export type UpdateAssessmentInput = z.infer<typeof updateAssessmentSchema>;
+
 export const assessmentIdSchema = z.object({
   assessmentId: z.string().min(1),
 });
@@ -58,6 +92,8 @@ export type AssessmentIdInput = z.infer<typeof assessmentIdSchema>;
 
 export const listAssessmentsSchema = z.object({
   athleteId: z.string().min(1),
+  /** Archived examinations stay out of the working view unless asked for. */
+  includeArchived: z.boolean().default(false),
 });
 
 export type ListAssessmentsInput = z.infer<typeof listAssessmentsSchema>;
@@ -96,6 +132,42 @@ export const moduleIdSchema = z.object({
 });
 
 export type ModuleIdInput = z.infer<typeof moduleIdSchema>;
+
+/**
+ * Renaming a test, or saying what it is for.
+ *
+ * Separate from `updateModuleConfiguration`: that one revalidates the whole
+ * protocol against the catalogue and can fail because an exercise was archived.
+ * A coach fixing a typo in a name should not meet any of that.
+ *
+ * The name may be cleared. It then falls back to the type's label everywhere,
+ * which is what tests written before names existed already do.
+ */
+/**
+ * Putting a test away, or bringing it back.
+ *
+ * Separate from the status: archiving says whether the test belongs in the
+ * working view, the status says how far the coach got. A test holding
+ * measurements is exactly the kind that gets archived rather than removed.
+ */
+export const setModuleArchivedSchema = moduleIdSchema.extend({
+  archived: z.boolean(),
+});
+
+export type SetModuleArchivedInput = z.infer<typeof setModuleArchivedSchema>;
+
+export const updateModuleSchema = moduleIdSchema.extend({
+  name: z
+    .union([z.string().trim().max(160), z.literal(''), z.null()])
+    .transform((value) => (value === '' || value === null ? null : value))
+    .optional(),
+  description: z
+    .union([z.string().trim().max(2000), z.literal(''), z.null()])
+    .transform((value) => (value === '' || value === null ? null : value))
+    .optional(),
+});
+
+export type UpdateModuleInput = z.infer<typeof updateModuleSchema>;
 
 export const updateModuleConfigurationSchema = moduleIdSchema.extend({
   configuration: moduleConfigurationSchema,
@@ -137,3 +209,21 @@ export const copyModuleSchema = moduleIdSchema.extend({
 });
 
 export type CopyModuleInput = z.infer<typeof copyModuleSchema>;
+
+/**
+ * Moving an examination through its lifecycle.
+ *
+ * A dedicated input, never a field on the edit form: a status carries
+ * transition rules, and folding it into an ordinary correction would let a
+ * typo close a session.
+ */
+export const setAssessmentStatusSchema = z.object({
+  assessmentId: z.string().min(1),
+  status: assessmentStatusSchema,
+});
+
+export type SetAssessmentStatusInput = z.infer<typeof setAssessmentStatusSchema>;
+
+/** Which examinations a list shows. Archived ones stay out of the working view. */
+export const ASSESSMENT_VIEWS = ['live', 'all'] as const;
+export type AssessmentView = (typeof ASSESSMENT_VIEWS)[number];
