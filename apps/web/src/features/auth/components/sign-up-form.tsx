@@ -7,6 +7,8 @@ import { useRouter } from 'next/navigation';
 import { signUp } from '@apex/auth/client';
 import { Button } from '@apex/ui';
 
+import { TOUCH_BUTTON } from '@/components/common/touch';
+
 import { MIN_PASSWORD_LENGTH, signUpSchema } from '../schemas';
 
 import { Field } from './field';
@@ -107,7 +109,7 @@ export function SignUpForm({ redirectTo = '/start' }: { redirectTo?: string }) {
         </p>
       ) : null}
 
-      <Button type="submit" variant="accent" disabled={pending}>
+      <Button type="submit" variant="accent" className={TOUCH_BUTTON} disabled={pending}>
         {pending ? 'Creating your workspace…' : 'Create account'}
       </Button>
     </form>

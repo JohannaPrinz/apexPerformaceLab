@@ -7,6 +7,8 @@ import { useRouter } from 'next/navigation';
 import { signIn } from '@apex/auth/client';
 import { Button } from '@apex/ui';
 
+import { TOUCH_BUTTON } from '@/components/common/touch';
+
 import { signInSchema } from '../schemas';
 
 import { Field } from './field';
@@ -89,7 +91,7 @@ export function SignInForm({ redirectTo = '/start' }: { redirectTo?: string }) {
         </p>
       ) : null}
 
-      <Button type="submit" variant="accent" disabled={pending}>
+      <Button type="submit" variant="accent" className={TOUCH_BUTTON} disabled={pending}>
         {pending ? 'Signing in…' : 'Sign in'}
       </Button>
     </form>

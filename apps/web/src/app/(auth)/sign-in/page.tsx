@@ -1,5 +1,6 @@
 import Link from 'next/link';
 
+import { TOUCH_TARGET } from '@/components/common/touch';
 import { SignInForm } from '@/features/auth';
 
 import type { Metadata } from 'next';
@@ -27,7 +28,10 @@ export default async function SignInPage({
 
       <p className="text-sm text-muted-foreground">
         No account yet?{' '}
-        <Link href="/sign-up" className="text-accent underline-offset-4 hover:underline">
+        <Link
+          href="/sign-up"
+          className={`${TOUCH_TARGET} inline-flex items-center text-accent underline-offset-4 hover:underline`}
+        >
           Create one
         </Link>
       </p>

@@ -1,5 +1,7 @@
 import { Input } from '@apex/ui';
 
+import { TOUCH_FIELD } from '@/components/common/touch';
+
 /**
  * A labelled input with its validation message.
  *
@@ -33,11 +35,14 @@ export function Field({
         {label}
       </label>
 
+      {/* The same touch size as every field inside the product. The sign-in
+          page is where a phone user starts, and its inputs were 36px. */}
       <Input
         id={id}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : hint ? hintId : undefined}
         {...props}
+        className={`${TOUCH_FIELD} ${props.className ?? ''}`}
       />
 
       {error ? (
