@@ -4,7 +4,9 @@ import { useState } from 'react';
 
 import { Badge, Button, Input } from '@apex/ui';
 
-import { FOCUS_RING, TOUCH_BUTTON, TOUCH_FIELD, TOUCH_TARGET } from '@/components/common/touch';
+import { TOUCH_BUTTON, TOUCH_FIELD } from '@/components/common/touch';
+
+import { ExercisePicker } from '../exercise-picker';
 
 import {
   toDimensionKey,
@@ -43,6 +45,16 @@ export function ProtocolStep({
   onChange: (draft: BuilderDraft) => void;
 }) {
   const [dimensionLabel, setDimensionLabel] = useState('');
+  /**
+   * What the coach has typed into each value list, before it is split.
+   *
+   * Needed because the field displays `values.join(', ')` while the draft
+   * stores a cleaned array: typing "Knie," produced `['Knie']`, which rendered
+   * as "Knie" — the comma vanished under the cursor and a second value could
+   * never be entered. The draft still holds the cleaned list; this holds the
+   * text it came from, for as long as the field is being edited.
+   */
+  const [valueText, setValueText] = useState<Record<string, string>>({});
   const chosenExercises = new Set(draft.exerciseIds);
 
   return (
@@ -111,12 +123,12 @@ export function ProtocolStep({
                 <div className="flex flex-1 flex-col gap-1">
                   <span className="text-sm font-medium">{dimension.label}</span>
                   <Input
-                    value={(dimension.values ?? []).join(', ')}
-                    onChange={(event) =>
-                      onChange(
-                        withDimensionValues(draft, dimension.key, event.target.value.split(',')),
-                      )
-                    }
+                    value={valueText[dimension.key] ?? (dimension.values ?? []).join(', ')}
+                    onChange={(event) => {
+                      const text = event.target.value;
+                      setValueText((current) => ({ ...current, [dimension.key]: text }));
+                      onChange(withDimensionValues(draft, dimension.key, text.split(',')));
+                    }}
                     placeholder="Leer lassen, um sie während der Messung zu benennen"
                     aria-label={`Werte für ${dimension.label}`}
                     className={TOUCH_FIELD}
@@ -132,7 +144,7 @@ export function ProtocolStep({
                   className={TOUCH_BUTTON}
                   onClick={() => onChange(withoutDimension(draft, dimension.key))}
                 >
-                  Remove
+                  Entfernen
                 </Button>
               </li>
             ))}
@@ -161,7 +173,7 @@ export function ProtocolStep({
               setDimensionLabel('');
             }}
           >
-            Add dimension
+            Merkmal hinzufügen
           </Button>
         </div>
       </section>
@@ -176,43 +188,21 @@ export function ProtocolStep({
           </p>
         </div>
 
-        {exercises.length === 0 ? (
-          <p className="text-xs text-muted-foreground">Noch keine Übung im Katalog.</p>
-        ) : (
-          <ul className="flex flex-wrap gap-2">
-            {exercises.map((exercise) => {
-              const chosen = chosenExercises.has(exercise.id);
-
-              return (
-                <li key={exercise.id}>
-                  <button
-                    type="button"
-                    aria-pressed={chosen}
-                    onClick={() =>
-                      onChange(
-                        chosen
-                          ? withoutExercise(draft, exercise.id)
-                          : withExercise(draft, exercise.id),
-                      )
-                    }
-                    className={`${TOUCH_TARGET} ${FOCUS_RING} flex items-center gap-1.5 rounded-md border px-3 text-sm transition-colors ${
-                      chosen
-                        ? 'border-accent bg-accent-soft text-accent-soft-foreground'
-                        : 'border-border hover:border-border-strong hover:bg-muted'
-                    }`}
-                  >
-                    {exercise.name}
-                    {exercise.ownedByWorkspace ? (
-                      <Badge variant="secondary" className="text-[10px]">
-                        Eigene
-                      </Badge>
-                    ) : null}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+        <ExercisePicker
+          exercises={exercises.map((exercise) => ({
+            id: exercise.id,
+            name: exercise.name,
+            scope: exercise.ownedByWorkspace ? 'WORKSPACE' : 'SYSTEM',
+          }))}
+          chosen={draft.exerciseIds}
+          onToggle={(id) => {
+            onChange(
+              chosenExercises.has(id) ? withoutExercise(draft, id) : withExercise(draft, id),
+            );
+          }}
+          label="Übung suchen und auswählen"
+          emptyHint="Leer lassen, wo der Begriff nicht greift."
+        />
       </section>
 
       <section className="flex flex-col gap-2">

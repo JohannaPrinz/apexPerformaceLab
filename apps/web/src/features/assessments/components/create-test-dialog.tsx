@@ -1,18 +1,19 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 
 import { useRouter } from 'next/navigation';
 
-import { Check, Plus, Search } from 'lucide-react';
+import { Plus } from 'lucide-react';
 
 import { MEASUREMENT_TEMPLATES, MODULE_KEYS, type ModuleKey } from '@apex/domain';
-import { Badge, Button, Dialog, DialogContent, DialogFooter, DialogTrigger } from '@apex/ui';
+import { Button, Dialog, DialogContent, DialogFooter, DialogTrigger } from '@apex/ui';
 
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_FIELD, TOUCH_TARGET } from '@/components/common/touch';
 
 import { addConfiguredModuleAction, addModuleAction } from '../server/actions';
 
+import { ExercisePicker } from './exercise-picker';
 import { MODULE_LABELS_DE } from './labels';
 
 /**
@@ -64,7 +65,6 @@ export function CreateTestDialog({
   const [moduleKey, setModuleKey] = useState<string>(MODULE_KEYS[0]);
   const [templateKey, setTemplateKey] = useState('');
   const [chosen, setChosen] = useState<readonly string[]>([]);
-  const [search, setSearch] = useState('');
   const [advanced, setAdvanced] = useState(false);
   const [passes, setPasses] = useState(1);
   const [recordsSide, setRecordsSide] = useState(false);
@@ -73,19 +73,10 @@ export function CreateTestDialog({
   const typeLabel = MODULE_LABELS_DE[moduleKey as ModuleKey] ?? moduleKey;
   const effectiveName = name.trim() === '' ? typeLabel : name.trim();
 
-  const matches = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-
-    return exercises
-      .filter((exercise) => needle === '' || exercise.name.toLowerCase().includes(needle))
-      .slice(0, 25);
-  }, [exercises, search]);
-
   function reset() {
     setName('');
     setTemplateKey('');
     setChosen([]);
-    setSearch('');
     setAdvanced(false);
     setPasses(1);
     setRecordsSide(false);
@@ -219,10 +210,8 @@ export function CreateTestDialog({
 
           {templateKey === '' ? (
             <ExercisePicker
-              exercises={matches}
+              exercises={exercises}
               chosen={chosen}
-              search={search}
-              onSearch={setSearch}
               onToggle={(id) => {
                 setChosen((previous) =>
                   previous.includes(id)
@@ -345,99 +334,6 @@ export function CreateTestDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-/**
- * Choosing exercises by name rather than by id.
- *
- * The origin badge is kept from the catalogue: five of a workspace's own
- * exercises among 276 shared ones are otherwise indistinguishable. The list is
- * capped so the dialog stays a dialog — searching is the way to reach the rest.
- */
-function ExercisePicker({
-  exercises,
-  chosen,
-  search,
-  onSearch,
-  onToggle,
-}: {
-  readonly exercises: readonly SelectableExercise[];
-  readonly chosen: readonly string[];
-  readonly search: string;
-  readonly onSearch: (value: string) => void;
-  readonly onToggle: (id: string) => void;
-}) {
-  return (
-    <div className="flex flex-col gap-2">
-      <label htmlFor="exerciseSearch" className="text-sm font-medium">
-        Übungen
-      </label>
-
-      <div className="relative">
-        <Search
-          aria-hidden="true"
-          className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
-        />
-        <input
-          id="exerciseSearch"
-          value={search}
-          onChange={(event) => {
-            onSearch(event.target.value);
-          }}
-          placeholder="Übung suchen"
-          className={`${TOUCH_FIELD} ${FOCUS_RING} w-full rounded-md border border-input bg-background pl-9 shadow-sm`}
-        />
-      </div>
-
-      {exercises.length === 0 ? (
-        <p className="px-1 py-3 text-sm text-muted-foreground">
-          {search.trim() === ''
-            ? 'Noch keine Übung im Katalog.'
-            : 'Keine Übung passt zu dieser Suche.'}
-        </p>
-      ) : (
-        <ul className="flex max-h-56 flex-col gap-1 overflow-y-auto">
-          {exercises.map((exercise) => {
-            const selected = chosen.includes(exercise.id);
-
-            return (
-              <li key={exercise.id}>
-                <button
-                  type="button"
-                  aria-pressed={selected}
-                  onClick={() => {
-                    onToggle(exercise.id);
-                  }}
-                  className={`${TOUCH_TARGET} ${FOCUS_RING} flex w-full items-center gap-2 rounded-md border px-3 text-left text-sm transition-colors ${
-                    selected
-                      ? 'border-accent bg-accent-soft text-accent-soft-foreground'
-                      : 'border-border hover:border-border-strong'
-                  }`}
-                >
-                  <Check
-                    aria-hidden="true"
-                    className={`size-4 shrink-0 ${selected ? '' : 'invisible'}`}
-                  />
-                  <span className="min-w-0 flex-1 break-words">{exercise.name}</span>
-                  {exercise.scope === 'WORKSPACE' ? (
-                    <Badge variant="outline" className="shrink-0">
-                      Eigene
-                    </Badge>
-                  ) : null}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-
-      <p className="text-xs text-muted-foreground">
-        {chosen.length === 0
-          ? 'Optional — ein Test ohne Übung erfasst reine Messgrößen.'
-          : `${String(chosen.length)} ${chosen.length === 1 ? 'Übung' : 'Übungen'} ausgewählt`}
-      </p>
-    </div>
   );
 }
 

@@ -75,7 +75,9 @@ export function TestBuilder({
   const [draft, setDraft] = useState<BuilderDraft>(() =>
     existing
       ? draftFromConfiguration(existing.moduleKey, existing.configuration)
-      : emptyDraft(firstFreeModuleKey(takenModuleKeys ?? [])),
+      : // The first type, plainly. It used to be the first type the assessment
+        // did *not* hold, which only made sense while each was allowed once.
+        emptyDraft(MODULE_KEYS[0] ?? 'custom'),
   );
 
   const idForTypeKey = useMemo(() => {
@@ -226,11 +228,6 @@ export function TestBuilder({
   );
 }
 
-/** The first module the assessment does not hold yet — each appears once. */
-function firstFreeModuleKey(taken: readonly string[]): ModuleKey {
-  return MODULE_KEYS.find((key) => !taken.includes(key)) ?? 'custom';
-}
-
 function TestStep({
   draft,
   takenModuleKeys,
@@ -277,25 +274,34 @@ function TestStep({
 
         <ul className="flex flex-wrap gap-2">
           {MODULE_KEYS.map((key) => {
-            const taken = takenModuleKeys.includes(key);
+            // Shown, never disabled. An assessment used to record each type
+            // once; §11 abolished that and the unique index went with it. Three
+            // running tests in one session is the ordinary case, and the name
+            // is what tells them apart.
+            const alreadyHere = takenModuleKeys.includes(key);
             const chosen = draft.moduleKey === key;
 
             return (
               <li key={key}>
                 <button
                   type="button"
-                  disabled={taken}
                   aria-pressed={chosen}
-                  onClick={() => onChange({ ...emptyDraft(key) })}
-                  className={`${TOUCH_TARGET} ${FOCUS_RING} rounded-md border px-3 text-sm transition-colors disabled:opacity-40 ${
+                  // The protocol is reset — quantities and templates belong to
+                  // the type. The **name** is not: it is the coach's own text
+                  // and has nothing to do with the type, and wiping it turned
+                  // "type the name, then pick the type" into silent data loss.
+                  onClick={() => {
+                    onChange({ ...emptyDraft(key), name: draft.name });
+                  }}
+                  className={`${TOUCH_TARGET} ${FOCUS_RING} rounded-md border px-3 text-sm transition-colors ${
                     chosen
                       ? 'border-accent bg-accent-soft text-accent-soft-foreground'
                       : 'border-border hover:border-border-strong'
                   }`}
                 >
                   {MODULE_LABELS_DE[key]}
-                  {taken ? (
-                    <span className="text-muted-foreground"> · bereits enthalten</span>
+                  {alreadyHere ? (
+                    <span className="text-muted-foreground"> · schon einmal enthalten</span>
                   ) : null}
                 </button>
               </li>
@@ -308,8 +314,8 @@ function TestStep({
         <div className="flex flex-col gap-1">
           <h3 className="text-sm font-medium">Von einer Vorlage starten</h3>
           <p className="text-xs text-muted-foreground">
-            A template is a starting point. Its configuration is copied in and then belongs to this
-            test — changing the template later never touches it.
+            Eine Vorlage ist ein Ausgangspunkt. Ihre Konfiguration wird übernommen und gehört danach
+            zu diesem Test — eine spätere Änderung der Vorlage berührt ihn nicht mehr.
           </p>
         </div>
 
@@ -406,9 +412,10 @@ function Summary({
       </dl>
 
       {expected > 0 ? (
-        <p className="text-sm text-muted-foreground">
-          Fully recorded, this test holds <span data-numeric>{expected}</span> measurements. A value
-          left empty stays empty — nothing is filled in.
+        <p className="text-sm text-pretty text-muted-foreground">
+          Vollständig erfasst hält dieser Test <span data-numeric>{expected}</span>{' '}
+          {expected === 1 ? 'Messwert' : 'Messwerte'}. Ein leer gelassener Wert bleibt leer — es
+          wird nichts ergänzt.
         </p>
       ) : null}
     </div>
