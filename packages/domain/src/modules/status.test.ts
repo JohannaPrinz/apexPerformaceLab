@@ -91,31 +91,42 @@ describe('deciding whether an assessment has begun', () => {
 });
 
 describe('removing a test', () => {
-  it('allows any test while the assessment is still being assembled', () => {
-    // Nothing has happened yet, so removing one is editing a plan.
+  /**
+   * The third argument is whether the *examination* is closed — read from the
+   * Assessment's own status. It used to be "has any test left PLANNED", which
+   * made starting the session the moment every other test froze: a coach who
+   * then noticed a test they did not need had to keep it.
+   */
+  it('allows any empty test while the examination is still live', () => {
     for (const status of ['PLANNED', 'SKIPPED'] as const) {
       expect(canRemoveModule(status, 0, false).ok, status).toBe(true);
     }
   });
 
-  it('allows a skipped test once the assessment has been performed', () => {
+  it('still allows one while the examination is running, not only while planned', () => {
+    // The case that was refused before. A running session with a test nobody
+    // has touched is a plan still being edited.
+    expect(canRemoveModule('PLANNED', 0, false).ok).toBe(true);
+  });
+
+  it('allows a skipped test once the examination is closed', () => {
     expect(canRemoveModule('SKIPPED', 0, true).ok).toBe(true);
   });
 
-  it('refuses a test that took place', () => {
+  it('refuses everything else once the examination is closed', () => {
     for (const status of ['PLANNED', 'IN_PROGRESS', 'COMPLETED', 'ABORTED'] as const) {
       const removal = canRemoveModule(status, 0, true);
 
       expect(removal.ok, `${status} must not be removable`).toBe(false);
-      expect(removal.ok ? null : removal.reason).toBe('ASSESSMENT_BEGUN');
+      expect(removal.ok ? null : removal.reason).toBe('ASSESSMENT_CLOSED');
     }
   });
 
   it('never removes a test holding measurements, whatever its status', () => {
     // §13: a measurement is never deleted, an erroneous reading included. This
     // refusal outranks every other case, including the skipped one.
-    for (const begun of [true, false]) {
-      const removal = canRemoveModule('SKIPPED', 1, begun);
+    for (const closed of [true, false]) {
+      const removal = canRemoveModule('SKIPPED', 1, closed);
 
       expect(removal.ok).toBe(false);
       expect(removal.ok ? null : removal.reason).toBe('HAS_MEASUREMENTS');

@@ -81,17 +81,16 @@ export function hasStarted(status: AssessmentModuleStatus): boolean {
 /**
  * Whether an assessment has been performed, from its tests alone.
  *
- * There is no status on the Assessment itself, and adding one would be a second
- * source of truth for something the tests already say. A test that has left
- * `PLANNED` is a test somebody acted on — started it, completed it, decided to
- * skip it, or broke it off — and any one of those makes the examination a thing
- * that happened rather than a thing being assembled.
+ * Written when there was no status on the Assessment itself. There is one now
+ * (`AssessmentStatus`), so this is **no longer what the removal rule asks** —
+ * see `canRemoveModule`. It survives for the readings that genuinely are about
+ * the tests rather than about the examination.
  */
 export function assessmentHasBegun(statuses: readonly AssessmentModuleStatus[]): boolean {
   return statuses.some((status) => status !== 'PLANNED');
 }
 
-export type ModuleRemovalRefusal = 'HAS_MEASUREMENTS' | 'ASSESSMENT_BEGUN';
+export type ModuleRemovalRefusal = 'HAS_MEASUREMENTS' | 'ASSESSMENT_CLOSED';
 
 export type ModuleRemoval =
   { readonly ok: true } | { readonly ok: false; readonly reason: ModuleRemovalRefusal };
@@ -102,13 +101,22 @@ export type ModuleRemoval =
  * Two different situations, and the rule differs because the record means
  * different things in each:
  *
- * **While the assessment is still being assembled** — no test has left
- * `PLANNED` — removing one is editing a plan. Nothing happened yet, so nothing
- * is lost.
+ * **While the examination is still live** — planned or running — removing a
+ * test is editing the plan. Nothing about that test happened, so nothing is
+ * lost.
  *
- * **Once the assessment has been performed**, only a `SKIPPED` test may go. A
- * completed, running or aborted test is what took place, and the record has to
- * keep saying so.
+ * **Once the examination is closed** — completed, abandoned or archived — only
+ * a `SKIPPED` test may go. What took place is what the record has to keep
+ * saying.
+ *
+ * ## What "closed" is read from
+ *
+ * The Assessment's own status, and no longer from its tests. This function used
+ * to take "has any test left PLANNED", which was the best available answer
+ * before the Assessment had a status of its own — but it makes starting the
+ * examination the moment every *other* test freezes. A coach who starts a
+ * session and then notices they configured a test they do not need has to keep
+ * it: exactly the situation this rule was never meant to describe.
  *
  * ## Why SKIPPED became removable
  *
@@ -130,11 +138,11 @@ export type ModuleRemoval =
 export function canRemoveModule(
   status: AssessmentModuleStatus,
   measurementCount: number,
-  assessmentBegun: boolean,
+  assessmentClosed: boolean,
 ): ModuleRemoval {
   if (measurementCount > 0) return { ok: false, reason: 'HAS_MEASUREMENTS' };
-  if (!assessmentBegun) return { ok: true };
+  if (!assessmentClosed) return { ok: true };
   if (status === 'SKIPPED') return { ok: true };
 
-  return { ok: false, reason: 'ASSESSMENT_BEGUN' };
+  return { ok: false, reason: 'ASSESSMENT_CLOSED' };
 }
