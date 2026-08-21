@@ -94,6 +94,17 @@ export interface RecordedMeasurement {
   textValue: string | null;
   booleanValue: boolean | null;
   note: string | null;
+  /**
+   * The reading this one replaced, when it replaced one.
+   *
+   * A corrected value is otherwise indistinguishable from one entered first
+   * time. The superseded row itself stays out of the entry screen — what a
+   * coach needs there is that *this* number was changed, not what it used to
+   * be.
+   */
+  supersedes?: { id: string } | null;
+  /** When it reached the system. What "changed after the test was closed" is read from. */
+  ingestedAt?: Date;
 }
 
 /**

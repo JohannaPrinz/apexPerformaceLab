@@ -51,6 +51,18 @@ export const recordMeasurementSchema = z.object({
 export type RecordMeasurementInput = z.infer<typeof recordMeasurementSchema>;
 
 /**
+ * A whole stage in one request.
+ *
+ * Capped, because a batch is a stage and a stage is a handful of values — an
+ * unbounded list would be a different feature wearing this one's name.
+ */
+export const recordMeasurementsSchema = z.object({
+  measurements: z.array(recordMeasurementSchema).min(1).max(50),
+});
+
+export type RecordMeasurementsInput = z.infer<typeof recordMeasurementsSchema>;
+
+/**
  * Correcting a measurement.
  *
  * A correction is a **new** measurement that supersedes the previous one; the
@@ -66,10 +78,35 @@ export const correctMeasurementSchema = z.object({
   capturedAt: z.iso.datetime({ offset: true }).optional(),
 });
 
-/** A general remark about the test — stored as a Note on the module (§20). */
+/**
+ * Everything a coach entered on one stage.
+ *
+ * A discriminated union rather than two lists: the order matters — failures are
+ * reported against it — and two lists would lose which field a message belongs
+ * to.
+ */
+export const stageEntrySchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('record'), input: recordMeasurementSchema }),
+  z.object({ kind: z.literal('correct'), input: correctMeasurementSchema }),
+]);
+
+export const saveStageSchema = z.object({
+  entries: z.array(stageEntrySchema).min(1).max(50),
+});
+
+export type SaveStageInput = z.infer<typeof saveStageSchema>;
+
+/**
+ * A remark about the test — stored as a Note on the module (§20).
+ *
+ * `passIndex` narrows it to one stage. Absent or null means the note is about
+ * the test as a whole, which is what every note was before stages could be
+ * annotated.
+ */
 export const addModuleNoteSchema = z.object({
   moduleId: z.string().min(1),
   body: z.string().trim().min(1, 'Write something.').max(4000),
+  passIndex: z.number().int().positive().nullable().optional(),
 });
 
 export type AddModuleNoteInput = z.infer<typeof addModuleNoteSchema>;

@@ -49,6 +49,10 @@ const measurementSelect = {
   ingestedAt: true,
   source: true,
   supersededById: true,
+  // The row this one replaced, if any. Selected as a presence check rather than
+  // a value: it is what lets the entry screen mark a corrected reading, which
+  // is otherwise indistinguishable from one entered first time.
+  supersedes: { select: { id: true } },
   assessmentModuleId: true,
   note: true,
 } as const;
@@ -67,6 +71,8 @@ export interface MeasurementRecord {
   ingestedAt: Date;
   source: 'MANUAL' | 'DEVICE' | 'IMPORT' | 'DERIVED';
   supersededById: string | null;
+  /** The reading this one replaced, if it replaced one. */
+  supersedes?: { id: string } | null;
   assessmentModuleId: string;
   note: string | null;
 }
@@ -337,12 +343,24 @@ export async function moduleReadiness(
  * assessment and case — never stored a second time (§26.4). Returns `null` when
  * the module is not in this workspace.
  */
+/**
+ * Records a remark about a test, or about one stage of it.
+ *
+ * `passIndex` is what makes a stage note possible: a pass is a structure inside
+ * the test and never an entity, so the note points at the module and names the
+ * pass rather than at a row that would have to exist for it — the same shape
+ * `Measurement.passIndex` uses.
+ *
+ * Null means the note is about the test as a whole, which is what every note
+ * written before stages could be annotated already is.
+ */
 export async function addModuleNote(
   db: Pick<PrismaClientInstance, 'assessmentModule' | 'note'>,
   tenant: Pick<TenantContext, 'organizationId'>,
   authorCoachId: string,
   moduleId: string,
   body: string,
+  passIndex: number | null = null,
 ): Promise<{ id: string } | null> {
   const assessmentModule = await db.assessmentModule.findFirst({
     where: scoped(tenant, { id: moduleId }),
@@ -363,6 +381,7 @@ export async function addModuleNote(
       caseId: assessmentModule.assessment.caseId,
       assessmentId: assessmentModule.assessmentId,
       assessmentModuleId: assessmentModule.id,
+      passIndex,
     }),
     select: { id: true },
   });
@@ -371,6 +390,8 @@ export async function addModuleNote(
 export interface ModuleNoteRecord {
   id: string;
   body: string;
+  /** Which stage it is about. Null for a note about the test as a whole. */
+  passIndex: number | null;
   authorCoachId: string | null;
   createdAt: Date;
 }
@@ -382,7 +403,7 @@ export async function listModuleNotes(
 ): Promise<ModuleNoteRecord[]> {
   return db.note.findMany({
     where: scoped(tenant, { assessmentModuleId: moduleId }),
-    select: { id: true, body: true, authorCoachId: true, createdAt: true },
+    select: { id: true, body: true, passIndex: true, authorCoachId: true, createdAt: true },
     orderBy: { createdAt: 'desc' },
   });
 }
@@ -403,8 +424,15 @@ export interface ModuleWorkspace {
   moduleKey: string;
   /** What the coach called this test; `null` before names existed. */
   moduleName: string | null;
+  /** What it is for, in the coach's words. Not the protocol. */
+  moduleDescription: string | null;
   moduleVersion: number;
   status: string;
+  /** When the test was set up, first called finished, last reopened, put away. */
+  createdAt: Date;
+  completedAt: Date | null;
+  reopenedAt: Date | null;
+  archivedAt: Date | null;
   createdByCoachId: string;
   configuration: ModuleConfiguration | null;
   /** Type id → what a coach needs to see and validate against. */
@@ -417,6 +445,52 @@ export interface ModuleWorkspace {
   notes: ModuleNoteRecord[];
   readiness: Readiness;
   assessment: { id: string; question: string; athleteId: string };
+  /**
+   * The other tests of this examination, in the order they were added.
+   *
+   * Returned with the workspace so the entry screen can offer "the next test"
+   * when this one is finished. Without it, finishing a test is a dead end: the
+   * coach goes back to the assessment and finds the next one themselves, which
+   * on a tablet mid-session is three taps for something the screen already
+   * knows.
+   */
+  siblings: {
+    id: string;
+    name: string | null;
+    moduleKey: string;
+    status: string;
+    archivedAt: Date | null;
+  }[];
+}
+
+/**
+ * A row the React boundary can actually carry.
+ *
+ * `numericValue` is a Prisma `Decimal` — a class instance, because the column is
+ * `Decimal(12,4)` and a `number` would lose precision. Handing one to a Client
+ * Component makes React warn on every row ("Only plain objects can be passed to
+ * Client Components"), and what survives the crossing is not the Decimal.
+ *
+ * Converted to a **string**, not a number: the point of the Decimal is that the
+ * value does not fit a float, and turning it into one here would throw away
+ * exactly what the column exists to keep. Everything that displays it already
+ * accepts a string.
+ *
+ * Only the rows that leave for the browser are converted. `evaluateReadiness`
+ * keeps the originals.
+ */
+function plainValue<TRow extends { numericValue: unknown }>(
+  row: TRow,
+): TRow & { numericValue: string | null } {
+  const numeric = row.numericValue;
+
+  return {
+    ...row,
+    numericValue:
+      numeric === null || numeric === undefined
+        ? null
+        : (numeric as { toString: () => string }).toString(),
+  };
 }
 
 export async function moduleWorkspace(
@@ -430,10 +504,16 @@ export async function moduleWorkspace(
       id: true,
       moduleKey: true,
       name: true,
+      description: true,
       moduleVersion: true,
       status: true,
       payload: true,
       createdByCoachId: true,
+      createdAt: true,
+      completedAt: true,
+      reopenedAt: true,
+      archivedAt: true,
+      assessmentId: true,
       assessment: {
         select: { id: true, question: true, case: { select: { athleteId: true } } },
       },
@@ -444,13 +524,18 @@ export async function moduleWorkspace(
 
   const configuration = readModuleConfiguration(row.payload, row.moduleVersion);
 
-  const [all, notes] = await Promise.all([
+  const [all, notes, siblings] = await Promise.all([
     db.measurement.findMany({
       where: scoped(tenant, { assessmentModuleId: moduleId }),
       select: { ...measurementSelect },
       orderBy: [{ passIndex: 'asc' }, { capturedAt: 'asc' }, { id: 'asc' }],
     }),
     listModuleNotes(db, tenant, moduleId),
+    db.assessmentModule.findMany({
+      where: scoped(tenant, { assessmentId: row.assessmentId }),
+      select: { id: true, name: true, moduleKey: true, status: true, archivedAt: true },
+      orderBy: { createdAt: 'asc' },
+    }),
   ]);
 
   const exercises =
@@ -483,8 +568,13 @@ export async function moduleWorkspace(
     moduleId: row.id,
     moduleKey: row.moduleKey,
     moduleName: row.name ?? null,
+    moduleDescription: row.description ?? null,
     moduleVersion: row.moduleVersion,
     status: row.status,
+    createdAt: row.createdAt,
+    completedAt: row.completedAt,
+    reopenedAt: row.reopenedAt,
+    archivedAt: row.archivedAt,
     createdByCoachId: row.createdByCoachId,
     configuration,
     types: Object.fromEntries(
@@ -494,9 +584,16 @@ export async function moduleWorkspace(
       ]),
     ),
     exercises: Object.fromEntries(exercises.map((exercise) => [exercise.id, exercise.name])),
-    measurements: all.filter((measurement) => measurement.supersededById === null),
-    superseded: all.filter((measurement) => measurement.supersededById !== null),
+    measurements: all.filter((m) => m.supersededById === null).map(plainValue),
+    superseded: all.filter((m) => m.supersededById !== null).map(plainValue),
     notes,
+    siblings: siblings.map((sibling) => ({
+      id: sibling.id,
+      name: sibling.name ?? null,
+      moduleKey: sibling.moduleKey,
+      status: sibling.status,
+      archivedAt: sibling.archivedAt,
+    })),
     readiness: configuration
       ? evaluateReadiness(configuration, all)
       : {
@@ -513,4 +610,235 @@ export async function moduleWorkspace(
       athleteId: row.assessment.case.athleteId,
     },
   };
+}
+
+/** Which entry of a batch failed, so the interface can point at the field. */
+export interface BatchFailure {
+  readonly index: number;
+  readonly failure: RecordFailure;
+}
+
+export type RecordManyResult =
+  { ok: true; measurements: MeasurementRecord[] } | { ok: false; failures: BatchFailure[] };
+
+/**
+ * Records a whole stage in one go.
+ *
+ * ## The gap this closes
+ *
+ * `recordMeasurement` writes exactly one row. A screen that saves five fields
+ * therefore made five independent calls, and a failure on the third left the
+ * first two in the database with no record of the intent — the coach would see
+ * an error and a half-saved stage, with no way to tell which half.
+ *
+ * ## Validate everything, then write everything
+ *
+ * Both phases matter and they are deliberately separate:
+ *
+ * 1. **Every entry is checked first**, against the module's configuration, the
+ *    workspace's measurement types and the stage rules — the same checks
+ *    `recordMeasurement` runs, reused rather than restated.
+ * 2. **Only then does anything get written**, inside one transaction.
+ *
+ * So a stage with one bad value writes nothing at all, and the coach is told
+ * about *every* problem at once instead of discovering them one save at a time.
+ *
+ * ## What it deliberately does not do
+ *
+ * It does not correct. A value that already exists is superseded through
+ * `correctMeasurement`, which keeps the original and its chain (§13) — folding
+ * that into a batch would put two different meanings behind one button. The
+ * caller decides which entries are new and which are corrections.
+ */
+export async function recordMeasurements(
+  db: MeasurementDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  inputs: readonly RecordMeasurementInput[],
+): Promise<RecordManyResult> {
+  if (inputs.length === 0) return { ok: true, measurements: [] };
+
+  const prepared: { index: number; input: RecordMeasurementInput }[] = [];
+  const failures: BatchFailure[] = [];
+
+  // Dry run: every entry goes through the same validation the single-value path
+  // uses. `validateOnly` stops short of the write, so nothing is created while
+  // a later entry may still turn out to be wrong.
+  for (const [index, input] of inputs.entries()) {
+    const check = await validateMeasurement(db, tenant, input);
+
+    if (check === null) prepared.push({ index, input });
+    else failures.push({ index, failure: check });
+  }
+
+  if (failures.length > 0) return { ok: false, failures };
+
+  const measurements = await db.$transaction(async (tx) =>
+    Promise.all(
+      prepared.map(async ({ input }) => {
+        const result = await recordMeasurement(tx, tenant, input);
+
+        // Unreachable: every entry validated a moment ago, inside the same
+        // request. Throwing rolls the transaction back rather than returning a
+        // half-written stage.
+        if (!result.ok) throw new Error('Ein geprüfter Messwert ließ sich nicht speichern.');
+
+        return result.measurement;
+      }),
+    ),
+  );
+
+  return { ok: true, measurements };
+}
+
+/**
+ * The checks `recordMeasurement` runs, without the write.
+ *
+ * Returns `null` when the value would be accepted. Extracted so the batch can
+ * refuse a whole stage before touching the database — and so the two paths can
+ * never disagree about what a valid measurement is.
+ */
+async function validateMeasurement(
+  db: MeasurementDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  input: RecordMeasurementInput,
+): Promise<RecordFailure | null> {
+  const assessmentModule = await loadModule(db, tenant, input.moduleId);
+  if (!assessmentModule) return { reason: 'MODULE_NOT_FOUND' };
+
+  const configuration = assessmentModule.configuration;
+  if (!configuration) return { reason: 'MODULE_NOT_CONFIGURED' };
+
+  if (!measurementTypeIdsOf(configuration).includes(input.measurementTypeId)) {
+    return { reason: 'TYPE_NOT_CONFIGURED' };
+  }
+
+  if (configuration.exerciseIds.length === 0) {
+    if (input.exerciseId) return { reason: 'EXERCISE_NOT_CONFIGURED' };
+  } else if (!input.exerciseId || !configuration.exerciseIds.includes(input.exerciseId)) {
+    return { reason: 'EXERCISE_MISSING' };
+  }
+
+  const type = await db.measurementType.findFirst({
+    where: {
+      id: input.measurementTypeId,
+      OR: [{ organizationId: tenant.organizationId }, { organizationId: null }],
+    },
+    select: { valueType: true },
+  });
+
+  if (!type) return { reason: 'TYPE_NOT_AVAILABLE' };
+
+  if (!toValueColumns(type.valueType, input.value)) {
+    return { reason: 'VALUE_TYPE_MISMATCH', expected: type.valueType };
+  }
+
+  if (!validatePassIndex(configuration, input.passIndex)) {
+    return { reason: 'PASS_INVALID', passes: configuration.passes };
+  }
+
+  const context = validateMeasurementContext(
+    configuration,
+    input.context,
+    assessmentModule.moduleVersion,
+  );
+
+  return context.success ? null : { reason: 'CONTEXT_INVALID', errors: context.errors ?? {} };
+}
+
+/**
+ * One entry of a stage: either a value not recorded yet, or a correction of one.
+ *
+ * The two are different acts, not two spellings of one. A new value creates a
+ * row; a correction supersedes the original and keeps it (§13). Which of the
+ * two applies is decided by whether the slot already holds a measurement, and
+ * the caller knows that because it is what it rendered.
+ */
+export type StageEntry =
+  | { readonly kind: 'record'; readonly input: RecordMeasurementInput }
+  | { readonly kind: 'correct'; readonly input: CorrectMeasurementInput };
+
+export type SaveStageResult =
+  { ok: true; measurements: MeasurementRecord[] } | { ok: false; failures: BatchFailure[] };
+
+/**
+ * Saves everything a coach entered on one stage, in one transaction.
+ *
+ * ## Why both kinds belong in the same call
+ *
+ * A stage rarely holds only new values. The coach fills three fields, notices
+ * the second reading was mistyped, corrects it, and presses "Weiter" once. Two
+ * calls behind that button would mean the stage can be half-saved — the new
+ * values in, the correction not — and the record would then show a value the
+ * coach believes they replaced.
+ *
+ * `recordMeasurements` closed that gap for new values. This closes it for the
+ * mixed case, which is the ordinary one.
+ *
+ * ## Validate everything, then write everything
+ *
+ * New values go through the same dry run `recordMeasurements` uses. Corrections
+ * cannot be checked without reading the original, so they are attempted inside
+ * the transaction — a failure there rolls the whole stage back, which is the
+ * same promise by a different route.
+ *
+ * Failures come back indexed against the entries as given, so a screen can put
+ * the message on the field it belongs to rather than above the form.
+ */
+export async function saveStage(
+  db: MeasurementDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  entries: readonly StageEntry[],
+): Promise<SaveStageResult> {
+  if (entries.length === 0) return { ok: true, measurements: [] };
+
+  const failures: BatchFailure[] = [];
+
+  for (const [index, entry] of entries.entries()) {
+    if (entry.kind !== 'record') continue;
+
+    const check = await validateMeasurement(db, tenant, entry.input);
+    if (check !== null) failures.push({ index, failure: check });
+  }
+
+  if (failures.length > 0) return { ok: false, failures };
+
+  /**
+   * A refusal raised from inside the transaction, so the rollback happens.
+   *
+   * Returning a result would commit what came before it; only a throw undoes
+   * the stage. The reason is carried out again on the far side.
+   */
+  class StageRefused extends Error {
+    constructor(readonly entry: BatchFailure) {
+      super('Stage refused');
+    }
+  }
+
+  try {
+    const measurements = await db.$transaction(async (tx) => {
+      const written: MeasurementRecord[] = [];
+
+      // Sequential on purpose: a correction reads the row it supersedes, and
+      // two writes racing for the same slot would fork the chain that §13
+      // exists to keep single.
+      for (const [index, entry] of entries.entries()) {
+        const result =
+          entry.kind === 'record'
+            ? await recordMeasurement(tx, tenant, entry.input)
+            : await correctMeasurement(tx, tenant, entry.input);
+
+        if (!result.ok) throw new StageRefused({ index, failure: result.failure });
+
+        written.push(result.measurement);
+      }
+
+      return written;
+    });
+
+    return { ok: true, measurements };
+  } catch (error) {
+    if (error instanceof StageRefused) return { ok: false, failures: [error.entry] };
+
+    throw error;
+  }
 }

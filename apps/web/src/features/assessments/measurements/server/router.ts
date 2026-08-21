@@ -11,6 +11,8 @@ import {
   correctMeasurementSchema,
   moduleMeasurementsSchema,
   recordMeasurementSchema,
+  recordMeasurementsSchema,
+  saveStageSchema,
 } from '../schemas';
 
 import {
@@ -20,6 +22,8 @@ import {
   moduleReadiness,
   moduleWorkspace,
   recordMeasurement,
+  recordMeasurements,
+  saveStage,
   type RecordFailure,
   type RecordResult,
 } from './service';
@@ -132,7 +136,7 @@ export const measurementsRouter = createTRPCRouter({
       return workspace;
     }),
 
-  /** A general remark about the test — a Note on the module (§20). */
+  /** A remark about the test, or about one of its stages — a Note (§20). */
   addNote: withCoachPermission('measurement:write')
     .input(addModuleNoteSchema)
     .mutation(async ({ ctx, input }) => {
@@ -142,6 +146,7 @@ export const measurementsRouter = createTRPCRouter({
         ctx.coach.id,
         input.moduleId,
         input.body,
+        input.passIndex ?? null,
       );
 
       if (!note) throw toError({ reason: 'MODULE_NOT_FOUND' });
@@ -157,6 +162,52 @@ export const measurementsRouter = createTRPCRouter({
    * Corrects a value by superseding it. There is deliberately no `update`:
    * a measurement is never overwritten (§4, §13).
    */
+  /**
+   * Records a whole stage at once.
+   *
+   * Every entry is validated before anything is written, and the writes share a
+   * transaction — a stage with one bad value stores nothing rather than part of
+   * itself. The failures come back indexed, so the screen can point at the
+   * field rather than saying "something was wrong".
+   */
+  recordMany: withCoachPermission('measurement:write')
+    .input(recordMeasurementsSchema)
+    .mutation(async ({ ctx, input }) => {
+      const result = await recordMeasurements(ctx.db, ctx.tenant, input.measurements);
+
+      if (!result.ok) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Mindestens ein Messwert konnte nicht gespeichert werden.',
+          cause: result.failures,
+        });
+      }
+
+      return result.measurements;
+    }),
+
+  /**
+   * Saves a whole stage — new values and corrections together.
+   *
+   * What "Weiter" calls. One transaction, so a stage is never half-written, and
+   * indexed failures so the screen can point at the field rather than the form.
+   */
+  saveStage: withCoachPermission('measurement:write')
+    .input(saveStageSchema)
+    .mutation(async ({ ctx, input }) => {
+      const result = await saveStage(ctx.db, ctx.tenant, input.entries);
+
+      if (!result.ok) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Mindestens ein Wert dieser Stufe konnte nicht gespeichert werden.',
+          cause: result.failures,
+        });
+      }
+
+      return result.measurements;
+    }),
+
   correct: withCoachPermission('measurement:write')
     .input(correctMeasurementSchema)
     .mutation(async ({ ctx, input }) =>
