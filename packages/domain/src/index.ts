@@ -34,6 +34,7 @@ export * from './exercises';
 // cycle. The root is the one place that can name it without one.
 export * from './exercises/import';
 export * from './measurement-types';
+export * from './assessments/status';
 export * from './modules';
 export * from './modules/configuration';
 export * from './modules/configuration-change';
