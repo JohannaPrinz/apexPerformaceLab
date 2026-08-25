@@ -19,6 +19,7 @@ import {
   ASSESSMENT_STATUS_LABELS_DE,
   ASSESSMENT_TYPE_LABELS_DE,
 } from '@/features/assessments/components/labels';
+import { AnalysisSection } from '@/features/reports/components/analysis-section';
 import { api } from '@/trpc/server';
 
 import type { Metadata } from 'next';
@@ -49,12 +50,18 @@ export default async function AssessmentPage({
 
   // A configured test is copied into this assessment — a second run of it — or
   // into another assessment of the same athlete.
-  const [siblings, exerciseCatalogue] = await Promise.all([
+  const [siblings, exerciseCatalogue, analysis, draft] = await Promise.all([
     api.assessments.listForAthlete({ athleteId: assessment.athleteId }),
     // The ordinary catalogue procedure — this workspace plus system-wide, and
     // never another tenant's. The dialog picks from what it is given; it does
     // not query and does not decide reachability.
     api.exercises.list({ includeArchived: false, limit: 200, offset: 0 }),
+    // One read for the whole analysis section: which tests have results, which
+    // the draft draws on, and whether an interim analysis is possible. Asking
+    // separately would let the selection disagree with the readiness beside it.
+    api.reports.assessmentOverview({ assessmentId }),
+    // Null while no analysis has been started — the text describes a selection.
+    api.reports.assessmentDraft({ assessmentId }),
   ]);
 
   const exerciseOptions = exerciseCatalogue.map((exercise) => ({
@@ -274,6 +281,14 @@ export default async function AssessmentPage({
           </p>
         )}
       </section>
+
+      {/* After the tests, because it is the step after them. */}
+      <AnalysisSection
+        assessmentId={assessment.id}
+        overview={analysis}
+        draft={draft}
+        readOnly={assessmentClosed}
+      />
     </main>
   );
 }

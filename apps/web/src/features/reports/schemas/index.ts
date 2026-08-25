@@ -49,4 +49,39 @@ export const listReportsSchema = z.object({
   assessmentId: z.string().min(1),
 });
 
+/** What an analysis of this assessment could draw on. One id, nothing else. */
+export const assessmentAnalysisSchema = z.object({
+  assessmentId: z.string().min(1),
+});
+
+export type AssessmentAnalysisInput = z.infer<typeof assessmentAnalysisSchema>;
+
 export type ListReportsInput = z.infer<typeof listReportsSchema>;
+
+/**
+ * Which text of a draft is being addressed.
+ *
+ * One assessment-wide text, and one per test. A discriminated union rather than
+ * a nullable module id, so "the overall text" cannot be confused with "a
+ * section whose id went missing".
+ */
+export const draftTargetSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('overall') }),
+  z.object({ kind: z.literal('section'), moduleId: z.string().min(1) }),
+]);
+
+export type DraftTargetInput = z.infer<typeof draftTargetSchema>;
+
+export const updateDraftTextSchema = reportIdSchema.extend({
+  target: draftTargetSchema,
+  /** Generous, but bounded: this is a paragraph, not a document store. */
+  text: z.string().max(20_000),
+});
+
+export type UpdateDraftTextInput = z.infer<typeof updateDraftTextSchema>;
+
+export const regenerateDraftSchema = reportIdSchema.extend({
+  target: draftTargetSchema,
+});
+
+export type RegenerateDraftInput = z.infer<typeof regenerateDraftSchema>;
