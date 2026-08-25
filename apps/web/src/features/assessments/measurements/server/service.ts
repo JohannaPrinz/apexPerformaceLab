@@ -3,15 +3,20 @@ import 'server-only';
 import type { PrismaClientInstance } from '@apex/database';
 import { scoped, withTenant } from '@apex/database/tenant';
 import {
+  canonicalContext,
+  contextOf,
   evaluateReadiness,
   measurementTypeIdsOf,
   readModuleConfiguration,
+  seriesKey,
   validateMeasurementContext,
   validatePassIndex,
   type ModuleConfiguration,
   type Readiness,
 } from '@apex/domain';
 import type { TenantContext } from '@apex/types';
+
+import { refreshDerivedMeasurements } from './derivation';
 
 import type { CorrectMeasurementInput, RecordMeasurementInput } from '../schemas';
 
@@ -835,10 +840,338 @@ export async function saveStage(
       return written;
     });
 
+    // Outside the transaction on purpose. A percentage follows from the folds
+    // that stand once they are committed, and computing it inside would read a
+    // sheet that may still roll back. It is also not part of the coach's write:
+    // if the derivation fails the stage the coach typed is still saved, which is
+    // the right order of importance.
+    for (const moduleId of new Set(measurements.map((row) => row.assessmentModuleId))) {
+      await refreshDerivedMeasurements(db, tenant, moduleId);
+    }
+
     return { ok: true, measurements };
   } catch (error) {
     if (error instanceof StageRefused) return { ok: false, failures: [error.entry] };
 
     throw error;
   }
+}
+
+/**
+ * Every standing measurement that may be compared with this test's.
+ *
+ * The one place the tenant rule, the supersede rule, the archive rule and the
+ * "same type, same athlete" rule are stated. Both the table and the diagram
+ * read from here, so neither can quietly disagree with the other about what
+ * belongs in an evaluation.
+ */
+async function comparableMeasurements(
+  db: MeasurementDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  moduleId: string,
+) {
+  const current = await db.assessmentModule.findFirst({
+    where: scoped(tenant, { id: moduleId }),
+    select: {
+      id: true,
+      moduleKey: true,
+      assessment: { select: { case: { select: { athleteId: true } } } },
+    },
+  });
+
+  if (!current) return null;
+
+  const rows = await db.measurement.findMany({
+    where: scoped(tenant, {
+      // A superseded reading is history, not a point on the curve (§13).
+      supersededById: null,
+      assessmentModule: {
+        moduleKey: current.moduleKey,
+        archivedAt: null,
+        assessment: { case: { athleteId: current.assessment.case.athleteId } },
+      },
+    }),
+    select: {
+      id: true,
+      measurementTypeId: true,
+      side: true,
+      exerciseId: true,
+      passIndex: true,
+      context: true,
+      numericValue: true,
+      textValue: true,
+      booleanValue: true,
+      capturedAt: true,
+      assessmentModule: {
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          assessmentId: true,
+          // The protocol's own answer to "what did this stage demand". Read
+          // here so the diagram never has to ask a second time.
+          payload: true,
+          moduleVersion: true,
+          assessment: { select: { question: true } },
+        },
+      },
+      measurementType: { select: { name: true, unit: true, valueType: true } },
+    },
+    orderBy: [{ capturedAt: 'asc' }, { id: 'asc' }],
+  });
+
+  const exerciseIds = [...new Set(rows.map((row) => row.exerciseId))].filter(
+    (id): id is string => id !== null,
+  );
+  const exercises =
+    exerciseIds.length > 0
+      ? await db.exercise.findMany({
+          where: {
+            id: { in: exerciseIds },
+            // The catalogue rule, not an absence of scoping: a system exercise
+            // carries `organizationId = null` and every workspace inherits it.
+            OR: [{ organizationId: tenant.organizationId }, { organizationId: null }],
+          },
+          select: { id: true, name: true },
+        })
+      : [];
+  const exerciseNames = new Map(exercises.map((exercise) => [exercise.id, exercise.name]));
+
+  return { current, rows, exerciseNames };
+}
+
+/**
+ * A stored numeric value as a number, or `null` when there is none.
+ *
+ * The `null` check is load-bearing: a text or boolean reading has no
+ * `numericValue`, and running the empty string through `Number()` yields 0 —
+ * which would put a difference of ±0 on two movement-quality notes.
+ */
+function numberOf(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+
+  const parsed = Number((value as { toString: () => string }).toString());
+
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * One point of a curve: a stage of one test.
+ *
+ * `loads` carries every **other** numeric quantity this test recorded at the
+ * same stage. That is where a load axis comes from: the model has no field for
+ * "what this stage demanded" — the schema says a lactate stage "holds one
+ * Lactate, one Heart Rate, one RPE and one Pace", so the load of a stage is
+ * itself a measurement of that stage. Which of them counts as the load is a
+ * professional judgement the model does not record, so the choice is offered
+ * rather than guessed.
+ */
+export interface ChartPoint {
+  readonly passIndex: number | null;
+  readonly y: number;
+  readonly loads: Record<string, number>;
+}
+
+/** One curve: the stages of one test, in stage order. */
+export interface ChartSeries {
+  readonly moduleId: string;
+  readonly moduleName: string | null;
+  readonly moduleStatus: string;
+  readonly isCurrentModule: boolean;
+  readonly points: readonly ChartPoint[];
+}
+
+/** One diagram: one quantity, at one set of coordinates, across tests. */
+export interface ChartGroup {
+  readonly key: string;
+  readonly typeName: string;
+  readonly unit: string;
+  readonly side: string;
+  readonly exerciseName: string | null;
+  readonly context: Record<string, string>;
+  /** The quantities that could serve as an x axis, as recorded by these tests. */
+  readonly loadCandidates: readonly { id: string; name: string; unit: string }[];
+  /**
+   * The one the protocol names as the demand, when it names one.
+   *
+   * The diagram starts on it instead of on the stage number. `null` where the
+   * test declares none, or where it declares one that not every point carries —
+   * half a curve on a load axis is not a comparison.
+   */
+  readonly defaultLoadId: string | null;
+  readonly series: readonly ChartSeries[];
+}
+
+/**
+ * The stages of a test as curves, and the same test type over time beside them.
+ *
+ * ## The x axis is not the stage number
+ *
+ * Stage 3 of one test and stage 3 of another are the same *position*, not the
+ * same demand: a coach who moved the protocol from 10 km/h to 11 km/h has not
+ * made the athlete faster. So the stage number is offered only as a fallback,
+ * labelled as a sequence, and a real load quantity is preferred wherever the
+ * test recorded one.
+ *
+ * **The model does not mark which quantity is the load.** There is no field for
+ * it, no category and no flag — see `ChartPoint.loads`. Inventing one would be
+ * inventing domain logic, so every other numeric quantity of the test is
+ * offered and the coach picks. Nothing is assumed.
+ *
+ * ## What is never done
+ *
+ * Two tests are never merged into an average curve, and no curve is drawn
+ * through points of different tests. Each test is its own series (§11), named,
+ * with the one being looked at marked.
+ *
+ * ## Which quantity gets its own diagram
+ *
+ * Grouped by measurement type, side, exercise and dimension values — the same
+ * coordinates the table uses, minus the stage, because the stages are what the
+ * curve is made of. Two units never share an axis.
+ *
+ * Only groups where some test recorded at least two stages: a single point is
+ * not a curve, and the table above already states it.
+ */
+export async function measurementChart(
+  db: MeasurementDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  moduleId: string,
+): Promise<ChartGroup[] | null> {
+  const loaded = await comparableMeasurements(db, tenant, moduleId);
+  if (loaded === null) return null;
+
+  const { current, rows, exerciseNames } = loaded;
+
+  /** Every value of one test at one stage, so the other quantities are reachable. */
+  const atStage = new Map<string, Map<string, number>>();
+  for (const row of rows) {
+    const at = stageKey(row);
+    const value = numberOf(row.numericValue);
+    if (value === null) continue;
+
+    const found = atStage.get(at);
+    if (found) found.set(row.measurementTypeId, value);
+    else atStage.set(at, new Map([[row.measurementTypeId, value]]));
+  }
+
+  const groups = new Map<string, (typeof rows)[number][]>();
+  for (const row of rows) {
+    const key = seriesKey(row);
+    const found = groups.get(key);
+    if (found) found.push(row);
+    else groups.set(key, [row]);
+  }
+
+  const charts: ChartGroup[] = [];
+
+  for (const [key, points] of groups) {
+    const seed = points[0]!;
+    if (seed.measurementType.valueType !== 'NUMERIC') continue;
+
+    const byModule = new Map<string, (typeof points)[number][]>();
+    for (const row of points) {
+      const found = byModule.get(row.assessmentModule.id);
+      if (found) found.push(row);
+      else byModule.set(row.assessmentModule.id, [row]);
+    }
+
+    const series: ChartSeries[] = [];
+    const candidates = new Map<string, { id: string; name: string; unit: string }>();
+
+    for (const [id, rowsOfModule] of byModule) {
+      const ordered = [...rowsOfModule].sort(
+        (a, b) =>
+          (a.passIndex ?? 0) - (b.passIndex ?? 0) ||
+          a.capturedAt.getTime() - b.capturedAt.getTime(),
+      );
+
+      const built: ChartPoint[] = [];
+      for (const row of ordered) {
+        const y = numberOf(row.numericValue);
+        if (y === null) continue;
+
+        const others = atStage.get(stageKey(row));
+        const loads: Record<string, number> = {};
+        for (const [typeId, value] of others ?? []) {
+          if (typeId === row.measurementTypeId) continue;
+          loads[typeId] = value;
+        }
+
+        built.push({ passIndex: row.passIndex, y, loads });
+      }
+
+      if (built.length === 0) continue;
+
+      const first = ordered[0]!;
+      series.push({
+        moduleId: id,
+        moduleName: first.assessmentModule.name,
+        moduleStatus: first.assessmentModule.status,
+        isCurrentModule: id === current.id,
+        points: built,
+      });
+    }
+
+    // A curve needs two points. One reading is a number, and the table says it.
+    if (!series.some((entry) => entry.points.length > 1)) continue;
+
+    // Offered only where *every* series can place its points on that axis —
+    // half a curve on a load axis and half on nothing is not a comparison.
+    for (const row of rows) {
+      if (row.measurementTypeId === seed.measurementTypeId) continue;
+      if (row.measurementType.valueType !== 'NUMERIC') continue;
+      candidates.set(row.measurementTypeId, {
+        id: row.measurementTypeId,
+        name: row.measurementType.name,
+        unit: row.measurementType.unit,
+      });
+    }
+
+    const usable = [...candidates.values()].filter((candidate) =>
+      series.every((entry) => entry.points.every((point) => candidate.id in point.loads)),
+    );
+
+    // The protocol's own answer, used only if every point can actually be
+    // placed on it.
+    const declared = readModuleConfiguration(
+      seed.assessmentModule.payload,
+      seed.assessmentModule.moduleVersion,
+    )?.loadMeasurementTypeId;
+    const defaultLoadId =
+      declared !== undefined && usable.some((candidate) => candidate.id === declared)
+        ? declared
+        : null;
+
+    charts.push({
+      key,
+      defaultLoadId,
+      typeName: seed.measurementType.name,
+      unit: seed.measurementType.unit,
+      side: seed.side,
+      exerciseName: seed.exerciseId === null ? null : (exerciseNames.get(seed.exerciseId) ?? null),
+      context: contextOf(seed.context),
+      loadCandidates: usable,
+      series,
+    });
+  }
+
+  return charts;
+}
+
+/** One stage of one test, so the quantities recorded together are reachable. */
+function stageKey(row: {
+  assessmentModule: { id: string };
+  side: string;
+  exerciseId: string | null;
+  passIndex: number | null;
+  context: unknown;
+}): string {
+  return [
+    row.assessmentModule.id,
+    row.side,
+    row.exerciseId ?? '',
+    row.passIndex === null ? '' : String(row.passIndex),
+    canonicalContext(row.context),
+  ].join('|');
 }

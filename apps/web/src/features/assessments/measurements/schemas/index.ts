@@ -113,6 +113,13 @@ export type AddModuleNoteInput = z.infer<typeof addModuleNoteSchema>;
 
 export type CorrectMeasurementInput = z.infer<typeof correctMeasurementSchema>;
 
+/** The curves of a test's quantities over time. A module, and nothing else. */
+export const measurementChartSchema = z.object({
+  moduleId: z.string().min(1),
+});
+
+export type MeasurementChartInput = z.infer<typeof measurementChartSchema>;
+
 export const moduleMeasurementsSchema = z.object({
   moduleId: z.string().min(1),
   /** Superseded values are hidden by default but never deleted. */

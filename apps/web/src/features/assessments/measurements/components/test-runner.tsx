@@ -137,6 +137,34 @@ export function TestRunner({
       ? notes
       : notes.filter((note) => note.passIndex === null || note.passIndex === currentPass);
 
+  /**
+   * The cells, in blocks of one movement.
+   *
+   * `slotsForPass` already returns them exercise by exercise, so this only has
+   * to find the boundaries — one loop rather than a grouping that could
+   * disagree with the order the grid is built from.
+   */
+  const slotGroups = slots.reduce<
+    { exerciseId: string | null; exerciseName: string | null; slots: MeasurementSlot[] }[]
+  >((groups, slot) => {
+    const last = groups.at(-1);
+    if (last?.exerciseId === slot.exerciseId && last !== undefined) {
+      last.slots.push(slot);
+
+      return groups;
+    }
+
+    return [
+      ...groups,
+      {
+        exerciseId: slot.exerciseId,
+        exerciseName:
+          slot.exerciseId === null ? null : (exercises[slot.exerciseId] ?? 'Unbekannte Übung'),
+        slots: [slot],
+      },
+    ];
+  }, []);
+
   const draftKey = (slot: MeasurementSlot) => `${String(currentPass)}|${slot.key}`;
   const draftOf = (slot: MeasurementSlot) => draft[draftKey(slot)] ?? EMPTY_DRAFT;
 
@@ -486,29 +514,47 @@ export function TestRunner({
                 : ''}
             </p>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              {slots.map((slot) => (
-                <MeasurementCell
-                  key={slot.key}
-                  slot={slot}
-                  passIndex={currentPass}
-                  measurements={measurements}
-                  type={types[slot.measurementTypeId]}
-                  draft={draftOf(slot)}
-                  onChange={(patch) => {
-                    setDraft((current) => ({
-                      ...current,
-                      [draftKey(slot)]: { ...(current[draftKey(slot)] ?? EMPTY_DRAFT), ...patch },
-                    }));
-                    // The message described the value that was refused. It no
-                    // longer does.
-                    setFieldErrors(({ [slot.key]: _cleared, ...rest }) => rest);
-                  }}
-                  error={fieldErrors[slot.key]}
-                  readOnly={!canEdit}
-                />
-              ))}
-            </div>
+            {/* Grouped by movement, with the movement named once above its own
+                values. A maximal-strength test covering bench press and
+                deadlift otherwise reads as four cells with two labels between
+                them, and a load typed into the wrong lift looks exactly like a
+                correct entry. A test that names no movement keeps one plain
+                grid — a heading over a single group would be ceremony. */}
+            {slotGroups.map((group) => (
+              <div key={group.exerciseId ?? 'none'} className="flex flex-col gap-2">
+                {group.exerciseName === null ? null : (
+                  <h3 className="text-sm font-medium">{group.exerciseName}</h3>
+                )}
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {group.slots.map((slot) => (
+                    <MeasurementCell
+                      key={slot.key}
+                      slot={slot}
+                      passIndex={currentPass}
+                      measurements={measurements}
+                      type={types[slot.measurementTypeId]}
+                      exerciseName={group.exerciseName}
+                      draft={draftOf(slot)}
+                      onChange={(patch) => {
+                        setDraft((current) => ({
+                          ...current,
+                          [draftKey(slot)]: {
+                            ...(current[draftKey(slot)] ?? EMPTY_DRAFT),
+                            ...patch,
+                          },
+                        }));
+                        // The message described the value that was refused. It
+                        // no longer does.
+                        setFieldErrors(({ [slot.key]: _cleared, ...rest }) => rest);
+                      }}
+                      error={fieldErrors[slot.key]}
+                      readOnly={!canEdit}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
           </section>
 
           {canEdit ? (

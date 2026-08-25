@@ -9,16 +9,19 @@ import { createTRPCRouter, withCoachPermission, withPermission } from '@/server/
 import {
   addModuleNoteSchema,
   correctMeasurementSchema,
+  measurementChartSchema,
   moduleMeasurementsSchema,
   recordMeasurementSchema,
   recordMeasurementsSchema,
   saveStageSchema,
 } from '../schemas';
 
+import { derivedValues } from './derivation';
 import {
   addModuleNote,
   correctMeasurement,
   listMeasurementsForModule,
+  measurementChart,
   moduleReadiness,
   moduleWorkspace,
   recordMeasurement,
@@ -134,6 +137,50 @@ export const measurementsRouter = createTRPCRouter({
       if (!workspace) throw toError({ reason: 'MODULE_NOT_FOUND' });
 
       return workspace;
+    }),
+
+  /**
+   * How this test's quantities have moved for this athlete, as curves.
+   *
+   * Beside `workspace` rather than inside it: the entry screen needs what this
+   * test holds, the overview additionally needs what came before. Folding the
+   * two together would make every run of a test pay for a comparison it does
+   * not show.
+   */
+  /**
+   * What this test computed for itself, or why it could not.
+   *
+   * Both answers from one procedure: a screen that had to ask separately could
+   * show a missing percentage without the reason, which is the state a coach
+   * cannot act on.
+   */
+  derived: withPermission('measurement:read')
+    .input(measurementChartSchema)
+    .query(async ({ ctx, input }) => {
+      const states = await derivedValues(ctx.db, ctx.tenant, input.moduleId);
+
+      return states.map((state) => ({
+        measurementTypeId: state.measurementTypeId,
+        method: state.method,
+        // Flattened for the client: a discriminated union survives the wire,
+        // but the screen only ever needs these three.
+        percent: state.outcome.ok ? state.outcome.value.bodyFatPercent : null,
+        sum: state.outcome.ok ? state.outcome.value.sum : null,
+        age: state.outcome.ok ? state.outcome.value.age : null,
+        refusal: state.outcome.ok ? null : state.outcome.refusal,
+        // What already stands, so a refusal never hides a finding.
+        storedPercent: state.storedPercent,
+        measuredAt: state.measuredAt,
+      }));
+    }),
+
+  chart: withPermission('measurement:read')
+    .input(measurementChartSchema)
+    .query(async ({ ctx, input }) => {
+      const groups = await measurementChart(ctx.db, ctx.tenant, input.moduleId);
+      if (groups === null) throw toError({ reason: 'MODULE_NOT_FOUND' });
+
+      return groups;
     }),
 
   /** A remark about the test, or about one of its stages — a Note (§20). */

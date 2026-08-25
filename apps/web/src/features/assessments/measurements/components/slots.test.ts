@@ -164,14 +164,18 @@ describe('exercises as an axis', () => {
     exerciseIds: ['ex_bench', 'ex_deadlift'],
   });
 
-  it('gives every quantity a cell per exercise', () => {
+  it('gives every quantity a cell per exercise, grouped by exercise', () => {
+    // The whole set of one movement together, then the next. The quantity used
+    // to be the outer loop, which put a bench press and a deadlift on screen as
+    // "load, load, repetitions, repetitions" — four cells a coach cannot tell
+    // apart while entering them.
     const slots = slotsForPass(twoLifts);
 
     expect(slots).toHaveLength(4);
     expect(slots.map((slot) => `${slot.measurementTypeId}@${slot.exerciseId ?? '-'}`)).toEqual([
       'load@ex_bench',
-      'load@ex_deadlift',
       'reps@ex_bench',
+      'load@ex_deadlift',
       'reps@ex_deadlift',
     ]);
   });
@@ -181,11 +185,20 @@ describe('exercises as an axis', () => {
   });
 
   it('does not put one lift’s value in the other lift’s cell', () => {
+    // Found by predicate rather than by index: the guarantee is about the
+    // coordinates of a slot, not about where it happens to sit in the list.
     const slots = slotsForPass(twoLifts);
     const measurements = [recorded('load', null, 'BILATERAL', null, 'ex_deadlift')];
 
-    expect(findRecorded(measurements, slots[0]!, null)).toBeUndefined();
-    expect(findRecorded(measurements, slots[1]!, null)?.exerciseId).toBe('ex_deadlift');
+    const benchLoad = slots.find(
+      (slot) => slot.measurementTypeId === 'load' && slot.exerciseId === 'ex_bench',
+    );
+    const deadliftLoad = slots.find(
+      (slot) => slot.measurementTypeId === 'load' && slot.exerciseId === 'ex_deadlift',
+    );
+
+    expect(findRecorded(measurements, benchLoad!, null)).toBeUndefined();
+    expect(findRecorded(measurements, deadliftLoad!, null)?.exerciseId).toBe('ex_deadlift');
   });
 
   it('carries the role onto the cell so the grid can show what is owed', () => {

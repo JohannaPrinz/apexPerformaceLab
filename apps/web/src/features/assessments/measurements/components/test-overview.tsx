@@ -11,14 +11,18 @@ import { TOUCH_BUTTON } from '@/components/common/touch';
 
 import { EditModuleDialog } from '../../components/edit-module-dialog';
 import {
+  BODY_FAT_METHOD_LABELS_DE,
+  BODY_FAT_REFUSAL_LABELS_DE,
   MEASUREMENT_ROLE_LABELS_DE,
   MODULE_LABELS_DE,
   MODULE_STATUS_LABELS_DE,
   READINESS_LABELS_DE,
   SIDE_LABELS_DE,
+  SKINFOLD_SITE_LABELS_DE,
 } from '../../components/labels';
 
 import { ArchiveModuleButton } from './archive-module-button';
+import { MeasurementChart, type ChartGroupView } from './measurement-chart';
 import { RunTestButton } from './run-test-button';
 import {
   findRecorded,
@@ -62,6 +66,8 @@ export function TestOverview({
   completedAt,
   reopenedAt,
   archivedAt,
+  charts,
+  derived,
   nextModule,
 }: {
   readonly moduleId: string;
@@ -80,6 +86,10 @@ export function TestOverview({
   readonly completedAt: Date | null;
   readonly reopenedAt: Date | null;
   readonly archivedAt: Date | null;
+  /** The same readings as curves — empty where no test has more than one stage. */
+  readonly charts: readonly ChartGroupView[];
+  /** What this test computed for itself, or why it could not. */
+  readonly derived: readonly DerivedView[];
   readonly nextModule: { id: string; label: string } | null;
 }) {
   const typeLabel = MODULE_LABELS_DE[moduleKey as keyof typeof MODULE_LABELS_DE] ?? moduleKey;
@@ -146,10 +156,14 @@ export function TestOverview({
         </div>
       </header>
 
-      {/* A named region: "Abgeschlossen" is also a status badge, and a screen
-          reader jumping through the page needs to know which one it landed on. */}
-      <section aria-label="Verlauf" className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium">Verlauf</h2>
+      {/* "Zeitpunkte", not "Verlauf": this block lists moments in the life of
+          the test, and the diagrams below are where its values move over time.
+
+          A named region because "Abgeschlossen" is also a status badge, and a
+          screen reader jumping through the page needs to know which it landed
+          on. */}
+      <section aria-label="Zeitpunkte" className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium">Zeitpunkte</h2>
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm [&>dd]:min-w-0 [&>dd]:break-words">
           <dt className="text-muted-foreground">Angelegt</dt>
           <dd data-numeric>{formatMoment(createdAt)}</dd>
@@ -275,10 +289,17 @@ export function TestOverview({
                       const recorded = findRecorded(measurements, slot, pass);
                       const type = types[slot.measurementTypeId];
                       const corrected = recorded?.supersedes != null;
+                      // The movement first, for the same reason the entry grid
+                      // names it: a strength test over two lifts otherwise
+                      // reads back as two loads and two repetition counts with
+                      // nothing saying which belongs to which.
                       const qualifier = [
+                        slot.exerciseId === null
+                          ? null
+                          : (exercises[slot.exerciseId] ?? 'Unbekannte Übung'),
                         slot.side === 'BILATERAL' ? null : (SIDE_LABELS_DE[slot.side] ?? slot.side),
                         ...Object.values(slot.context),
-                      ].filter((part) => part !== null);
+                      ].filter((part) => part !== null && part !== '');
 
                       return (
                         <li
@@ -335,6 +356,10 @@ export function TestOverview({
           </section>
         </>
       )}
+
+      <DerivedSection derived={derived} types={types} />
+
+      <MeasurementChart groups={charts} />
 
       <section className="flex flex-col gap-2">
         <h2 className="text-sm font-medium">Notizen zum Test</h2>
@@ -414,4 +439,109 @@ function formatMoment(value: Date): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+/** One computed quantity as the screen receives it. */
+export interface DerivedView {
+  readonly measurementTypeId: string;
+  readonly method: string;
+  readonly percent: number | null;
+  readonly sum: number | null;
+  readonly age: number | null;
+  readonly refusal: { readonly reason: string; readonly missing?: readonly string[] } | null;
+  /** What already stands in the record, whatever can be computed today. */
+  readonly storedPercent: number | null;
+  readonly measuredAt: Date | null;
+}
+
+/**
+ * What the test calculated, and what it is still waiting for.
+ *
+ * The absence is as much a result as the number: a coach who has taken every
+ * fold and sees no percentage needs to be told that the gap is a date of birth
+ * on the athlete record, not another fold. So the refusal is shown with the
+ * same weight as the value.
+ *
+ * Nothing here interprets the percentage. The record holds no direction for
+ * body fat, so a number is a number.
+ */
+function DerivedSection({
+  derived,
+  types,
+}: {
+  derived: readonly DerivedView[];
+  types: Record<string, { name: string; unit: string; valueType: string }>;
+}) {
+  if (derived.length === 0) return null;
+
+  return (
+    <section aria-label="Berechnete Werte" className="flex flex-col gap-2">
+      <h2 className="text-sm font-medium">Berechnete Werte</h2>
+
+      <ul className="flex flex-col gap-2">
+        {derived.map((entry) => (
+          <li
+            key={entry.measurementTypeId}
+            className="flex flex-col gap-1 rounded-md border border-border bg-card p-3"
+          >
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="text-sm font-medium">
+                {types[entry.measurementTypeId]?.name ?? 'Körperfettanteil'}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {BODY_FAT_METHOD_LABELS_DE[entry.method] ?? entry.method}
+              </span>
+            </div>
+
+            {entry.percent === null ? (
+              <>
+                {/* A refusal must not hide a finding. A percentage computed
+                    earlier is still in the record; showing only "cannot
+                    calculate" would make it look as though nothing had ever
+                    been measured. */}
+                {entry.storedPercent === null ? null : (
+                  <>
+                    <p className="text-2xl font-semibold" data-numeric>
+                      {germanNumber(entry.storedPercent)} %
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Früher berechnet. Mit den heutigen Angaben lässt sich der Wert nicht neu
+                      berechnen:
+                    </p>
+                  </>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  {BODY_FAT_REFUSAL_LABELS_DE[entry.refusal?.reason ?? ''] ??
+                    'Der Wert konnte nicht berechnet werden.'}
+                  {entry.refusal?.missing && entry.refusal.missing.length > 0
+                    ? ` Fehlend: ${entry.refusal.missing
+                        .map((site) => SKINFOLD_SITE_LABELS_DE[site] ?? site)
+                        .join(', ')}.`
+                    : ''}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-2xl font-semibold" data-numeric>
+                  {germanNumber(entry.percent)} %
+                </p>
+                {/* The two inputs a coach cannot read off the folds: their sum
+                    and the age on the day. Stating them makes the number
+                    checkable rather than merely present. */}
+                <p className="text-xs text-muted-foreground" data-numeric>
+                  Faltensumme {entry.sum === null ? '—' : germanNumber(entry.sum)} mm · Alter{' '}
+                  {entry.age === null ? '—' : String(entry.age)} Jahre
+                </p>
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** A number the way a German-speaking coach reads one: decimal comma. */
+function germanNumber(value: number): string {
+  return new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 }).format(value);
 }

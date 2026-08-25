@@ -48,6 +48,7 @@ export function MeasurementCell({
   passIndex,
   measurements,
   type,
+  exerciseName,
   draft,
   onChange,
   error,
@@ -57,6 +58,14 @@ export function MeasurementCell({
   passIndex: number | null;
   measurements: readonly RecordedMeasurement[];
   type: { name: string; unit: string; valueType: string } | undefined;
+  /**
+   * What the movement this value belongs to is called.
+   *
+   * `null` for a test that works in no movement at all. Passed in rather than
+   * looked up, because the screen already holds the catalogue and a cell has no
+   * business querying.
+   */
+  exerciseName: string | null;
   /** This cell's draft, owned by the runner. */
   draft: SlotDraft;
   onChange: (patch: Partial<SlotDraft>) => void;
@@ -71,13 +80,16 @@ export function MeasurementCell({
   const fieldId = `slot-${slot.key}`;
   const errorId = `${fieldId}-error`;
 
-  // The measurement name alone is ambiguous once a test records both sides or
-  // several sites: three fields called "Laktat" tell a screen-reader user
-  // nothing. The coordinates the cell already displays go into the name too.
+  // The measurement name alone is ambiguous once a test records both sides,
+  // several sites or **several movements**: four fields reading "External Load"
+  // and "Repetitions" twice tell nobody which lift they belong to, and a value
+  // typed into the wrong one is indistinguishable from a correct entry. Every
+  // coordinate the cell stands for goes into its name.
   const qualifier = [
+    exerciseName,
     slot.side === 'BILATERAL' ? null : (SIDE_LABELS_DE[slot.side] ?? slot.side),
     ...Object.values(slot.context),
-  ].filter((part) => part !== null);
+  ].filter((part) => part !== null && part !== '');
   const accessibleName = qualifier.length > 0 ? `${name} · ${qualifier.join(' · ')}` : name;
 
   const field = `${TOUCH_FIELD} ${FOCUS_RING} w-full min-w-0 rounded-md border border-input bg-background px-3 aria-invalid:border-destructive`;
@@ -96,7 +108,13 @@ export function MeasurementCell({
           {type ? <span className="text-muted-foreground"> · {type.unit}</span> : null}
         </label>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {/* The movement first: it is the coarsest coordinate, and on a
+              strength test it is the one that tells two otherwise identical
+              cells apart. */}
+          {exerciseName === null || exerciseName === '' ? null : (
+            <Badge variant="secondary">{exerciseName}</Badge>
+          )}
           {slot.side === 'BILATERAL' ? null : (
             <Badge variant="outline">{SIDE_LABELS_DE[slot.side] ?? slot.side}</Badge>
           )}

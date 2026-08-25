@@ -66,8 +66,8 @@ const READINESS: Parameters<typeof TestOverview>[0]['readiness'] = {
   recorded: 1,
 };
 
-/** The history section, so the status badges do not answer for it. */
-const history = () => screen.getByRole('region', { name: 'Verlauf' });
+/** The moments block, so the status badges do not answer for it. */
+const history = () => screen.getByRole('region', { name: 'Zeitpunkte' });
 
 const renderOverview = (over: Partial<Parameters<typeof TestOverview>[0]> = {}) =>
   render(
@@ -88,6 +88,8 @@ const renderOverview = (over: Partial<Parameters<typeof TestOverview>[0]> = {}) 
       completedAt={new Date('2026-08-21T08:00:00Z')}
       reopenedAt={null}
       archivedAt={null}
+      charts={[]}
+      derived={[]}
       nextModule={null}
       {...over}
     />,
@@ -200,5 +202,143 @@ describe('what the overview lets a coach do', () => {
 
     expect(screen.getByRole('button', { name: 'Test wieder aufnehmen' })).toBeVisible();
     expect(within(history()).getByText('Archiviert')).toBeVisible();
+  });
+});
+
+/**
+ * The percentage a caliper test computes for itself.
+ *
+ * The absence is as much a result as the number: a coach who has taken every
+ * fold and sees nothing needs to be told the gap is a date of birth on the
+ * athlete record, not another fold.
+ */
+describe('the values the test computed', () => {
+  const derivedTypes = {
+    mt_body_fat: { name: 'Körperfettanteil', unit: '%', valueType: 'NUMERIC' },
+  };
+
+  const computed = (over: Record<string, unknown> = {}) => ({
+    measurementTypeId: 'mt_body_fat',
+    method: 'jackson_pollock_3',
+    percent: 17.3,
+    sum: 52,
+    age: 36,
+    refusal: null,
+    storedPercent: 17.3,
+    measuredAt: new Date('2026-01-01T09:00:00Z'),
+    ...over,
+  });
+
+  const section = () => screen.getByRole('region', { name: 'Berechnete Werte' });
+
+  it('shows nothing at all for a test that computes nothing', () => {
+    renderOverview();
+
+    expect(screen.queryByRole('region', { name: 'Berechnete Werte' })).toBeNull();
+  });
+
+  it('states the percentage and the method it came from', () => {
+    renderOverview({ types: derivedTypes, derived: [computed()] });
+
+    expect(within(section()).getByText(/17,3/)).toBeVisible();
+    expect(within(section()).getByText('Jackson & Pollock, 3 Punkte')).toBeVisible();
+  });
+
+  it('states the two inputs that cannot be read off the folds', () => {
+    // The sum and the age on the day: what the equation actually consumed.
+    renderOverview({ types: derivedTypes, derived: [computed()] });
+
+    expect(within(section()).getByText(/Faltensumme 52 mm/)).toBeVisible();
+    expect(within(section()).getByText(/Alter 36 Jahre/)).toBeVisible();
+  });
+
+  it('says a missing sex is the reason, not a missing fold', () => {
+    renderOverview({
+      types: derivedTypes,
+      derived: [
+        computed({ percent: null, sum: null, age: null, refusal: { reason: 'SEX_NOT_SPECIFIED' } }),
+      ],
+    });
+
+    expect(within(section()).getByText(/kein Geschlecht hinterlegt/)).toBeVisible();
+  });
+
+  it('says a missing date of birth is the reason', () => {
+    renderOverview({
+      types: derivedTypes,
+      derived: [computed({ percent: null, refusal: { reason: 'DATE_OF_BIRTH_MISSING' } })],
+    });
+
+    expect(within(section()).getByText(/kein Geburtsdatum hinterlegt/)).toBeVisible();
+  });
+
+  it('names the folds it is waiting for, in German', () => {
+    renderOverview({
+      types: derivedTypes,
+      derived: [
+        computed({
+          percent: null,
+          refusal: { reason: 'SITES_MISSING', missing: ['skinfold_abdomen', 'skinfold_thigh'] },
+        }),
+      ],
+    });
+
+    expect(within(section()).getByText(/Abdomen, Oberschenkel/)).toBeVisible();
+  });
+
+  it('never calls the percentage good or bad', () => {
+    // The record holds no direction for body fat, so a number is a number.
+    renderOverview({ types: derivedTypes, derived: [computed()] });
+
+    const text = section().textContent ?? '';
+
+    for (const word of ['gut', 'schlecht', 'optimal', 'Norm', 'Ziel', 'zu hoch', 'ideal']) {
+      expect(text, word).not.toContain(word);
+    }
+  });
+
+  it('shows the number without a field to type it into', () => {
+    // A derived quantity is computed, never entered — a box beside it would
+    // invite a coach to disagree with the method.
+    renderOverview({ types: derivedTypes, derived: [computed()] });
+
+    expect(within(section()).queryByRole('textbox')).toBeNull();
+    expect(within(section()).queryByRole('spinbutton')).toBeNull();
+  });
+
+  it('keeps a percentage already in the record visible when it cannot be recomputed', () => {
+    // A profile that has since lost its date of birth does not erase a finding.
+    renderOverview({
+      types: derivedTypes,
+      derived: [
+        computed({
+          percent: null,
+          sum: null,
+          age: null,
+          storedPercent: 18.6,
+          refusal: { reason: 'SEX_NOT_SPECIFIED' },
+        }),
+      ],
+    });
+
+    expect(within(section()).getByText(/18,6/)).toBeVisible();
+    expect(within(section()).getByText(/Früher berechnet/)).toBeVisible();
+    expect(within(section()).getByText(/kein Geschlecht hinterlegt/)).toBeVisible();
+  });
+
+  it('shows only the reason where nothing was ever computed', () => {
+    renderOverview({
+      types: derivedTypes,
+      derived: [
+        computed({
+          percent: null,
+          storedPercent: null,
+          refusal: { reason: 'SITES_MISSING', missing: ['skinfold_thigh'] },
+        }),
+      ],
+    });
+
+    expect(within(section()).queryByText(/Früher berechnet/)).toBeNull();
+    expect(within(section()).getByText(/Oberschenkel/)).toBeVisible();
   });
 });

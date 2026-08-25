@@ -59,20 +59,37 @@ export function slotsForPass(configuration: ModuleConfiguration): readonly Measu
     .filter((dimension) => !dimension.values || dimension.values.length === 0)
     .map((dimension) => ({ key: dimension.key, label: dimension.label }));
 
-  return configuration.measurementTypes.flatMap((entry) =>
-    exerciseIds.flatMap((exerciseId) =>
-      sides.flatMap((side) =>
-        closedCombinations(configuration).map((context) => ({
-          key: `${entry.measurementTypeId}|${exerciseId ?? ''}|${side}|${JSON.stringify(context)}`,
-          measurementTypeId: entry.measurementTypeId,
-          role: entry.role,
-          side,
-          exerciseId,
-          context,
-          openDimensions,
-        })),
+  // **Exercise outermost.** The quantity used to be the outer loop, which put
+  // a maximal-strength test covering bench press and deadlift on screen as
+  // "load, load, repetitions, repetitions" — the whole set of one movement
+  // split across the grid. A coach reads a strength test movement by movement,
+  // and the entry order is the reading order (§16: order is configuration).
+  //
+  // A quantity the test computes gets no field: the percentage of a caliper
+  // test follows from the folds, the athlete's sex and their age, and a box
+  // inviting a coach to type one would be a box inviting them to disagree with
+  // the method. It stays in `measurementTypes` — the derived value is a
+  // measurement of that type — so this is the one place it is left out.
+  const derived = new Set(
+    (configuration.derivations ?? []).map((entry) => entry.measurementTypeId),
+  );
+
+  return exerciseIds.flatMap((exerciseId) =>
+    configuration.measurementTypes
+      .filter((entry) => !derived.has(entry.measurementTypeId))
+      .flatMap((entry) =>
+        sides.flatMap((side) =>
+          closedCombinations(configuration).map((context) => ({
+            key: `${entry.measurementTypeId}|${exerciseId ?? ''}|${side}|${JSON.stringify(context)}`,
+            measurementTypeId: entry.measurementTypeId,
+            role: entry.role,
+            side,
+            exerciseId,
+            context,
+            openDimensions,
+          })),
+        ),
       ),
-    ),
   );
 }
 

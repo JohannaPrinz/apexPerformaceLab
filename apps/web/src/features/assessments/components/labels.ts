@@ -119,3 +119,37 @@ export function moduleLabel(entry: { name: string | null; moduleKey: string }): 
 
   return MODULE_LABELS_DE[entry.moduleKey as ModuleKey] ?? entry.moduleKey;
 }
+
+/** The caliper methods, as a coach names them. */
+export const BODY_FAT_METHOD_LABELS_DE: Readonly<Record<string, string>> = {
+  jackson_pollock_3: 'Jackson & Pollock, 3 Punkte',
+  jackson_pollock_7: 'Jackson & Pollock, 7 Punkte',
+};
+
+/** The seven caliper sites, by catalogue key. */
+export const SKINFOLD_SITE_LABELS_DE: Readonly<Record<string, string>> = {
+  skinfold_chest: 'Brust',
+  skinfold_triceps: 'Trizeps',
+  skinfold_midaxillary: 'Midaxillar',
+  skinfold_subscapular: 'Subscapular',
+  skinfold_suprailiac: 'Suprailiakal',
+  skinfold_abdomen: 'Abdomen',
+  skinfold_thigh: 'Oberschenkel',
+};
+
+/**
+ * Why no percentage was calculated.
+ *
+ * Each says what is missing and what to do about it. A screen that only showed
+ * an absence would leave a coach checking folds that are all present, when the
+ * gap is a date of birth on the athlete record.
+ */
+export const BODY_FAT_REFUSAL_LABELS_DE: Readonly<Record<string, string>> = {
+  SEX_NOT_SPECIFIED:
+    'Für den Athleten ist kein Geschlecht hinterlegt. Die Formeln nach Jackson & Pollock sind je Geschlecht unterschiedlich — ohne Angabe wird nicht gerechnet.',
+  DATE_OF_BIRTH_MISSING:
+    'Für den Athleten ist kein Geburtsdatum hinterlegt. Das Alter am Messtag geht in die Formel ein.',
+  AGE_NOT_PLAUSIBLE:
+    'Das hinterlegte Geburtsdatum liegt nach dem Messtag. Aus dieser Angabe lässt sich kein Alter ableiten.',
+  SITES_MISSING: 'Es fehlen noch Hautfaltenwerte.',
+};

@@ -79,6 +79,9 @@ const recorded = (measurementTypeId: string, value: number, passIndex: number | 
   note: null,
 });
 
+/** The accessible names of the value fields, in the order they are rendered. */
+const fieldNames = () => valueFields().map((field) => field.getAttribute('aria-label') ?? field.id);
+
 /** The value fields, found the way the screen builds their ids. */
 const valueFields = () =>
   Array.from(document.querySelectorAll<HTMLElement>('[id^="slot-"]')).filter(
@@ -636,12 +639,14 @@ describe('what the coach configured, on the screen where they measure', () => {
   });
 
   it('names the exercises the test covers', () => {
+    // Named in the protocol summary at the top, and again over the cells and on
+    // each cell — deliberately, so `getAllByText` rather than `getByText`.
     renderRunner({
       configuration: configuration({ exerciseIds: ['ex_1'] }),
       exercises: { ex_1: 'Bankdrücken' },
     });
 
-    expect(screen.getByText('Bankdrücken')).toBeVisible();
+    expect(screen.getAllByText('Bankdrücken').length).toBeGreaterThan(0);
   });
 });
 
@@ -687,7 +692,9 @@ describe('what a real run turned up', () => {
     const user = userEvent.setup();
     renderRunner({ configuration: withExercise, exercises: { ex_1: 'Box-Kniebeuge' } });
 
-    await user.type(screen.getByLabelText('Laktat'), '2.4');
+    // The field is named after its movement too, now that a test may cover
+    // several: "Laktat" alone would be ambiguous.
+    await user.type(screen.getByLabelText('Laktat · Box-Kniebeuge'), '2.4');
     await user.click(screen.getByRole('button', { name: 'Speichern und abschließen' }));
 
     expect(saveStageAction.mock.calls[0]?.[0][0]).toMatchObject({
@@ -751,5 +758,136 @@ describe('what a real run turned up', () => {
     expect(accent.map((button) => button.textContent?.trim())).toEqual([
       'Speichern und abschließen',
     ]);
+  });
+});
+
+/**
+ * A maximal-strength test over two lifts.
+ *
+ * The case that was broken: bench press and deadlift, load and repetitions
+ * each. Four cells that read "External Load", "External Load", "Repetitions",
+ * "Repetitions" — nothing said which lift a field belonged to, and a load typed
+ * into the wrong one was indistinguishable from a correct entry.
+ */
+describe('a strength test covering two lifts', () => {
+  const twoLifts = configuration({
+    measurementTypes: [
+      { measurementTypeId: 'mt_load', role: 'required' },
+      { measurementTypeId: 'mt_reps', role: 'required' },
+    ],
+    exerciseIds: ['ex_bench', 'ex_deadlift'],
+    passes: 1,
+  });
+
+  const liftTypes = {
+    mt_load: { name: 'External Load', unit: 'kg', valueType: 'NUMERIC' },
+    mt_reps: { name: 'Repetitions', unit: 'repetitions', valueType: 'NUMERIC' },
+  };
+
+  const exercises = { ex_bench: 'Bankdrücken', ex_deadlift: 'Kreuzheben' };
+
+  const renderLifts = () => renderRunner({ configuration: twoLifts, types: liftTypes, exercises });
+
+  it('gives every field a name that says which lift it belongs to', () => {
+    renderLifts();
+
+    for (const name of [
+      'External Load · Bankdrücken',
+      'Repetitions · Bankdrücken',
+      'External Load · Kreuzheben',
+      'Repetitions · Kreuzheben',
+    ]) {
+      expect(screen.getByLabelText(name), name).toBeVisible();
+    }
+  });
+
+  it('leaves no field named by its quantity alone', () => {
+    // The state before the fix: two fields called "External Load" and two
+    // called "Repetitions".
+    renderLifts();
+
+    expect(screen.queryByLabelText('External Load')).toBeNull();
+    expect(screen.queryByLabelText('Repetitions')).toBeNull();
+  });
+
+  it('puts a heading over each lift', () => {
+    renderLifts();
+
+    expect(screen.getByRole('heading', { name: 'Bankdrücken' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Kreuzheben' })).toBeVisible();
+  });
+
+  it('keeps the whole set of one lift together', () => {
+    // Grouped by movement, not by quantity: a coach reads a strength test lift
+    // by lift, and the entry order is the reading order.
+    renderLifts();
+
+    const labels = fieldNames();
+
+    expect(labels).toEqual([
+      'External Load · Bankdrücken',
+      'Repetitions · Bankdrücken',
+      'External Load · Kreuzheben',
+      'Repetitions · Kreuzheben',
+    ]);
+  });
+
+  it('sends each value with the lift it was typed under', async () => {
+    // The guarantee the naming exists to protect: what the coach saw beside a
+    // field is what the value is stored against.
+    const user = userEvent.setup();
+    renderLifts();
+
+    await user.type(screen.getByLabelText('External Load · Bankdrücken'), '80');
+    await user.type(screen.getByLabelText('Repetitions · Bankdrücken'), '5');
+    await user.type(screen.getByLabelText('External Load · Kreuzheben'), '140');
+    await user.type(screen.getByLabelText('Repetitions · Kreuzheben'), '3');
+    await user.click(screen.getByRole('button', { name: 'Speichern und abschließen' }));
+
+    const entries = saveStageAction.mock.calls[0]?.[0] ?? [];
+
+    expect(
+      entries.map((entry) => {
+        const input = (
+          entry as {
+            input: { measurementTypeId: string; exerciseId: string | null; value: number };
+          }
+        ).input;
+
+        return `${input.measurementTypeId}@${input.exerciseId ?? '-'}=${String(input.value)}`;
+      }),
+    ).toEqual([
+      'mt_load@ex_bench=80',
+      'mt_reps@ex_bench=5',
+      'mt_load@ex_deadlift=140',
+      'mt_reps@ex_deadlift=3',
+    ]);
+  });
+
+  it('shows the lift on the cell, not only in its accessible name', () => {
+    // A sighted coach entering values at speed reads the badge, not the label.
+    renderLifts();
+
+    expect(screen.getAllByText('Bankdrücken').length).toBeGreaterThan(1);
+    expect(screen.getAllByText('Kreuzheben').length).toBeGreaterThan(1);
+  });
+
+  it('adds no movement heading to a test that names no movement', () => {
+    // One group is not a grouping, and a heading over it would be ceremony.
+    // The notes heading is level three too, so the assertion names what is
+    // allowed rather than counting.
+    renderRunner();
+
+    const headings = screen
+      .getAllByRole('heading', { level: 3 })
+      .map((heading) => heading.textContent);
+
+    expect(headings).toEqual(['Testnotizen']);
+  });
+
+  it('still names a field by its quantity where there is no movement', () => {
+    renderRunner();
+
+    expect(screen.getByLabelText('Laktat')).toBeVisible();
   });
 });
