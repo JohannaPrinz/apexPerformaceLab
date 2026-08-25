@@ -2,12 +2,16 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { TRPCError } from '@trpc/server';
-import { ArrowLeft, Pencil } from 'lucide-react';
+import { ArrowLeft, ChevronDown, Pencil } from 'lucide-react';
 
+import { ageAt } from '@apex/domain';
 import { Badge, Button } from '@apex/ui';
 
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_TARGET } from '@/components/common/touch';
 import { ArchiveButton } from '@/features/athletes';
+import { TrendCards } from '@/features/athletes/components/trend-cards';
+import { ATHLETE_SEX_LABELS_DE } from '@/features/athletes/labels';
+import { parseTrendCards, TREND_CARD_PARAM } from '@/features/athletes/trend-slots';
 import { CaseDialog, CaseSection, NoCases, type CaseAssessment } from '@/features/cases';
 import { api } from '@/trpc/server';
 
@@ -45,7 +49,12 @@ export default async function AthletePage({
   searchParams,
 }: {
   params: Promise<{ athleteId: string }>;
-  searchParams: Promise<{ cases?: string; assessments?: string }>;
+  searchParams: Promise<{
+    cases?: string;
+    assessments?: string;
+    /** Which trends are on screen — see `trend-slots.ts`. Repeated. */
+    card?: string | string[];
+  }>;
 }) {
   const { athleteId } = await params;
 
@@ -72,11 +81,30 @@ export default async function AthletePage({
     throw error;
   });
 
-  const [cases, assessments] = await Promise.all([
+  // Read once, here: the age is derived from the date of birth on the day it is
+  // shown, and never stored (`ageAt`).
+  const age = ageAt(athlete.dateOfBirth, new Date());
+
+  /**
+   * Which two trends are on screen, read from the address bar.
+   *
+   * Worth keeping over a reload and worth sending to a colleague, and neither
+   * needs a column. It is also the only place a server-rendered chart can read
+   * a choice from without a round trip through client state.
+   */
+  const trendCards = parseTrendCards(query[TREND_CARD_PARAM]);
+
+  const [cases, assessments, trends] = await Promise.all([
     // The status filter exists in the schema already; only the interface was
     // missing. `OPEN` alone is the working view.
     api.cases.listForAthlete({ athleteId, ...(showAll ? {} : { status: 'OPEN' as const }) }),
     api.assessments.listForAthlete({ athleteId, includeArchived: showArchived }),
+    // Options and charts in one read, so a slot can never offer a quantity the
+    // charts cannot fill.
+    api.athletes.trends({
+      athleteId,
+      slots: trendCards.map((card) => ({ key: card.key, exerciseIds: [...card.exerciseIds] })),
+    }),
   ]);
 
   /**
@@ -156,44 +184,85 @@ export default async function AthletePage({
         ) : null}
       </div>
 
+      {/* Collapsible, and open to begin with: the master data is what a coach
+          checks first on arriving, and what they fold away once they are
+          working. `<details>` rather than state, so the browser keeps it. */}
       <section aria-labelledby="master-data" className="flex flex-col gap-4">
-        <h2 id="master-data" className="text-lg font-semibold">
-          Stammdaten
-        </h2>
+        {/* `group` on the details, so the chevron can follow its open state.
+            The marker is removed and replaced by an icon that turns: a browser
+            run found the block looked like a plain heading, and a control
+            nobody can see is a control nobody uses. */}
+        <details open className="group">
+          <summary
+            className={`${TOUCH_TARGET} ${FOCUS_RING} flex w-fit cursor-pointer list-none items-center gap-2 rounded [&::-webkit-details-marker]:hidden`}
+          >
+            <ChevronDown
+              aria-hidden="true"
+              className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180"
+            />
+            <h2 id="master-data" className="text-lg font-semibold">
+              Stammdaten
+            </h2>
+            <span className="text-xs text-muted-foreground group-open:hidden">einblenden</span>
+            <span className="hidden text-xs text-muted-foreground group-open:inline">
+              ausblenden
+            </span>
+          </summary>
 
-        {/*
+          {/*
           A description list that stacks on a phone and pairs up from `sm`.
           The previous `grid-cols-[auto_1fr]` was a desktop table at every width:
           at 375px the label column ate a third of the row and every long e-mail
           wrapped into a narrow gutter beside it.
         */}
-        <dl className="grid gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
-          <Fact label="Geburtsdatum" numeric>
-            {athlete.dateOfBirth?.toLocaleDateString('de-DE') ?? '—'}
-          </Fact>
-          <Fact label="E-Mail">{athlete.email ?? '—'}</Fact>
-          <Fact label="Telefon">{athlete.phone ?? '—'}</Fact>
-          <Fact label="Größe" numeric>
-            {formatFigure(athlete.heightCm, 'cm')}
-          </Fact>
-          <Fact label="Aktuelles Gewicht" numeric>
-            {formatFigure(athlete.weightKg, 'kg')}
-          </Fact>
-          <Fact label="Angelegt" numeric>
-            {athlete.createdAt.toLocaleDateString('de-DE')}
-          </Fact>
-          <Fact label="Portalzugang">
-            {athlete.userId ? 'Mit einem Benutzerkonto verknüpft' : 'Kein Benutzerkonto verknüpft'}
-          </Fact>
-        </dl>
+          <dl className="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+            <Fact label="Geburtsdatum" numeric>
+              {athlete.dateOfBirth?.toLocaleDateString('de-DE') ?? '—'}
+            </Fact>
+            {/* Derived, never stored: an age written down is wrong the day after
+              (`ageAt`). Shown beside the date it comes from, so it is obvious
+              which of the two is the record. */}
+            <Fact label="Alter" numeric>
+              {age === null ? '—' : `${String(age)} Jahre`}
+            </Fact>
+            <Fact label="Geschlecht">{ATHLETE_SEX_LABELS_DE[athlete.sex]}</Fact>
+            <Fact label="E-Mail">{athlete.email ?? '—'}</Fact>
+            <Fact label="Telefon">{athlete.phone ?? '—'}</Fact>
+            <Fact label="Größe" numeric>
+              {formatFigure(athlete.heightCm, 'cm')}
+            </Fact>
+            <Fact label="Aktuelles Gewicht" numeric>
+              {formatFigure(athlete.weightKg, 'kg')}
+            </Fact>
+            <Fact label="Angelegt" numeric>
+              {athlete.createdAt.toLocaleDateString('de-DE')}
+            </Fact>
+            <Fact label="Portalzugang">
+              {athlete.userId
+                ? 'Mit einem Benutzerkonto verknüpft'
+                : 'Kein Benutzerkonto verknüpft'}
+            </Fact>
+          </dl>
 
-        {athlete.userId ? null : (
-          <p className="text-xs text-pretty text-muted-foreground">
-            Ein Athlet braucht kein Benutzerkonto (§21). Die Aktivierung kommt mit dem
-            Athletenportal.
-          </p>
-        )}
+          {athlete.userId ? null : (
+            <p className="text-xs text-pretty text-muted-foreground">
+              Ein Athlet braucht kein Benutzerkonto (§21). Die Aktivierung kommt mit dem
+              Athletenportal.
+            </p>
+          )}
+        </details>
       </section>
+
+      {/* Under the master data, because it is the first thing a coach reads
+          about an athlete after who they are. The cycle is one of the cards
+          here — recording a bleeding and reading the log are one thing, so
+          there is no separate section for it. */}
+      <TrendCards
+        athleteId={athleteId}
+        options={trends.options}
+        charts={trends.charts}
+        cards={trendCards}
+      />
 
       {/*
         One hierarchy, not two lists.

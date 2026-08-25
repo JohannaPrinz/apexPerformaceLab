@@ -9,6 +9,7 @@ import { createTRPCRouter, withCoachPermission, withPermission } from '@/server/
 
 import {
   athleteIdSchema,
+  athleteTrendsSchema,
   createAthleteSchema,
   listAthletesSchema,
   setAthleteArchivedSchema,
@@ -26,6 +27,7 @@ import {
   setAthleteArchived,
   updateAthlete,
 } from './service';
+import { athleteTrend, athleteTrendOptions } from './trends';
 
 /** A missing athlete and another tenant's athlete are the same answer (§4). */
 const notFound = () =>
@@ -84,6 +86,35 @@ export const athletesRouter = createTRPCRouter({
       if (!athlete) throw notFound();
 
       return athlete;
+    }),
+
+  /**
+   * What this athlete's record looks like over time.
+   *
+   * Options and charts in one read: the list of what could be drawn comes from
+   * what was actually recorded, so asking separately would let a slot offer a
+   * quantity the charts cannot fill.
+   *
+   * Nothing here interprets. No trend line, no average, no verdict — the
+   * catalogue holds no reference range and the model records no direction for
+   * any quantity.
+   */
+  trends: withPermission('athlete:read')
+    .input(athleteTrendsSchema)
+    .query(async ({ ctx, input }) => {
+      const athlete = await getAthlete(ctx.db, ctx.tenant, input.athleteId);
+      if (!athlete) throw notFound();
+
+      // The sex decides whether a cycle card is offered at all, so it travels
+      // with the read rather than being looked up a second time.
+      const subject = { id: athlete.id, sex: athlete.sex };
+
+      const options = await athleteTrendOptions(ctx.db, ctx.tenant, subject);
+      const charts = await Promise.all(
+        input.slots.map((slot) => athleteTrend(ctx.db, ctx.tenant, subject, slot)),
+      );
+
+      return { options, charts };
     }),
 
   /**
