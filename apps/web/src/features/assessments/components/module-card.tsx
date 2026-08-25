@@ -178,7 +178,16 @@ export function ModuleCard({
           {configuration?.recordsSide ? <Badge variant="outline">Links / rechts</Badge> : null}
           {/* Status first, then how far the values got. They answer different
               questions and a coach scanning the list needs both: a completed
-              test may still be missing values, and a running one may be full. */}
+              test may still be missing values, and a running one may be full.
+
+              **Both badges name their own dimension.** The second one used to
+              read "vollständig", which is a word about a *test*, not about its
+              values — so a planned test holding every reading showed "Geplant"
+              and "vollständig" side by side and looked like a contradiction.
+              Ending both wordings in "erfasst" says which question is being
+              answered, and the pair reads as one sentence: "Geplant ·
+              vollständig erfasst". The status itself still moves only when the
+              coach says so — nothing here changes it. */}
           <Badge variant={module.status === 'COMPLETED' ? 'accent' : 'secondary'}>
             {MODULE_STATUS_LABELS_DE[module.status]}
           </Badge>
@@ -187,11 +196,17 @@ export function ModuleCard({
               {progress.complete ? (
                 <>
                   <Check aria-hidden="true" className="size-3.5" />
-                  vollständig
+                  vollständig erfasst
                 </>
               ) : (
-                <span data-numeric>
-                  {progress.recorded}/{progress.expected} Werte
+                // One text node with a real space in it, not two children
+                // spaced by the badge's `gap`: a screen reader reads the text,
+                // and CSS spacing would run "0/16" into "Werte".
+                <span>
+                  <span data-numeric>
+                    {progress.recorded}/{progress.expected}
+                  </span>{' '}
+                  Werte erfasst
                 </span>
               )}
             </Badge>

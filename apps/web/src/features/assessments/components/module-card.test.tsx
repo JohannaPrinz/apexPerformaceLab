@@ -304,3 +304,120 @@ describe('re-running from the tile', () => {
     expect(mocks.statusChanges).toEqual([]);
   });
 });
+
+/**
+ * Two badges, two different questions.
+ *
+ * The lifecycle status says where the coach has put the test; the second badge
+ * says how many of its fields hold a value. A run found them contradicting each
+ * other on one tile: a test with every reading entered showed "Geplant" beside
+ * a bare "vollständig", which reads as a claim about the *test* rather than
+ * about its values. The status itself is untouched — it still moves only when
+ * the coach says so.
+ */
+describe('status beside how far the values got', () => {
+  /** A four-stage test with two quantities: eight fields in all. */
+  const stepped = (recordedCount: number, over: Partial<ModuleCardData> = {}) =>
+    renderCard({
+      recordedCount,
+      measurementCount: recordedCount,
+      configuration: {
+        measurementTypes: [
+          { measurementTypeId: 'mt_1', role: 'required' },
+          { measurementTypeId: 'mt_2', role: 'required' },
+        ],
+        exerciseIds: [],
+        passes: 4,
+        recordsSide: false,
+        dimensions: [],
+      },
+      ...over,
+    });
+
+  const badges = () =>
+    [...document.querySelectorAll('[data-slot="badge"]')].map((node) =>
+      (node.textContent ?? '').replace(/\s+/g, ' ').trim(),
+    );
+
+  it('says what is complete, never just "vollständig"', () => {
+    stepped(8, { status: 'PLANNED' });
+
+    expect(badges()).toContain('vollständig erfasst');
+    // The bare word was the defect: on its own it reads as a finished test.
+    expect(screen.queryByText('vollständig')).toBeNull();
+  });
+
+  it('keeps a planned test planned while every value is in', () => {
+    // The pair a coach reads as one sentence: "Geplant · vollständig erfasst".
+    stepped(8, { status: 'PLANNED' });
+
+    expect(badges()).toContain('Geplant');
+    expect(badges()).toContain('vollständig erfasst');
+  });
+
+  it('changes no status by itself', () => {
+    stepped(8, { status: 'PLANNED' });
+
+    expect(mocks.statusChanges).toEqual([]);
+    expect(screen.queryByText('Abgeschlossen')).toBeNull();
+  });
+
+  it('names the dimension on a partly filled test too', () => {
+    stepped(3, { status: 'PLANNED' });
+
+    expect(badges()).toContain('3/8 Werte erfasst');
+  });
+
+  it('keeps a readable space between the count and the words', () => {
+    // The two used to be separate children spaced by CSS, which a screen
+    // reader renders as "3/8Werte erfasst".
+    stepped(3, { status: 'PLANNED' });
+
+    expect(badges().some((text) => text.includes('3/8 Werte'))).toBe(true);
+  });
+
+  it('reads sensibly while the test is running', () => {
+    stepped(3, { status: 'IN_PROGRESS' });
+
+    expect(badges()).toContain('Läuft');
+    expect(badges()).toContain('3/8 Werte erfasst');
+  });
+
+  it('lets a finished test say it is still missing values', () => {
+    // Deliberate, not a contradiction: the coach declared it over, and what it
+    // holds is what it holds.
+    stepped(3, { status: 'COMPLETED' });
+
+    expect(badges()).toContain('Abgeschlossen');
+    expect(badges()).toContain('3/8 Werte erfasst');
+  });
+
+  it('reads sensibly on a finished and fully recorded test', () => {
+    stepped(8, { status: 'COMPLETED' });
+
+    expect(badges()).toContain('Abgeschlossen');
+    expect(badges()).toContain('vollständig erfasst');
+  });
+
+  it('reads sensibly on a skipped test', () => {
+    stepped(0, { status: 'SKIPPED' });
+
+    expect(badges()).toContain('Übersprungen');
+    expect(badges()).toContain('0/8 Werte erfasst');
+  });
+
+  it('reads sensibly on an abandoned test', () => {
+    stepped(3, { status: 'ABORTED' });
+
+    expect(badges()).toContain('Abgebrochen');
+    expect(badges()).toContain('3/8 Werte erfasst');
+  });
+
+  it('claims nothing where the configuration cannot be read', () => {
+    // No expected number, so "0 von 0" would be a claim rather than a fact.
+    renderCard({ configuration: null, status: 'PLANNED' });
+
+    expect(badges()).toContain('Geplant');
+    expect(badges().some((text) => text.includes('erfasst'))).toBe(false);
+  });
+});
