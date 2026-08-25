@@ -2,6 +2,7 @@ import { assessmentsRouter } from '@/features/assessments/server/router';
 import { athletesRouter } from '@/features/athletes/server/router';
 import { authRouter } from '@/features/auth/server/router';
 import { casesRouter } from '@/features/cases/server/router';
+import { cycleRouter } from '@/features/cycle/server/router';
 import { exercisesRouter } from '@/features/exercises/server/router';
 import { reportsRouter } from '@/features/reports/server/router';
 
@@ -22,6 +23,8 @@ export const appRouter = createTRPCRouter({
   auth: authRouter,
   athletes: athletesRouter,
   cases: casesRouter,
+  // Independent of assessments by construction — see `features/cycle`.
+  cycle: cycleRouter,
   assessments: assessmentsRouter,
   exercises: exercisesRouter,
   reports: reportsRouter,

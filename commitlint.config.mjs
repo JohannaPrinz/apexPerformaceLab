@@ -51,6 +51,8 @@ export default {
         'insights',
         'recommendations',
         'reports',
+        // Documented bleeding, deliberately independent of any assessment.
+        'cycle',
 
         // Feature slices — supporting objects
         'documents',
