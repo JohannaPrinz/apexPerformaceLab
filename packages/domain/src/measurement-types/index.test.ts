@@ -18,8 +18,11 @@ import {
  * that would fail on its own.
  */
 describe('system measurement type catalogue', () => {
-  it('holds the fourteen MVP types', () => {
-    expect(SYSTEM_MEASUREMENT_TYPES).toHaveLength(14);
+  it('holds the shipped types', () => {
+    // The number is pinned so that growing the catalogue is a decision somebody
+    // took, not a side effect. Fourteen at the MVP, plus `speed` and the seven
+    // caliper sites.
+    expect(SYSTEM_MEASUREMENT_TYPES).toHaveLength(22);
   });
 
   /**
@@ -32,10 +35,22 @@ describe('system measurement type catalogue', () => {
     expect(SYSTEM_MEASUREMENT_TYPES.map((type) => type.key)).toEqual([
       'weight',
       'body_fat',
+      // The seven Jackson & Pollock sites. Both three-site lists are subsets,
+      // so one catalogue serves both methods.
+      'skinfold_chest',
+      'skinfold_triceps',
+      'skinfold_midaxillary',
+      'skinfold_subscapular',
+      'skinfold_suprailiac',
+      'skinfold_abdomen',
+      'skinfold_thigh',
       'heart_rate',
       'lactate',
       'rpe',
       'pace',
+      // The same demand as `pace` under a reciprocal, recorded rather than
+      // converted: a treadmill is set in km/h, a race is planned in min/km.
+      'speed',
       'grip_strength',
       'force',
       'external_load',

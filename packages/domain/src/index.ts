@@ -28,6 +28,9 @@
  * they constrain — writing them for unbuilt features would produce rules nobody
  * can check against a real screen.
  */
+export * from './athletes/age';
+export * from './athletes/body-fat';
+export * from './athletes/sex';
 export * from './exercises';
 // Exported from the root rather than the exercises barrel: `import.ts` reads
 // `exerciseSchema` from that barrel, so re-exporting it there would close a
@@ -35,7 +38,10 @@ export * from './exercises';
 export * from './exercises/import';
 export * from './measurement-types';
 export * from './assessments/status';
+export * from './assessments/report-draft';
+export * from './assessments/summary';
 export * from './modules';
+export * from './modules/comparison';
 export * from './modules/configuration';
 export * from './modules/configuration-change';
 export * from './modules/context';

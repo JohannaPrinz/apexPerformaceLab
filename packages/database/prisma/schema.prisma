@@ -193,6 +193,7 @@ model Organization {
   notes            Note[]
   appointments     Appointment[]
   timelineEntries  TimelineEntry[]
+  bleedingEpisodes BleedingEpisode[]
 
   @@index([slug])
   @@map("organizations")
@@ -298,6 +299,7 @@ model Coach {
   videoAnnotations VideoAnnotation[]
   uploadedAssets   Asset[]
   sharesCreated    Share[]
+  bleedingRecorded BleedingEpisode[]
 
   @@map("coaches")
 }
@@ -369,14 +371,23 @@ model Athlete {
   /// `Decimal(5,2)` because half-centimetres occur in youth data and a weight is
   /// read to a tenth. Both stay optional — the ordinary case is an athlete
   /// entered during a first consultation about whom little is known (§21).
-  heightCm   Decimal?  @db.Decimal(5, 2)
-  weightKg   Decimal?  @db.Decimal(5, 2)
+  heightCm Decimal? @db.Decimal(5, 2)
+  weightKg Decimal? @db.Decimal(5, 2)
+
+  /// Recorded for one reason: every skinfold body-density equation is fitted
+  /// separately for male and female bodies, so without it a body-fat
+  /// calculation cannot be performed at all. Nothing else reads it.
+  ///
+  /// `not_specified` is a value rather than a null so there is one way to say
+  /// "unstated" instead of two, and it is the default: an athlete recorded
+  /// before this column existed was never asked. It never selects a formula.
+  sex        AthleteSex @default(not_specified)
   /// Inactive marker. Athletes are archived, never deleted — the performance
   /// history outlives the coaching relationship (§22). Set when the coaching
   /// ends, and also when the Athlete deletes their portal account (§7).
   archivedAt DateTime?
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
 
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -407,12 +418,13 @@ model Athlete {
   createdByCoachId String
   createdByCoach   Coach  @relation(fields: [createdByCoachId], references: [id], onDelete: Restrict)
 
-  cases           PerformanceCase[]
-  assets          Asset[]
-  programs        Program[]
-  notes           Note[]
-  appointments    Appointment[]
-  timelineEntries TimelineEntry[]
+  cases            PerformanceCase[]
+  assets           Asset[]
+  programs         Program[]
+  notes            Note[]
+  appointments     Appointment[]
+  timelineEntries  TimelineEntry[]
+  bleedingEpisodes BleedingEpisode[]
 
   /// Covers the tenant scope on its own (leftmost prefix) and the roster
   /// listing in full. A separate `organizationId` index would be redundant.
@@ -432,6 +444,71 @@ model Athlete {
 /// an athlete without an open Case creates one of type `SINGLE_ASSESSMENT`
 /// automatically. That keeps exactly one query and authorization path instead
 /// of two.
+/// One documented menstrual bleeding.
+///
+/// ## Why this is not a Measurement and not a Module
+///
+/// A Measurement is a fact the Coach records **inside an Assessment** and never
+/// edits; a bleeding is neither. It is not produced by a test, it does not
+/// belong to a session, and the person best placed to record it is the Athlete.
+/// Filing it as a Measurement would put it inside an examination that never
+/// happened, and every query about "this Assessment's measurements" would then
+/// have to remember to exclude it.
+///
+/// It stands alone in time, which is exactly the shape `CORE_OBJECTS` gives a
+/// Tracking Entry — but a Tracking Entry is a *value* of a Measurement Type at
+/// a point in time, and a bleeding is a span with a beginning and sometimes an
+/// end. So it is its own object, deliberately small.
+///
+/// ## What it does not hold
+///
+/// No cycle phase, no cycle length, no fertile window, no assessment of
+/// performance. Those are inferences, and the record keeps observations. What
+/// was documented is what is shown.
+///
+/// ## Special category data
+///
+/// This is health data in its most sensitive form (GDPR Art. 9; see the
+/// architecture review P1-8 and docs/SECURITY.md). It is workspace-scoped like
+/// everything else, and it is the obvious first candidate for per-category
+/// consent and field encryption — neither of which exists yet, which is stated
+/// here rather than assumed.
+model BleedingEpisode {
+  id        String    @id @default(cuid(2))
+  /// The first day of bleeding. A date, not a timestamp: nobody records a
+  /// menstruation to the minute, and a time would invite a false precision that
+  /// the time zone would then quietly change.
+  startedOn DateTime  @db.Date
+  /// The last day, where it was recorded. Optional on purpose — the first day
+  /// is the one people actually track, and demanding an end would make the
+  /// common entry the awkward one.
+  endedOn   DateTime? @db.Date
+  note      String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  athleteId String
+  athlete   Athlete @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+
+  recordedBy RecordedBy
+
+  /// Set when a Coach recorded it, null when the Athlete did. Authorship, not
+  /// possession — `Restrict` for the same reason as everywhere else.
+  recordedByCoachId String?
+  recordedByCoach   Coach?  @relation(fields: [recordedByCoachId], references: [id], onDelete: Restrict)
+
+  /// One episode per athlete per first day: recording the same start twice is
+  /// a duplicate, not a second bleeding, and both the Athlete and the Coach may
+  /// enter it.
+  @@unique([athleteId, startedOn])
+  @@index([organizationId])
+  @@index([athleteId, startedOn])
+  @@map("bleeding_episodes")
+}
+
 model PerformanceCase {
   id          String     @id @default(cuid(2))
   title       String
@@ -1179,6 +1256,22 @@ model Report {
   title       String
   /// Null while `DRAFT`; written once on publication and immutable after.
   content     Json?
+  /// The working text, for as long as the analysis is open.
+  ///
+  /// Deliberately **not** `content`. That column is the frozen snapshot taken at
+  /// publication (§16) — written once, immutable after. This one is the opposite:
+  /// a thing the Coach types into. One column for both would mean either a
+  /// snapshot that changes or a draft that cannot.
+  ///
+  /// Holds the generated factual text per included test plus one
+  /// assessment-wide text, each with whether it is still the generated wording
+  /// and what it was generated from. The shape and its rules live in
+  /// `packages/domain` (`report-draft.ts`), versioned inside the payload so a
+  /// later shape is refused rather than half-read.
+  ///
+  /// Null on a Report created before drafts existed, and on any Report whose
+  /// text has not been produced yet.
+  draft       Json?
   publishedAt DateTime?
   archivedAt  DateTime?
   createdAt   DateTime     @default(now())
@@ -1641,6 +1734,31 @@ enum MeasurementValueType {
 /// Belongs to the Measurement, not the Measurement Type (§13, §26.10). Without
 /// it, asymmetry cannot be calculated — and left/right imbalance is one of the
 /// most common Insights.
+/// The athlete's sex, as the body-composition equations need it.
+///
+/// A database enum rather than a string, like `BodySide` and
+/// `MeasurementSource`: the set is small, fixed and load-bearing for a
+/// calculation, and a typo would silently select no formula at all.
+enum AthleteSex {
+  male
+  female
+  not_specified
+
+  @@map("athlete_sex")
+}
+
+/// Who put a self-tracked entry into the record.
+///
+/// Not `MeasurementSource`: that enum answers "typed, device or import", which
+/// is about the instrument. This one is about the person, and the two are
+/// independent — an Athlete and a Coach both type.
+enum RecordedBy {
+  ATHLETE
+  COACH
+
+  @@map("recorded_by")
+}
+
 enum BodySide {
   LEFT
   RIGHT

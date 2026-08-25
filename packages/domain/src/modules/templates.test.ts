@@ -66,9 +66,48 @@ describe('measurement templates', () => {
       'pace',
     ]);
     expect(template?.passes).toBeGreaterThan(1);
-    // All four required: a stage missing its heart rate breaks the pairing the
-    // curves rest on.
-    expect(template?.measurements.every((entry) => entry.role === 'required')).toBe(true);
+  });
+
+  it('requires what the curves rest on, and proposes the rest', () => {
+    // A stage missing its lactate, heart rate or load breaks the pairing the
+    // curves are reconstructed from. RPE is a self-report on a scale and is
+    // routinely not taken — requiring it left a usable test permanently
+    // "partially evaluable".
+    const template = findMeasurementTemplate('lactate_step_test');
+    const roles = Object.fromEntries(
+      (template?.measurements ?? []).map((entry) => [entry.key, entry.role]),
+    );
+
+    expect(roles).toEqual({
+      lactate: 'required',
+      heart_rate: 'required',
+      pace: 'required',
+      rpe: 'recommended',
+    });
+  });
+
+  it('names the quantity that says what a stage demanded', () => {
+    // Without it a diagram can only put the stage *number* on the x axis, and
+    // stage 3 of two tests need not have been the same demand.
+    expect(findMeasurementTemplate('lactate_step_test')?.loadKey).toBe('pace');
+  });
+
+  it('claims a load quantity only where the test has one', () => {
+    // A grip-strength test measures an outcome and nothing else.
+    const templates: readonly MeasurementTemplate[] = MEASUREMENT_TEMPLATES;
+    const withLoad = templates.filter((template) => template.loadKey !== undefined);
+
+    expect(withLoad.map((template) => template.key)).toEqual(['lactate_step_test']);
+  });
+
+  it('only ever names a quantity the template actually records', () => {
+    const templates: readonly MeasurementTemplate[] = MEASUREMENT_TEMPLATES;
+
+    for (const template of templates) {
+      if (template.loadKey === undefined) continue;
+
+      expect(templateMeasurementKeys(template), template.key).toContain(template.loadKey);
+    }
   });
 
   /**
@@ -261,6 +300,79 @@ describe('the two strength test methods', () => {
   it('proposes no exercise for either — the movement is chosen per assessment', () => {
     for (const key of ['max_strength_test', 'force_measurement']) {
       expect(findMeasurementTemplate(key)).not.toHaveProperty('exerciseKeys');
+    }
+  });
+});
+
+/**
+ * The three-site method asks for different folds of male and female bodies, and
+ * a template is configured long before it is known whose body it is used on.
+ * A browser run found what that costs if the roles are wrong: every test read
+ * "teilweise auswertbar" for ever, over a fold nobody was ever going to take.
+ */
+describe('the caliper templates', () => {
+  const three = findMeasurementTemplate('body_fat_jackson_pollock_3');
+  const seven = findMeasurementTemplate('body_fat_jackson_pollock_7');
+
+  it('offers exactly two of them', () => {
+    const caliper = MEASUREMENT_TEMPLATES.filter((template) =>
+      template.key.startsWith('body_fat_jackson_pollock'),
+    );
+
+    expect(caliper.map((template) => template.key)).toEqual([
+      'body_fat_jackson_pollock_3',
+      'body_fat_jackson_pollock_7',
+    ]);
+  });
+
+  it('lets a three-site test be fully recorded whatever the athlete', () => {
+    // Only the thigh — the one site both lists share — may block readiness.
+    // Anything else would make one of the two site lists permanently
+    // incomplete, since only three of the five are ever taken.
+    const blocking = (three?.measurements ?? []).filter(
+      (entry) => entry.key.startsWith('skinfold_') && entry.role !== 'optional',
+    );
+
+    expect(blocking.map((entry) => entry.key)).toEqual(['skinfold_thigh']);
+  });
+
+  it('carries all five three-site folds so either list can be taken', () => {
+    const folds = (three?.measurements ?? [])
+      .filter((entry) => entry.key.startsWith('skinfold_'))
+      .map((entry) => entry.key)
+      .sort();
+
+    expect(folds).toEqual([
+      'skinfold_abdomen',
+      'skinfold_chest',
+      'skinfold_suprailiac',
+      'skinfold_thigh',
+      'skinfold_triceps',
+    ]);
+  });
+
+  it('requires every fold of the seven-site method', () => {
+    // Unlike the three-site list, this one does not depend on the athlete: both
+    // sexes are measured at the same seven places.
+    const folds = (seven?.measurements ?? []).filter((entry) => entry.key.startsWith('skinfold_'));
+
+    expect(folds).toHaveLength(7);
+    expect(folds.every((entry) => entry.role === 'required')).toBe(true);
+  });
+
+  it('derives the percentage under the method it belongs to', () => {
+    expect(three?.derivations).toEqual([{ key: 'body_fat', method: 'jackson_pollock_3' }]);
+    expect(seven?.derivations).toEqual([{ key: 'body_fat', method: 'jackson_pollock_7' }]);
+  });
+
+  it('asks for no percentage to be typed', () => {
+    // It is in `measurements` so the derived value may be attached at all —
+    // and in `derivations` so the entry grid leaves the field out.
+    for (const template of [three, seven]) {
+      const bodyFat = template?.measurements.find((entry) => entry.key === 'body_fat');
+
+      expect(bodyFat?.role, template?.key).toBe('optional');
+      expect(template?.derivations?.map((entry) => entry.key)).toContain('body_fat');
     }
   });
 });

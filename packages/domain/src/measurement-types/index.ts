@@ -122,6 +122,66 @@ export const SYSTEM_MEASUREMENT_TYPES = [
     category: 'body_composition',
   },
 
+  // ── Caliper skinfolds ─────────────────────────────────────────────────────
+  // Seven sites, seven types, one per site — deliberately not one "skinfold"
+  // type with the site as a dimension. A body-density equation names its sites
+  // by name, and matching a published formula against a free-text dimension
+  // label would make the calculation depend on a word a coach typed. A stable
+  // catalogue key is what a formula can be written against.
+  //
+  // The seven are the Jackson & Pollock seven-site list; the two three-site
+  // lists are subsets of it, which is what lets one set of types serve both
+  // methods. Millimetres, because that is what a caliper reads.
+  {
+    key: 'skinfold_chest',
+    name: 'Skinfold Chest',
+    unit: 'mm',
+    valueType: 'NUMERIC',
+    category: 'body_composition',
+  },
+  {
+    key: 'skinfold_triceps',
+    name: 'Skinfold Triceps',
+    unit: 'mm',
+    valueType: 'NUMERIC',
+    category: 'body_composition',
+  },
+  {
+    key: 'skinfold_midaxillary',
+    name: 'Skinfold Midaxillary',
+    unit: 'mm',
+    valueType: 'NUMERIC',
+    category: 'body_composition',
+  },
+  {
+    key: 'skinfold_subscapular',
+    name: 'Skinfold Subscapular',
+    unit: 'mm',
+    valueType: 'NUMERIC',
+    category: 'body_composition',
+  },
+  {
+    key: 'skinfold_suprailiac',
+    name: 'Skinfold Suprailiac',
+    unit: 'mm',
+    valueType: 'NUMERIC',
+    category: 'body_composition',
+  },
+  {
+    key: 'skinfold_abdomen',
+    name: 'Skinfold Abdomen',
+    unit: 'mm',
+    valueType: 'NUMERIC',
+    category: 'body_composition',
+  },
+  {
+    key: 'skinfold_thigh',
+    name: 'Skinfold Thigh',
+    unit: 'mm',
+    valueType: 'NUMERIC',
+    category: 'body_composition',
+  },
+
   // ── Cardiovascular / endurance ────────────────────────────────────────────
   {
     key: 'heart_rate',
@@ -141,7 +201,29 @@ export const SYSTEM_MEASUREMENT_TYPES = [
     valueType: 'NUMERIC',
     category: 'endurance',
   },
-  { key: 'pace', name: 'Pace', unit: 'min/km', valueType: 'NUMERIC', category: 'endurance' },
+  {
+    key: 'pace',
+    name: 'Pace',
+    // Minutes per kilometre — how runners talk about the road. The same demand
+    // expressed as `speed` below; which of the two a test records is the
+    // coach's choice, and a treadmill is usually set in km/h while a race is
+    // planned in min/km.
+    unit: 'min/km',
+    valueType: 'NUMERIC',
+    category: 'endurance',
+  },
+  {
+    key: 'speed',
+    name: 'Speed',
+    // Kilometres per hour — how a treadmill is set. Deliberately **not** derived
+    // from `pace`: the two are the same demand under a reciprocal, but a
+    // measurement is what was recorded, and converting one into the other would
+    // put a number in the record that nobody read off an instrument. A test
+    // records whichever the coach actually worked in.
+    unit: 'km/h',
+    valueType: 'NUMERIC',
+    category: 'endurance',
+  },
 
   // ── Strength ──────────────────────────────────────────────────────────────
   {

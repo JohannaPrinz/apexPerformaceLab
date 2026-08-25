@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { bodyFatMethodSchema } from '../athletes/body-fat';
+
 /**
  * What a Module is configured to record.
  *
@@ -121,50 +123,130 @@ export type ContextDimension = z.infer<typeof contextDimensionSchema>;
  * entries that carry a role, and adds `exerciseIds`. Version 1 payloads are
  * still readable — see `readModuleConfiguration`.
  */
-export const moduleConfigurationSchema = z.object({
-  /**
-   * The quantities this test records, in the order the coach arranged them.
-   * At least one, or there is no test.
-   *
-   * Order is configuration: it is the order of the entry grid and of the
-   * analysis, which is why this is an array rather than a map.
-   */
-  measurementTypes: z.array(configuredMeasurementSchema).min(1, 'Select at least one measurement.'),
+export const moduleConfigurationSchema = z
+  .object({
+    /**
+     * The quantities this test records, in the order the coach arranged them.
+     * At least one, or there is no test.
+     *
+     * Order is configuration: it is the order of the entry grid and of the
+     * analysis, which is why this is an array rather than a map.
+     */
+    measurementTypes: z
+      .array(configuredMeasurementSchema)
+      .min(1, 'Select at least one measurement.'),
 
-  /**
-   * The exercises this test covers, referenced by catalogue id.
-   *
-   * Empty for tests where the notion does not apply — a lactate step test has no
-   * exercise, and an empty list says exactly that rather than forcing a
-   * placeholder. When the list is non-empty, every value recorded names which
-   * exercise it belongs to, and the whole set of quantities is recorded per
-   * exercise: a maximal-strength test covering bench press and deadlift holds a
-   * load and a repetition count for each.
-   *
-   * **Ids, never names.** "Bench press" as free text in a measurement would make
-   * the catalogue decorative and every later analysis a string comparison
-   * (§26 — Exercise is context, not a Measurement Type).
-   */
-  exerciseIds: z.array(z.string().min(1)).default([]),
+    /**
+     * The exercises this test covers, referenced by catalogue id.
+     *
+     * Empty for tests where the notion does not apply — a lactate step test has no
+     * exercise, and an empty list says exactly that rather than forcing a
+     * placeholder. When the list is non-empty, every value recorded names which
+     * exercise it belongs to, and the whole set of quantities is recorded per
+     * exercise: a maximal-strength test covering bench press and deadlift holds a
+     * load and a repetition count for each.
+     *
+     * **Ids, never names.** "Bench press" as free text in a measurement would make
+     * the catalogue decorative and every later analysis a string comparison
+     * (§26 — Exercise is context, not a Measurement Type).
+     */
+    exerciseIds: z.array(z.string().min(1)).default([]),
 
-  /**
-   * How many times the whole set is recorded.
-   *
-   * One is the ordinary case and the default. A lactate step test sets it to
-   * the number of stages; each stage then holds one Lactate, one Heart Rate,
-   * one RPE and one Pace — which is what makes a lactate curve reconstructible.
-   */
-  passes: z.number().int().min(1).max(50).default(1),
+    /**
+     * How many times the whole set is recorded.
+     *
+     * One is the ordinary case and the default. A lactate step test sets it to
+     * the number of stages; each stage then holds one Lactate, one Heart Rate,
+     * one RPE and one Pace — which is what makes a lactate curve reconstructible.
+     */
+    passes: z.number().int().min(1).max(50).default(1),
 
-  /** Whether each value is taken per side — left, right or bilateral. */
-  recordsSide: z.boolean().default(false),
+    /** Whether each value is taken per side — left, right or bilateral. */
+    recordsSide: z.boolean().default(false),
 
-  /** Further axes, e.g. joint or muscle site. */
-  dimensions: z.array(contextDimensionSchema).default([]),
+    /** Further axes, e.g. joint or muscle site. */
+    dimensions: z.array(contextDimensionSchema).default([]),
 
-  /** Free-form protocol notes: load steps, device settings, conditions. */
-  notes: z.string().trim().max(4000).optional(),
-});
+    /**
+     * Which of this test's quantities says what a stage demanded.
+     *
+     * Optional, and absent for most tests: a grip-strength test measures an
+     * outcome and nothing else. Where it is set, an evaluation places the stages
+     * at that value rather than at their number — which is what makes two lactate
+     * tests comparable at the same speed instead of at the same stage.
+     *
+     * A property of the **protocol**, not of the quantity. Pace is the demand in a
+     * step test and the result in a time trial, so a flag on the measurement type
+     * could not tell the two apart.
+     *
+     * Optional also means old payloads stay readable: a configuration written
+     * before this existed simply has no load quantity, which is the truth about
+     * it.
+     */
+    loadMeasurementTypeId: z.string().min(1).optional(),
+
+    /**
+     * Quantities this test **computes** rather than asks for.
+     *
+     * A body-fat percentage from caliper folds follows from the folds, the
+     * athlete's sex and their age on the day — there is nothing for a coach to
+     * type. The type stays in `measurementTypes` so the derived value may be
+     * attached to the module at all and appears wherever measurements appear; it
+     * is named here so the entry screen leaves the field out.
+     *
+     * Every id here must also be in `measurementTypes` — a test cannot compute a
+     * quantity it does not record. Checked below rather than left to the caller.
+     */
+    derivations: z
+      .array(
+        z.object({
+          measurementTypeId: z.string().min(1),
+          /**
+           * **Stored, not inferred.** Three-site and seven-site Jackson & Pollock
+           * are different regressions, and guessing which one a test meant from
+           * the folds it happens to hold would pick the wrong equation the moment
+           * a coach adds a site.
+           */
+          method: bodyFatMethodSchema,
+        }),
+      )
+      .optional(),
+
+    /** Free-form protocol notes: load steps, device settings, conditions. */
+    notes: z.string().trim().max(4000).optional(),
+  })
+  .superRefine((configuration, ctx) => {
+    // A test cannot compute a quantity it does not record: the derived value is
+    // stored as a measurement of that type on this module, and a type outside
+    // `measurementTypes` would be refused at the moment of writing — long after
+    // the configuration that promised it was saved.
+    const recorded = new Set(
+      configuration.measurementTypes.map((entry) => entry.measurementTypeId),
+    );
+
+    for (const [index, derivation] of (configuration.derivations ?? []).entries()) {
+      if (!recorded.has(derivation.measurementTypeId)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['derivations', index, 'measurementTypeId'],
+          message: 'Eine berechnete Messgröße muss auch erfasst werden.',
+        });
+      }
+    }
+
+    // The load axis is a quantity of this test as well, for the same reason: an
+    // axis nothing was recorded on cannot be drawn.
+    if (
+      configuration.loadMeasurementTypeId !== undefined &&
+      !recorded.has(configuration.loadMeasurementTypeId)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['loadMeasurementTypeId'],
+        message: 'Die Belastungsgröße muss zu den erfassten Messgrößen gehören.',
+      });
+    }
+  });
 
 export type ModuleConfiguration = z.infer<typeof moduleConfigurationSchema>;
 

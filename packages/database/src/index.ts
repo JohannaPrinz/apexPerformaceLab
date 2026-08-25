@@ -36,6 +36,9 @@ export type {
   // ── Canonical hierarchy (§3) ───────────────────────────────────────────────
   // Athlete → Performance Case → Assessment → Module → Measurement
   AthleteModel as Athlete,
+  // Standing alone in time rather than inside an assessment: what was
+  // documented, never a computed cycle phase.
+  BleedingEpisodeModel as BleedingEpisode,
   PerformanceCaseModel as PerformanceCase,
   GoalModel as Goal,
   AssessmentModel as Assessment,
@@ -84,6 +87,10 @@ export {
   // Tenancy
   MembershipRole,
   InvitationStatus,
+
+  // Athlete
+  AthleteSex,
+  RecordedBy,
 
   // Case
   CaseType,

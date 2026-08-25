@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import type { BodyFatMethod } from '../athletes/body-fat';
 import type { SystemMeasurementTypeKey } from '../measurement-types';
 import type { ContextDimension, MeasurementRole } from './configuration';
 import type { ModuleKey } from './index';
@@ -61,6 +62,34 @@ export interface MeasurementTemplate {
   readonly measurements: readonly TemplateMeasurement[];
   /** Passes proposed. One unless the test is inherently stepped. */
   readonly passes: number;
+  /**
+   * Which of this test's quantities describes what a stage demanded.
+   *
+   * Optional, because most tests have no such thing: a grip-strength test
+   * measures an outcome and nothing else. Where it is set, the diagram places
+   * the points at that value instead of at the stage number — which is what
+   * makes two lactate tests comparable at the same speed rather than at the
+   * same stage.
+   *
+   * A property of the **protocol**, not of the quantity. Pace is the demand in
+   * a step test and the result in a time trial; a flag on the measurement type
+   * could not tell the two apart.
+   */
+  readonly loadKey?: string;
+  /**
+   * Quantities this test **computes** rather than asks for.
+   *
+   * A body-fat percentage from caliper folds is not something a coach types: it
+   * follows from the folds, the athlete's sex and their age on the day. Listing
+   * the type here keeps it part of the configuration — so the value may be
+   * attached to the module at all, and so it appears in the overview and the
+   * diagrams like any other — while telling the entry screen not to ask for it.
+   *
+   * Without this the two statements would contradict: leave the type out and
+   * the derived value is refused as not configured; put it in and the coach is
+   * shown a field for a number the system is about to calculate.
+   */
+  readonly derivations?: readonly { readonly key: string; readonly method: BodyFatMethod }[];
   readonly recordsSide: boolean;
   readonly dimensions: readonly ContextDimension[];
 }
@@ -70,17 +99,27 @@ export const MEASUREMENT_TEMPLATES = [
     key: 'lactate_step_test',
     name: 'Lactate step test',
     moduleKey: 'lactate',
-    // Every stage records the same four quantities together; that is what makes
-    // a lactate curve, a heart-rate curve and a perceived-exertion curve
-    // reconstructible from one test. All four are required for exactly that
-    // reason — a stage missing its heart rate breaks the pairing the curves
-    // rest on.
+    // Every stage records these quantities together; that is what makes a
+    // lactate curve, a heart-rate curve and a perceived-exertion curve
+    // reconstructible from one test. Lactate, heart rate and the load are
+    // required for exactly that reason — a stage missing its heart rate breaks
+    // the pairing the curves rest on.
+    //
+    // **RPE is recommended, not required.** It is a self-report on a scale, and
+    // it is routinely not taken; requiring it left a perfectly usable test
+    // reading "teilweise auswertbar" for ever. `recommended` is what that
+    // distinction exists for — proposed, never blocking.
     measurements: [
       { key: 'lactate', role: 'required' },
       { key: 'heart_rate', role: 'required' },
-      { key: 'rpe', role: 'required' },
+      { key: 'rpe', role: 'recommended' },
       { key: 'pace', role: 'required' },
     ],
+    // What each stage demanded, as opposed to what it produced. Without it the
+    // diagram can only put the stage *number* on the x axis, and stage 3 of two
+    // tests need not have been the same demand. `pace` because that is what
+    // this template records; a coach working in km/h swaps both to `speed`.
+    loadKey: 'pace',
     // A starting point, not a rule — the number of stages is the coach's.
     passes: 4,
     recordsSide: false,
@@ -104,6 +143,81 @@ export const MEASUREMENT_TEMPLATES = [
     recordsSide: false,
     dimensions: [],
   },
+  /**
+   * Caliper skinfolds, three sites, Jackson & Pollock.
+   *
+   * **Five sites, of which any one athlete needs three.** The method asks for
+   * chest, abdomen and thigh on a male body and triceps, suprailiac and thigh
+   * on a female one, and a template is configured long before it is known whose
+   * body it will be used on. Listing all five is the honest shape: the
+   * calculation reads the three its athlete's method calls for and ignores the
+   * rest.
+   *
+   * That is also why only the thigh is `required` — it is the one site both
+   * lists share — and why the other four are `optional` rather than
+   * `recommended`. A browser run found the difference: `recommended` counts
+   * towards readiness, so a male athlete's test read "teilweise auswertbar"
+   * for ever over a triceps fold that was never meant to be taken. `optional`
+   * is the only role that says "this may legitimately be absent".
+   *
+   * **Readiness cannot express "three of these five".** It has three roles and
+   * none of them is conditional on the athlete, so the honest completeness
+   * statement for this test is the calculated value itself — which names
+   * exactly which folds it is still waiting for. That limitation is stated
+   * here rather than papered over.
+   *
+   * The percentage itself is derived, never typed. See `derivations`.
+   */
+  {
+    key: 'body_fat_jackson_pollock_3',
+    name: 'Body fat, Jackson & Pollock 3-site',
+    moduleKey: 'body_composition',
+    measurements: [
+      { key: 'skinfold_thigh', role: 'required' },
+      { key: 'skinfold_chest', role: 'optional' },
+      { key: 'skinfold_abdomen', role: 'optional' },
+      { key: 'skinfold_triceps', role: 'optional' },
+      { key: 'skinfold_suprailiac', role: 'optional' },
+      { key: 'body_fat', role: 'optional' },
+      // Not part of the equation — body density needs folds, sex and age, and
+      // nothing else. Proposed because a percentage is read alongside a weight.
+      { key: 'weight', role: 'recommended' },
+    ],
+    derivations: [{ key: 'body_fat', method: 'jackson_pollock_3' }],
+    passes: 1,
+    recordsSide: false,
+    dimensions: [],
+  },
+
+  /**
+   * Caliper skinfolds, seven sites, Jackson & Pollock.
+   *
+   * All seven are `required` because, unlike the three-site method, the site
+   * list does not depend on the athlete: both sexes are measured at the same
+   * seven places and the equations differ only in their coefficients. A missing
+   * fold means no result, so nothing here is optional.
+   */
+  {
+    key: 'body_fat_jackson_pollock_7',
+    name: 'Body fat, Jackson & Pollock 7-site',
+    moduleKey: 'body_composition',
+    measurements: [
+      { key: 'skinfold_chest', role: 'required' },
+      { key: 'skinfold_triceps', role: 'required' },
+      { key: 'skinfold_midaxillary', role: 'required' },
+      { key: 'skinfold_subscapular', role: 'required' },
+      { key: 'skinfold_suprailiac', role: 'required' },
+      { key: 'skinfold_abdomen', role: 'required' },
+      { key: 'skinfold_thigh', role: 'required' },
+      { key: 'body_fat', role: 'optional' },
+      { key: 'weight', role: 'recommended' },
+    ],
+    derivations: [{ key: 'body_fat', method: 'jackson_pollock_7' }],
+    passes: 1,
+    recordsSide: false,
+    dimensions: [],
+  },
+
   {
     key: 'max_strength_test',
     name: 'Maximal strength test',
