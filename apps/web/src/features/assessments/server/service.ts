@@ -461,6 +461,25 @@ async function configurationFromTemplate(
     passes: template.passes,
     recordsSide: template.recordsSide,
     dimensions: template.dimensions,
+    // Resolved through the same positional list, so the id can only ever be one
+    // the configuration already holds.
+    ...(template.loadKey === undefined
+      ? {}
+      : {
+          loadMeasurementTypeId:
+            measurementTypeIds[keys.findIndex((key) => key === template.loadKey)],
+        }),
+    // Same positional resolution: a derived quantity is one of the recorded
+    // ones, so its id comes from the list that was just built.
+    ...(template.derivations === undefined
+      ? {}
+      : {
+          derivations: template.derivations.flatMap((derivation) => {
+            const id = measurementTypeIds[keys.findIndex((entry) => entry === derivation.key)];
+
+            return id === undefined ? [] : [{ measurementTypeId: id, method: derivation.method }];
+          }),
+        }),
   });
 }
 

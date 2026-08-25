@@ -94,3 +94,48 @@ describe('the German wording', () => {
     }
   });
 });
+
+describe('starting from a template', () => {
+  const withTemplate = () =>
+    render(
+      <TestBuilder
+        assessmentId="ass_1"
+        measurementTypes={[
+          {
+            id: 'mt_1',
+            key: 'lactate',
+            name: 'Laktat',
+            unit: 'mmol/l',
+            category: 'metabolic',
+            ownedByWorkspace: false,
+          },
+        ]}
+        exercises={[]}
+        takenModuleKeys={[]}
+      />,
+    );
+
+  it('keeps a name the coach already typed', async () => {
+    // The same silent loss the type buttons used to cause, one step later: a
+    // coach who names the test first and picks the template second had
+    // "Lactate step test" written over what they typed.
+    const user = userEvent.setup();
+    withTemplate();
+
+    await user.type(screen.getByLabelText('Name des Tests'), 'Laufband Mai');
+    await user.click(screen.getByRole('button', { name: /^Ausdauer|^Laktat/ }));
+    await user.click(screen.getByRole('button', { name: /Lactate step test/ }));
+
+    expect(screen.getByLabelText('Name des Tests')).toHaveValue('Laufband Mai');
+  });
+
+  it('still proposes the template name where the field is empty', async () => {
+    const user = userEvent.setup();
+    withTemplate();
+
+    await user.click(screen.getByRole('button', { name: /^Ausdauer|^Laktat/ }));
+    await user.click(screen.getByRole('button', { name: /Lactate step test/ }));
+
+    expect(screen.getByLabelText('Name des Tests')).toHaveValue('Lactate step test');
+  });
+});

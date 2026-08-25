@@ -13,6 +13,7 @@ import {
   withDimension,
   withDimensionValues,
   withExercise,
+  withLoadMeasurementType,
   withNotes,
   withoutDimension,
   withoutExercise,
@@ -20,6 +21,8 @@ import {
   withRecordsSide,
   type BuilderDraft,
 } from './draft';
+
+import type { MeasurementTypeOption } from './measurement-picker';
 
 export interface ExerciseOption {
   id: string;
@@ -38,10 +41,13 @@ export interface ExerciseOption {
 export function ProtocolStep({
   draft,
   exercises,
+  measurementTypes,
   onChange,
 }: {
   draft: BuilderDraft;
   exercises: readonly ExerciseOption[];
+  /** The catalogue, so the load quantity can be offered by name and unit. */
+  measurementTypes: readonly MeasurementTypeOption[];
   onChange: (draft: BuilderDraft) => void;
 }) {
   const [dimensionLabel, setDimensionLabel] = useState('');
@@ -56,6 +62,12 @@ export function ProtocolStep({
    */
   const [valueText, setValueText] = useState<Record<string, string>>({});
   const chosenExercises = new Set(draft.exerciseIds);
+  /** Only what this test records: an axis needs a value on every stage. */
+  const loadOptions = draft.measurementTypes.flatMap((entry) => {
+    const option = measurementTypes.find((type) => type.id === entry.measurementTypeId);
+
+    return option ? [option] : [];
+  });
 
   return (
     <div className="flex flex-col gap-8">
@@ -84,6 +96,48 @@ export function ProtocolStep({
           </span>
         </div>
       </section>
+
+      {draft.passes > 1 ? (
+        <section className="flex flex-col gap-2">
+          <h3 className="text-sm font-medium">Belastungsgröße</h3>
+          <p className="text-xs text-muted-foreground">
+            Welche der erfassten Messgrößen angibt, was eine Stufe gefordert hat — beim Laufband
+            entweder die Geschwindigkeit oder die Pace. Der Verlauf trägt sie als x-Achse auf. Ohne
+            Angabe zeigt der Verlauf die Stufenfolge und weist darauf hin, dass Stufe 3 zweier Tests
+            nicht dieselbe Belastung gewesen sein muss.
+          </p>
+
+          {loadOptions.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Noch keine Messgröße ausgewählt, die als Belastung infrage kommt.
+            </p>
+          ) : (
+            <label className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="sr-only">Belastungsgröße</span>
+              <select
+                value={draft.loadMeasurementTypeId ?? ''}
+                onChange={(event) => {
+                  onChange(
+                    withLoadMeasurementType(
+                      draft,
+                      event.target.value === '' ? null : event.target.value,
+                    ),
+                  );
+                }}
+                aria-label="Belastungsgröße"
+                className={`${TOUCH_FIELD} max-w-full rounded-md border border-input bg-background px-2 text-sm`}
+              >
+                <option value="">Keine — nur Stufenfolge</option>
+                {loadOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.name} ({option.unit})
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </section>
+      ) : null}
 
       <section className="flex flex-col gap-2">
         <h3 className="text-sm font-medium">Seiten</h3>

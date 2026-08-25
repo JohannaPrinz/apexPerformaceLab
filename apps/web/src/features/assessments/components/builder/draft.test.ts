@@ -20,6 +20,7 @@ import {
   withMeasurementType,
   withMeasurementTypeMoved,
   withNotes,
+  withLoadMeasurementType,
   withoutDimension,
   withoutExercise,
   withoutMeasurementType,
@@ -40,6 +41,7 @@ const ids: Record<string, string> = {
   heart_rate: 'mt_hr',
   rpe: 'mt_rpe',
   pace: 'mt_pace',
+  speed: 'mt_speed',
   body_fat: 'mt_body_fat',
   weight: 'mt_weight',
   external_load: 'mt_load',
@@ -417,10 +419,13 @@ describe('the summary', () => {
   });
 
   it('lists every quantity with its role', () => {
+    // RPE is recommended in the lactate template: a self-report on a scale
+    // that is routinely not taken must not hold a usable test at "partially
+    // evaluable" for ever.
     expect(line('Messgrößen')?.entries).toEqual([
       { name: 'lactate', role: 'required' },
       { name: 'hr', role: 'required' },
-      { name: 'rpe', role: 'required' },
+      { name: 'rpe', role: 'recommended' },
       { name: 'pace', role: 'required' },
     ]);
   });
@@ -492,5 +497,102 @@ describe('the expected measurement count shown before saving', () => {
 
   it('is zero while the draft is not a configuration yet', () => {
     expect(expectedCount(emptyDraft('lactate'))).toBe(0);
+  });
+});
+
+/**
+ * Which quantity states what a stage demanded.
+ *
+ * A treadmill step test is set in either pace or speed. Which of the two a
+ * coach works in is theirs to say, so it is a choice on the draft — never a
+ * rule inferred from the quantity list.
+ */
+describe('the load quantity', () => {
+  const stepTest = () => draftFromTemplateKey('lactate_step_test', 'lactate', idForTypeKey);
+
+  it('starts on what the template proposes', () => {
+    expect(stepTest().loadMeasurementTypeId).toBe('mt_pace');
+  });
+
+  it('stays empty where the template proposes none', () => {
+    expect(
+      draftFromTemplateKey('max_strength_test', 'strength', idForTypeKey).loadMeasurementTypeId,
+    ).toBeNull();
+  });
+
+  it('stays empty where the workspace has no such type', () => {
+    // A template names quantities by key; a workspace missing that type gets a
+    // shorter list, and the load must not survive as a reference to nothing.
+    const draft = draftFromTemplateKey('lactate_step_test', 'lactate', (key) =>
+      key === 'pace' ? undefined : ids[key],
+    );
+
+    expect(draft.loadMeasurementTypeId).toBeNull();
+  });
+
+  it('can be swapped from pace to speed', () => {
+    // The case the coach asked for: the same test, set in km/h instead.
+    const swapped = withLoadMeasurementType(
+      withMeasurementType(withoutMeasurementType(stepTest(), 'mt_pace'), 'mt_speed'),
+      'mt_speed',
+    );
+
+    expect(swapped.loadMeasurementTypeId).toBe('mt_speed');
+    expect(toConfiguration(swapped)?.loadMeasurementTypeId).toBe('mt_speed');
+  });
+
+  it('is cleared when the quantity it names is removed', () => {
+    expect(withoutMeasurementType(stepTest(), 'mt_pace').loadMeasurementTypeId).toBeNull();
+  });
+
+  it('leaves the load alone when a different quantity is removed', () => {
+    expect(withoutMeasurementType(stepTest(), 'mt_rpe').loadMeasurementTypeId).toBe('mt_pace');
+  });
+
+  it('refuses a quantity the test does not record', () => {
+    // An axis needs a value on every stage; naming one the test never takes
+    // would put an empty diagram on the screen.
+    const draft = stepTest();
+
+    expect(withLoadMeasurementType(draft, 'mt_force')).toBe(draft);
+  });
+
+  it('can be given up', () => {
+    expect(withLoadMeasurementType(stepTest(), null).loadMeasurementTypeId).toBeNull();
+  });
+
+  it('survives being reopened for editing', () => {
+    const configuration = toConfiguration(stepTest());
+    expect(configuration).not.toBeNull();
+
+    expect(draftFromConfiguration('lactate', configuration!).loadMeasurementTypeId).toBe('mt_pace');
+  });
+
+  it('is left out of the configuration entirely where there is none', () => {
+    const configuration = toConfiguration(withLoadMeasurementType(stepTest(), null));
+
+    expect(configuration?.loadMeasurementTypeId).toBeUndefined();
+  });
+
+  it('names it in the summary of a stepped test', () => {
+    const lines = summarise(stepTest(), names);
+
+    expect(lines.find((line) => line.label === 'Belastungsgröße')?.value).toBe('pace');
+  });
+
+  it('says so plainly when a stepped test names none', () => {
+    const lines = summarise(withLoadMeasurementType(stepTest(), null), names);
+
+    expect(lines.find((line) => line.label === 'Belastungsgröße')?.value).toBe('Keine');
+  });
+
+  it('leaves the line off a single erfassung', () => {
+    // A body-fat measurement has no stages to compare, so it has no demand axis.
+    const lines = summarise(
+      draftFromTemplateKey('body_fat_measurement', 'body_composition', idForTypeKey),
+      names,
+    );
+
+    expect(lines.some((line) => line.label === 'Belastungsgröße')).toBe(false);
   });
 });

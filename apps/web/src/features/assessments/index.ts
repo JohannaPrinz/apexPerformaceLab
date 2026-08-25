@@ -18,7 +18,13 @@ export { EditModuleDialog } from './components/edit-module-dialog';
 export { ExercisePicker, type PickableExercise } from './components/exercise-picker';
 export { CopyModuleButton, type CopyTarget } from './components/copy-module-button';
 export { ModuleCard, type ModuleCardData } from './components/module-card';
-export { moduleLabel } from './components/labels';
+export {
+  moduleLabel,
+  // The one vocabulary for test types. Exported through the barrel because the
+  // analysis section names the tests it draws on, and a second mapping beside
+  // this one would drift the moment a key is added.
+  MODULE_LABELS_DE,
+} from './components/labels';
 export { TestBuilder } from './components/builder/test-builder';
 export {
   BUILDER_STEPS,

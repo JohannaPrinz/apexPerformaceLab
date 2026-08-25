@@ -1,6 +1,7 @@
 import {
   findMeasurementTemplate,
   moduleConfigurationSchema,
+  type BodyFatMethod,
   type ContextDimension,
   type MeasurementRole,
   type MeasurementTemplate,
@@ -50,6 +51,25 @@ export interface BuilderDraft {
   readonly passes: number;
   readonly recordsSide: boolean;
   readonly dimensions: readonly ContextDimension[];
+  /**
+   * Which of the recorded quantities states what a stage **demanded**, as
+   * opposed to what it produced.
+   *
+   * A treadmill step test is set in either pace or speed, and which one is the
+   * coach's choice, not the system's — so this is a field on the draft and not
+   * a rule derived from the quantity list. `null` means the test names no
+   * demand, and the diagram then falls back to the stage sequence and says so.
+   */
+  readonly loadMeasurementTypeId: string | null;
+  /**
+   * Quantities this test computes rather than asks for.
+   *
+   * Not editable in the builder: which quantity a method derives is a property
+   * of the method, not a choice. It is carried through an edit so that
+   * reopening a caliper test does not turn its percentage back into a field the
+   * coach is expected to fill in.
+   */
+  readonly derivations: readonly { measurementTypeId: string; method: BodyFatMethod }[];
   readonly notes: string;
 }
 
@@ -63,6 +83,8 @@ export function emptyDraft(moduleKey: ModuleKey): BuilderDraft {
     passes: 1,
     recordsSide: false,
     dimensions: [],
+    loadMeasurementTypeId: null,
+    derivations: [],
     notes: '',
   };
 }
@@ -98,6 +120,15 @@ export function draftFromTemplate(
     passes: template.passes,
     recordsSide: template.recordsSide,
     dimensions: template.dimensions.map((dimension) => ({ ...dimension })),
+    // The template proposes it by key like every other quantity; a workspace
+    // without that type gets `null` rather than a reference to nothing.
+    loadMeasurementTypeId:
+      (template.loadKey === undefined ? undefined : idForTypeKey(template.loadKey)) ?? null,
+    derivations: (template.derivations ?? []).flatMap((derivation) => {
+      const id = idForTypeKey(derivation.key);
+
+      return id === undefined ? [] : [{ measurementTypeId: id, method: derivation.method }];
+    }),
     notes: '',
   };
 }
@@ -130,6 +161,8 @@ export function draftFromConfiguration(
     passes: configuration.passes,
     recordsSide: configuration.recordsSide,
     dimensions: configuration.dimensions.map((dimension) => ({ ...dimension })),
+    loadMeasurementTypeId: configuration.loadMeasurementTypeId ?? null,
+    derivations: (configuration.derivations ?? []).map((entry) => ({ ...entry })),
     notes: configuration.notes ?? '',
   };
 }
@@ -163,7 +196,35 @@ export function withoutMeasurementType(
     measurementTypes: draft.measurementTypes.filter(
       (entry) => entry.measurementTypeId !== measurementTypeId,
     ),
+    // A test cannot declare a demand it no longer records. Swapping pace for
+    // speed goes through here, and leaving the old id behind would name a
+    // quantity no stage has.
+    loadMeasurementTypeId:
+      draft.loadMeasurementTypeId === measurementTypeId ? null : draft.loadMeasurementTypeId,
+    // Same reason: a test cannot compute a quantity it no longer records, and
+    // the configuration contract refuses the pair outright.
+    derivations: draft.derivations.filter((entry) => entry.measurementTypeId !== measurementTypeId),
   };
+}
+
+/**
+ * Names which recorded quantity is the demand, or `null` for none.
+ *
+ * Only a quantity the test actually records can be named — anything else would
+ * put an axis on the diagram that no stage has a value for.
+ */
+export function withLoadMeasurementType(
+  draft: BuilderDraft,
+  measurementTypeId: string | null,
+): BuilderDraft {
+  if (
+    measurementTypeId !== null &&
+    !draft.measurementTypes.some((entry) => entry.measurementTypeId === measurementTypeId)
+  ) {
+    return draft;
+  }
+
+  return { ...draft, loadMeasurementTypeId: measurementTypeId };
 }
 
 export function withRole(
@@ -297,6 +358,13 @@ export function toConfiguration(draft: BuilderDraft): ModuleConfiguration | null
     passes: draft.passes,
     recordsSide: draft.recordsSide,
     dimensions: draft.dimensions,
+    // Written only while the quantity is still on the list. The two are edited
+    // in different steps, and a stale id here would outlive the value it names.
+    ...(draft.loadMeasurementTypeId !== null &&
+    draft.measurementTypes.some((entry) => entry.measurementTypeId === draft.loadMeasurementTypeId)
+      ? { loadMeasurementTypeId: draft.loadMeasurementTypeId }
+      : {}),
+    ...(draft.derivations.length === 0 ? {} : { derivations: draft.derivations }),
     ...(draft.notes.trim() === '' ? {} : { notes: draft.notes.trim() }),
   });
 
@@ -419,6 +487,18 @@ export function summarise(
           : draft.exerciseIds.map((id) => names.exercise(id)).join(' · '),
     },
   ];
+
+  // Only where there are stages to compare: a single-pass test has no demand
+  // axis, and a line that can only ever read "Keine" is noise.
+  if (draft.passes > 1) {
+    lines.push({
+      label: 'Belastungsgröße',
+      value:
+        draft.loadMeasurementTypeId === null
+          ? 'Keine'
+          : names.measurementType(draft.loadMeasurementTypeId),
+    });
+  }
 
   if (draft.notes.trim() !== '') lines.push({ label: 'Protocol', value: draft.notes.trim() });
 

@@ -158,13 +158,17 @@ export function TestBuilder({
           draft={draft}
           takenModuleKeys={takenModuleKeys ?? []}
           onChange={setDraft}
-          onPickTemplate={(templateKey) =>
-            setDraft(
+          onPickTemplate={(templateKey) => {
+            const next =
               templateKey === ''
                 ? emptyDraft(draft.moduleKey)
-                : draftFromTemplateKey(templateKey, draft.moduleKey, idForTypeKey),
-            )
-          }
+                : draftFromTemplateKey(templateKey, draft.moduleKey, idForTypeKey);
+
+            // A template proposes a name only while the coach has not given
+            // one. Overwriting "Laufband Mai" with "Lactate step test" is the
+            // same silent loss the type buttons used to cause, one step later.
+            setDraft(draft.name.trim() === '' ? next : { ...next, name: draft.name });
+          }}
         />
       ) : null}
 
@@ -173,7 +177,12 @@ export function TestBuilder({
       ) : null}
 
       {step === 'protocol' ? (
-        <ProtocolStep draft={draft} exercises={exercises} onChange={setDraft} />
+        <ProtocolStep
+          draft={draft}
+          exercises={exercises}
+          measurementTypes={measurementTypes}
+          onChange={setDraft}
+        />
       ) : null}
 
       {step === 'summary' ? <Summary draft={draft} names={names} /> : null}
