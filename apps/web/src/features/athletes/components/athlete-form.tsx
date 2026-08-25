@@ -4,8 +4,12 @@ import { useActionState, useEffect } from 'react';
 
 import { useRouter } from 'next/navigation';
 
+import { ATHLETE_SEXES, type AthleteSex } from '@apex/domain';
 import { Button } from '@apex/ui';
 
+import { TOUCH_BUTTON, TOUCH_FIELD } from '@/components/common/touch';
+
+import { ATHLETE_SEX_EXPLANATION, ATHLETE_SEX_LABELS_DE } from '../labels';
 import { createAthleteAction, updateAthleteAction, type AthleteFormState } from '../server/actions';
 
 import { DuplicateWarning } from './duplicate-warning';
@@ -33,6 +37,7 @@ export interface AthleteFormValues {
   readonly firstName: string;
   readonly lastName: string;
   readonly dateOfBirth: Date | null;
+  readonly sex: AthleteSex;
   readonly email: string | null;
   readonly phone: string | null;
   readonly heightCm: number | null;
@@ -112,6 +117,34 @@ export function AthleteForm({
         error={state.errors?.['dateOfBirth']}
       />
 
+      {/* Asked for one reason, and the reason is on screen: the body-density
+          equations are fitted separately for male and female bodies, so
+          without it no percentage is calculated. "Keine Angabe" is an ordinary
+          choice with one stated consequence, not a gap to be filled in. */}
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor="sex" className="text-sm font-medium text-foreground">
+          Geschlecht
+        </label>
+
+        <select
+          id="sex"
+          name="sex"
+          defaultValue={athlete?.sex ?? 'not_specified'}
+          aria-describedby="sex-explanation"
+          className={`${TOUCH_FIELD} flex w-full rounded-md border border-input bg-background px-3 shadow-sm transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none`}
+        >
+          {ATHLETE_SEXES.map((value) => (
+            <option key={value} value={value}>
+              {ATHLETE_SEX_LABELS_DE[value]}
+            </option>
+          ))}
+        </select>
+
+        <p id="sex-explanation" className="text-xs text-muted-foreground">
+          {ATHLETE_SEX_EXPLANATION}
+        </p>
+      </div>
+
       <div className="grid gap-4 sm:grid-cols-2">
         <Field
           id="email"
@@ -166,12 +199,13 @@ export function AthleteForm({
       ) : null}
 
       <div className="flex gap-3">
-        <Button type="submit" variant="accent" disabled={pending}>
+        <Button type="submit" variant="accent" disabled={pending} className={TOUCH_BUTTON}>
           {pending ? 'Wird gespeichert…' : editing ? 'Änderungen speichern' : 'Athlet anlegen'}
         </Button>
         <Button
           type="button"
           variant="ghost"
+          className={TOUCH_BUTTON}
           onClick={() => {
             if (onCancel) onCancel();
             else router.back();
@@ -215,7 +249,10 @@ function Field({
         name={id}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : undefined}
-        className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none aria-invalid:border-destructive aria-invalid:ring-destructive/30"
+        // `TOUCH_FIELD`, not a bare `h-9`: a browser run measured every field on
+        // this form at 36px, which is below the 44px a finger needs. The token
+        // drops back to 36px at `lg`, where a pointer is doing the work.
+        className={`${TOUCH_FIELD} flex w-full rounded-md border border-input bg-background px-3 shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none aria-invalid:border-destructive aria-invalid:ring-destructive/30`}
         {...props}
       />
 

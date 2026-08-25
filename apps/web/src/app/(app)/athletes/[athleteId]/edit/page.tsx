@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 
 import { TRPCError } from '@trpc/server';
 
+import { FOCUS_RING, TOUCH_TARGET } from '@/components/common/touch';
 import { AthleteForm } from '@/features/athletes';
 import { api } from '@/trpc/server';
 
@@ -37,7 +38,9 @@ export default async function EditAthletePage({
       <div className="flex flex-col gap-1">
         <Link
           href={`/athletes/${athlete.id}`}
-          className="text-xs text-muted-foreground hover:underline"
+          // `TOUCH_TARGET`: at 16px this was the smallest control on the page,
+          // and it is the way back out of the form.
+          className={`${FOCUS_RING} ${TOUCH_TARGET} flex w-fit items-center rounded text-xs text-muted-foreground hover:underline`}
         >
           ← {athlete.firstName} {athlete.lastName}
         </Link>

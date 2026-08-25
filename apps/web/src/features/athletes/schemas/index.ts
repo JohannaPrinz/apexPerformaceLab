@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { athleteSexSchema } from '@apex/domain';
 import { paginationInputSchema } from '@apex/types';
 
 /**
@@ -128,6 +129,12 @@ export const createAthleteSchema = z.object({
   firstName: z.string().trim().min(1, 'Please enter a first name.').max(100),
   lastName: z.string().trim().min(1, 'Please enter a last name.').max(100),
   dateOfBirth: optionalText(z.iso.date('Please enter a valid date.')),
+  /**
+   * Absent is the same as `not_specified` — an athlete recorded without an
+   * answer was not asked. The column carries the same default, so a form that
+   * never sends the field and one that sends "not_specified" agree.
+   */
+  sex: athleteSexSchema.optional(),
   email: optionalText(z.email('Please enter a valid email address.')),
   phone: optionalText(z.string().trim().max(50)),
   heightCm: measureField(HEIGHT_CM, 'cm', undefined),
@@ -167,6 +174,9 @@ export const updateAthleteSchema = z.object({
   firstName: z.string().trim().min(1, 'Bitte einen Vornamen eingeben.').max(100).optional(),
   lastName: z.string().trim().min(1, 'Bitte einen Nachnamen eingeben.').max(100).optional(),
   dateOfBirth: clearableText(z.iso.date('Bitte ein gültiges Datum eingeben.')),
+  // Nothing to clear: "unstated" is a value of the vocabulary rather than an
+  // absence, so an update either names one of the three or leaves it alone.
+  sex: athleteSexSchema.optional(),
   email: clearableText(z.email('Bitte eine gültige E-Mail-Adresse eingeben.')),
   phone: clearableText(z.string().trim().max(50)),
   heightCm: measureField(HEIGHT_CM, 'cm', null),
@@ -208,3 +218,38 @@ export const setAthleteArchivedSchema = athleteIdSchema.extend({
 });
 
 export type SetAthleteArchivedInput = z.infer<typeof setAthleteArchivedSchema>;
+
+/**
+ * What one trend chart was asked to show.
+ *
+ * `key` is a measurement type id, or `cycle` for the documented bleedings.
+ * `exerciseIds` narrows a quantity that was recorded per movement — empty means
+ * every movement it was recorded with, which is the honest default.
+ */
+export const trendSelectionSchema = z.object({
+  /**
+   * Empty means the slot is unfilled.
+   *
+   * A browser run found why this may not be `min(1)`: the screen always shows
+   * two slots and sends both, so refusing an empty one made the athlete page
+   * fail to load until *both* had been chosen — before either could be.
+   */
+  key: z.string().max(200),
+  exerciseIds: z.array(z.string().min(1)).max(20).default([]),
+});
+
+export type TrendSelectionInput = z.infer<typeof trendSelectionSchema>;
+
+export const athleteTrendsSchema = z.object({
+  athleteId: z.string().min(1),
+  /**
+   * The cards the coach has added, in the order they appear.
+   *
+   * No fixed number: how many trends are worth looking at together is the
+   * coach's judgement. Bounded only so a hand-written address cannot ask for a
+   * thousand charts.
+   */
+  slots: z.array(trendSelectionSchema).max(12).default([]),
+});
+
+export type AthleteTrendsInput = z.infer<typeof athleteTrendsSchema>;

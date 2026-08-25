@@ -55,6 +55,10 @@ export async function createAthleteAction(
     firstName: formData.get('firstName'),
     lastName: formData.get('lastName'),
     dateOfBirth: formData.get('dateOfBirth') ?? undefined,
+    // Read like every other field. A browser run found it missing here: the
+    // schema accepted it, the service wrote it, and the form silently dropped
+    // it — the coach chose "Keine Angabe" and the record stayed as it was.
+    sex: formData.get('sex') ?? undefined,
     email: formData.get('email') ?? undefined,
     phone: formData.get('phone') ?? undefined,
     heightCm: formData.get('heightCm') ?? undefined,
@@ -133,6 +137,10 @@ export async function updateAthleteAction(
     firstName: formData.get('firstName'),
     lastName: formData.get('lastName'),
     dateOfBirth: formData.get('dateOfBirth') ?? undefined,
+    // Read like every other field. A browser run found it missing here: the
+    // schema accepted it, the service wrote it, and the form silently dropped
+    // it — the coach chose "Keine Angabe" and the record stayed as it was.
+    sex: formData.get('sex') ?? undefined,
     email: formData.get('email') ?? undefined,
     phone: formData.get('phone') ?? undefined,
     heightCm: formData.get('heightCm') ?? undefined,

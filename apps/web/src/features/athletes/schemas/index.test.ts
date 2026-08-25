@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { createAthleteSchema, listAthletesSchema, updateAthleteSchema } from './index';
+import {
+  athleteTrendsSchema,
+  createAthleteSchema,
+  listAthletesSchema,
+  trendSelectionSchema,
+  updateAthleteSchema,
+} from './index';
 
 /**
  * The form boundary.
@@ -243,5 +249,99 @@ describe('cleared values round-trip', () => {
 
     expect(twice.email).toBeNull();
     expect(twice.weightKg).toBeNull();
+  });
+});
+
+/**
+ * The sex field, through the contract it actually travels on.
+ *
+ * A browser run found the gap this guards: the schema accepted the value, the
+ * service wrote it, and the form action never read it out of the `FormData` —
+ * so choosing "Keine Angabe" changed nothing and said nothing.
+ */
+describe('the athlete sex', () => {
+  it('accepts each of the three on create', () => {
+    for (const sex of ['male', 'female', 'not_specified'] as const) {
+      const parsed = createAthleteSchema.safeParse({ firstName: 'A', lastName: 'B', sex });
+
+      expect(parsed.success, sex).toBe(true);
+      expect(parsed.success && parsed.data.sex).toBe(sex);
+    }
+  });
+
+  it('accepts each of the three on update', () => {
+    for (const sex of ['male', 'female', 'not_specified'] as const) {
+      const parsed = updateAthleteSchema.safeParse({ athleteId: 'ath_1', sex });
+
+      expect(parsed.success, sex).toBe(true);
+      expect(parsed.success && parsed.data.sex).toBe(sex);
+    }
+  });
+
+  it('leaves it untouched when the form does not send it', () => {
+    const parsed = updateAthleteSchema.safeParse({ athleteId: 'ath_1' });
+
+    expect(parsed.success && 'sex' in parsed.data).toBe(false);
+  });
+
+  it('rejects anything outside the vocabulary', () => {
+    expect(updateAthleteSchema.safeParse({ athleteId: 'ath_1', sex: 'divers' }).success).toBe(
+      false,
+    );
+    expect(updateAthleteSchema.safeParse({ athleteId: 'ath_1', sex: '' }).success).toBe(false);
+  });
+});
+
+/**
+ * The two trend slots the athlete overview always shows.
+ */
+describe('the trend selection', () => {
+  it('accepts an unfilled slot', () => {
+    // Both slots are sent from the first render, before either is chosen.
+    expect(trendSelectionSchema.safeParse({ key: '', exerciseIds: [] }).success).toBe(true);
+  });
+
+  it('accepts a quantity with no movements chosen', () => {
+    const parsed = trendSelectionSchema.safeParse({ key: 'mt_weight' });
+
+    expect(parsed.success && parsed.data.exerciseIds).toEqual([]);
+  });
+
+  it('accepts several movements at once', () => {
+    const parsed = trendSelectionSchema.safeParse({
+      key: 'mt_load',
+      exerciseIds: ['ex_a', 'ex_b'],
+    });
+
+    expect(parsed.success && parsed.data.exerciseIds).toEqual(['ex_a', 'ex_b']);
+  });
+
+  it('accepts no organizationId — the tenant comes from the session', () => {
+    const parsed = athleteTrendsSchema.safeParse({
+      athleteId: 'ath_1',
+      organizationId: 'org_b',
+      slots: [],
+    });
+
+    expect(parsed.success && 'organizationId' in parsed.data).toBe(false);
+  });
+
+  it('is not limited to two cards', () => {
+    // How many trends are worth looking at together is the coach's judgement.
+    const parsed = athleteTrendsSchema.safeParse({
+      athleteId: 'ath_1',
+      slots: [{ key: 'a' }, { key: 'b' }, { key: 'c' }, { key: 'd' }],
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('refuses an address asking for more than a screen holds', () => {
+    const parsed = athleteTrendsSchema.safeParse({
+      athleteId: 'ath_1',
+      slots: Array.from({ length: 20 }, (_entry, index) => ({ key: `k${String(index)}` })),
+    });
+
+    expect(parsed.success).toBe(false);
   });
 });

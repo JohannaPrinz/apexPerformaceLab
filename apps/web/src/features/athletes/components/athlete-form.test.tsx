@@ -57,6 +57,7 @@ const ATHLETE = {
   firstName: 'Johanna',
   lastName: 'Prinz',
   dateOfBirth: new Date('1994-03-17T00:00:00.000Z'),
+  sex: 'female' as const,
   email: 'johanna@example.org',
   phone: '+49 30 123456',
   heightCm: 178,
@@ -77,6 +78,9 @@ describe('creating an athlete', () => {
       'firstName',
       'lastName',
       'dateOfBirth',
+      // Beside the date of birth, because the two are read together: both are
+      // there so a body-fat percentage can be calculated at all.
+      'sex',
       'email',
       'phone',
       'heightCm',
@@ -163,5 +167,64 @@ describe('editing an athlete', () => {
 
     expect(screen.getByRole('button', { name: 'Änderungen speichern' })).toBeVisible();
     expect(screen.getByText(/leeres Feld entfernt den gespeicherten Wert/)).toBeVisible();
+  });
+});
+
+/**
+ * The one field that exists for a calculation rather than for a profile.
+ *
+ * A body-density equation is fitted per sex, so leaving this unanswered has a
+ * consequence — and the form has to say which, rather than letting a coach
+ * discover it as a missing number weeks later.
+ */
+describe('the sex field', () => {
+  it('offers the three the product knows, in German', () => {
+    render(<AthleteForm />);
+
+    const field = screen.getByLabelText('Geschlecht');
+
+    expect([...(field as HTMLSelectElement).options].map((option) => option.textContent)).toEqual([
+      'Männlich',
+      'Weiblich',
+      'Keine Angabe',
+    ]);
+  });
+
+  it('starts unstated for a new athlete', () => {
+    // Not male-by-default: an athlete nobody has been asked about is unstated,
+    // and a pre-selected sex would be an answer the coach never gave.
+    render(<AthleteForm />);
+
+    expect(screen.getByLabelText('Geschlecht')).toHaveValue('not_specified');
+  });
+
+  it('prefills what was stored', () => {
+    render(<AthleteForm athlete={ATHLETE} />);
+
+    expect(screen.getByLabelText('Geschlecht')).toHaveValue('female');
+  });
+
+  it('says why it is asked and what happens without it', () => {
+    render(<AthleteForm />);
+
+    expect(screen.getByText(/Körperfettberechnung/)).toBeVisible();
+    expect(screen.getByText(/kein Körperfettanteil berechnet/)).toBeVisible();
+  });
+
+  it('submits under the name the schema reads', () => {
+    render(<AthleteForm />);
+
+    expect(fieldNames()).toContain('sex');
+  });
+
+  it('says nothing about the athlete beyond the calculation', () => {
+    // No identity claim, no gender wording: the field is here for an equation.
+    render(<AthleteForm />);
+
+    const text = document.body.textContent ?? '';
+
+    for (const word of ['Identität', 'divers', 'Gender']) {
+      expect(text, word).not.toContain(word);
+    }
   });
 });

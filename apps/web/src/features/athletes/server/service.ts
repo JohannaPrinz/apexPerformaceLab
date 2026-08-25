@@ -7,6 +7,7 @@ import 'server-only';
 // module untestable without a database.
 import type { PrismaClientInstance } from '@apex/database';
 import { scoped, withTenant } from '@apex/database/tenant';
+import type { AthleteSex } from '@apex/domain';
 import type { Page, TenantContext } from '@apex/types';
 
 import type {
@@ -41,6 +42,7 @@ const athleteSelect = {
   firstName: true,
   lastName: true,
   dateOfBirth: true,
+  sex: true,
   email: true,
   phone: true,
   heightCm: true,
@@ -56,6 +58,8 @@ export interface AthleteRecord {
   firstName: string;
   lastName: string;
   dateOfBirth: Date | null;
+  /** Recorded only because the body-composition equations need it. */
+  sex: AthleteSex;
   email: string | null;
   phone: string | null;
   /** Centimetres and kilograms — the units the columns are declared in. */
@@ -214,6 +218,9 @@ export async function createAthlete(
       // The schema has already turned an untouched field into `undefined`, so
       // absence is unambiguous here.
       dateOfBirth: input.dateOfBirth ? new Date(input.dateOfBirth) : null,
+      // Absent means unstated, which is the column's own default — spelled out
+      // so the create path reads the same as the update path.
+      sex: input.sex ?? 'not_specified',
       email: input.email ?? null,
       phone: input.phone ?? null,
       heightCm: input.heightCm ?? null,
@@ -248,6 +255,7 @@ export async function updateAthlete(
         : { dateOfBirth: fields.dateOfBirth ? new Date(fields.dateOfBirth) : null }),
       ...(fields.email === undefined ? {} : { email: fields.email ?? null }),
       ...(fields.phone === undefined ? {} : { phone: fields.phone ?? null }),
+      ...(fields.sex === undefined ? {} : { sex: fields.sex }),
       ...(fields.heightCm === undefined ? {} : { heightCm: fields.heightCm }),
       ...(fields.weightKg === undefined ? {} : { weightKg: fields.weightKg }),
     },
