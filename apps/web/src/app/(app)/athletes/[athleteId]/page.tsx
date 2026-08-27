@@ -173,7 +173,13 @@ export default async function AthletePage({
             </Button>
 
             <Button asChild variant="outline" className={TOUCH_BUTTON}>
-              <Link href={`/athletes/${athlete.id}/edit`}>
+              {/* The accessible name contains the visible label, so this is not
+                  the "label in name" failure. It is needed because the cases
+                  below carry a second "Bearbeiten" each. */}
+              <Link
+                href={`/athletes/${athlete.id}/edit`}
+                aria-label={`Bearbeiten: ${athlete.firstName} ${athlete.lastName}`}
+              >
                 <Pencil aria-hidden="true" className="size-4" />
                 Bearbeiten
               </Link>

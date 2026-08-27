@@ -50,7 +50,7 @@ export default async function AssessmentPage({
 
   // A configured test is copied into this assessment — a second run of it — or
   // into another assessment of the same athlete.
-  const [siblings, exerciseCatalogue, analysis, draft] = await Promise.all([
+  const [siblings, exerciseCatalogue, analysis, draft, athlete] = await Promise.all([
     api.assessments.listForAthlete({ athleteId: assessment.athleteId }),
     // The ordinary catalogue procedure — this workspace plus system-wide, and
     // never another tenant's. The dialog picks from what it is given; it does
@@ -62,6 +62,10 @@ export default async function AssessmentPage({
     api.reports.assessmentOverview({ assessmentId }),
     // Null while no analysis has been started — the text describes a selection.
     api.reports.assessmentDraft({ assessmentId }),
+    // The name for the way back. An existing procedure rather than widening
+    // the assessment payload — this is presentation, not part of what an
+    // assessment is.
+    api.athletes.byId({ athleteId: assessment.athleteId }),
   ]);
 
   const exerciseOptions = exerciseCatalogue.map((exercise) => ({
@@ -126,8 +130,13 @@ export default async function AssessmentPage({
         href={`/athletes/${assessment.athleteId}`}
         className={`${FOCUS_RING} ${TOUCH_TARGET} -ml-2 inline-flex w-fit max-w-full items-center gap-1.5 rounded px-2 text-sm text-muted-foreground hover:text-foreground`}
       >
-        <ArrowLeft aria-hidden="true" className="size-4" />
-        Zurück zum Athleten
+        <ArrowLeft aria-hidden="true" className="size-4 shrink-0" />
+        {/* Named, not "Zurück zum Athleten": the chain Athlet → Fall →
+            Assessment → Test is only legible if each step says which one it
+            returns to — the test screen already names its assessment here. */}
+        <span className="min-w-0 truncate">
+          {athlete.firstName} {athlete.lastName}
+        </span>
       </Link>
 
       <header className="flex flex-wrap items-start justify-between gap-4">
@@ -219,7 +228,11 @@ export default async function AssessmentPage({
               : 'Alle Tests dieses Assessments sind archiviert.'}
           </p>
         ) : (
-          <div className="flex flex-col gap-3">
+          /* Two across from `lg`. Measured at 1280 a card was 992px wide and
+             114px tall — most of it empty — while three tests pushed the
+             evaluation below the fold. Not three across: the four German
+             actions on a card wrap badly under ~450px. */
+          <div className="grid gap-3 lg:grid-cols-2">
             {activeModules.map((module) => (
               <ModuleCard
                 key={module.id}
@@ -246,7 +259,7 @@ export default async function AssessmentPage({
               {archivedModules.length === 1 ? 'archivierter Test' : 'archivierte Tests'} einblenden
             </summary>
 
-            <div className="flex flex-col gap-3 pt-3">
+            <div className="grid gap-3 pt-3 lg:grid-cols-2">
               {archivedModules.map((module) => (
                 <ModuleCard
                   key={module.id}

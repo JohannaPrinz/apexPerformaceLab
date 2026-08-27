@@ -106,9 +106,12 @@ export function CaseDialog({
           <Button
             variant="ghost"
             className={TOUCH_BUTTON}
-            // No `aria-label` here: one would replace the visible "Bearbeiten"
-            // with a name that does not contain it — the "label in name"
-            // failure. The dialog it opens says which case it belongs to.
+            // The accessible name **contains** the visible label, so this is not
+            // the "label in name" failure an unrelated `aria-label` would be. It
+            // is needed because the athlete page carries a second "Bearbeiten"
+            // — for the athlete — and the two are indistinguishable to anyone
+            // tabbing through or listening.
+            aria-label={`Bearbeiten: ${performanceCase?.title ?? ''}`}
           >
             <Pencil aria-hidden="true" className="size-4" />
             Bearbeiten
