@@ -57,8 +57,20 @@ describe('the navigation', () => {
     // promise a workspace-wide list that does not exist.
     render_('/dashboard');
 
-    expect(screen.getAllByRole('link')).toHaveLength(3);
+    expect(screen.getAllByRole('link')).toHaveLength(4);
     expect(screen.queryByRole('link', { name: /Assessment/i })).toBeNull();
+  });
+
+  it('offers video analysis, because that flow starts without an athlete', () => {
+    // The mirror image of the rule above: an assessment is always somebody's,
+    // so it is reached through them; an analysis begins before the coach has
+    // decided whose it is, so it needs a place of its own.
+    render_('/dashboard');
+
+    expect(screen.getByRole('link', { name: 'Videoanalyse' })).toHaveAttribute(
+      'href',
+      '/videoanalyse',
+    );
   });
 
   it('announces the current page, not only colours it', () => {

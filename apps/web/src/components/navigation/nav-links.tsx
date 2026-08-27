@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
-import { Dumbbell, LayoutDashboard, Users } from 'lucide-react';
+import { Dumbbell, LayoutDashboard, Users, Video } from 'lucide-react';
 
 import { cn } from '@apex/ui';
 
@@ -21,12 +21,19 @@ import { cn } from '@apex/ui';
  * Assessments are deliberately absent. An Assessment belongs to an Athlete
  * (§3: `Athlete → Performance Case → Assessment`), so it is reached through the
  * athlete's record — a top-level entry would suggest a list that does not exist.
+ *
+ * Videoanalyse is present for the opposite reason: it is the one flow that
+ * genuinely **starts without an athlete**. A coach films first and files
+ * afterwards, and the athlete is chosen once the numbers are on screen. A top
+ * level entry is therefore not a shortcut into somebody's record — it is where
+ * the flow actually begins.
  */
 
 const ITEMS = [
   { href: '/dashboard', label: 'Übersicht', icon: LayoutDashboard },
   { href: '/athletes', label: 'Athleten', icon: Users },
   { href: '/exercises', label: 'Übungen', icon: Dumbbell },
+  { href: '/videoanalyse', label: 'Videoanalyse', icon: Video },
 ] as const;
 
 /**

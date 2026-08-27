@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { TRPCError } from '@trpc/server';
-import { ArrowLeft, ChevronDown, Pencil } from 'lucide-react';
+import { ArrowLeft, ChevronDown, Pencil, Video } from 'lucide-react';
 
 import { ageAt } from '@apex/domain';
 import { Badge, Button } from '@apex/ui';
@@ -161,6 +161,17 @@ export default async function AthletePage({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {/* The athlete is carried into the analysis as a suggestion, not as
+                a commitment: the coach still confirms it when filing, because
+                arriving here and analysing somebody else's video is an ordinary
+                mistake and a silent assignment would hide it. */}
+            <Button asChild variant="outline" className={TOUCH_BUTTON}>
+              <Link href={`/videoanalyse?athlete=${athlete.id}`}>
+                <Video aria-hidden="true" className="size-4" />
+                Videoanalyse
+              </Link>
+            </Button>
+
             <Button asChild variant="outline" className={TOUCH_BUTTON}>
               <Link href={`/athletes/${athlete.id}/edit`}>
                 <Pencil aria-hidden="true" className="size-4" />
