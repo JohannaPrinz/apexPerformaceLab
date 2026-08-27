@@ -279,6 +279,23 @@ export const SYSTEM_MEASUREMENT_TYPES = [
     valueType: 'NUMERIC',
     category: 'mobility',
   },
+  {
+    key: 'joint_angle',
+    name: 'Joint Angle',
+    // **A joint angle at a moment**, not the arc between two moments — that is
+    // `range_of_motion` above, and the two are a difference apart. A squat is
+    // read by the angle at the bottom; a range of 95° reached from 130° instead
+    // of 175° is not the same movement, and only this quantity can tell them
+    // apart.
+    //
+    // Which joint, which side and which moment are coordinates on the
+    // Measurement — the side has its own column, the joint and the position are
+    // context dimensions the test declares. A type per joint would grow the
+    // catalogue with the skeleton (§12).
+    unit: '°',
+    valueType: 'NUMERIC',
+    category: 'mobility',
+  },
 
   // ── Performance ───────────────────────────────────────────────────────────
   {

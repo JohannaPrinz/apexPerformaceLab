@@ -20,9 +20,9 @@ import {
 describe('system measurement type catalogue', () => {
   it('holds the shipped types', () => {
     // The number is pinned so that growing the catalogue is a decision somebody
-    // took, not a side effect. Fourteen at the MVP, plus `speed` and the seven
-    // caliper sites.
-    expect(SYSTEM_MEASUREMENT_TYPES).toHaveLength(22);
+    // took, not a side effect. Fourteen at the MVP, plus `speed`, the seven
+    // caliper sites and `joint_angle` for video analysis.
+    expect(SYSTEM_MEASUREMENT_TYPES).toHaveLength(23);
   });
 
   /**
@@ -57,6 +57,7 @@ describe('system measurement type catalogue', () => {
       'repetitions',
       'muscle_activity',
       'range_of_motion',
+      'joint_angle',
       'jump_height',
       'running_cadence',
     ]);
