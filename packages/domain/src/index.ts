@@ -42,6 +42,7 @@ export * from './assessments/report-draft';
 export * from './assessments/summary';
 export * from './modules';
 export * from './modules/comparison';
+export * from './movement';
 export * from './modules/configuration';
 export * from './modules/configuration-change';
 export * from './modules/context';
