@@ -61,6 +61,15 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      {
+        // The proof of concept under `/poc` needs the camera, and the policy
+        // above switches it off for the whole app. Scoped to that path so the
+        // product surface keeps `camera=()`, and removed with the trial.
+        source: '/poc/:path*',
+        headers: [
+          { key: 'Permissions-Policy', value: 'camera=(self), microphone=(), geolocation=()' },
+        ],
+      },
     ]);
   },
 };
