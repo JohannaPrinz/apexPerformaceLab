@@ -122,6 +122,10 @@ export interface RecordedMeasurement {
   supersedes?: { id: string } | null;
   /** When it reached the system. What "changed after the test was closed" is read from. */
   ingestedAt?: Date;
+  /** When the value was taken. What groups the readings of one video analysis. */
+  capturedAt?: Date;
+  /** How it came about. `DERIVED` is what marks a computed reading. */
+  source?: string;
 }
 
 /**

@@ -63,7 +63,9 @@ export default async function TestPage({
         status={workspace.status as AssessmentModuleStatus}
         configuration={workspace.configuration}
         types={workspace.types}
-        exercises={workspace.exercises}
+        exercises={Object.fromEntries(
+          Object.entries(workspace.exercises).map(([id, exercise]) => [id, exercise.name]),
+        )}
         measurements={workspace.measurements}
         notes={workspace.notes}
         readiness={workspace.readiness}

@@ -255,6 +255,38 @@ export async function countExercises(
 }
 
 /** One exercise, from this workspace or the system catalogue. */
+/**
+ * The catalogue entries for a known set of keys.
+ *
+ * For callers that already know which exercises they want — the movement
+ * analysis knows exactly which keys it has a profile for. Paging the whole
+ * catalogue and filtering afterwards would silently return none of them: the
+ * list is ordered by name and runs to hundreds of entries.
+ *
+ * System entries carry `organizationId = null` and every workspace inherits
+ * them (§12a); a workspace's own exercise under the same key wins, which is why
+ * the ordering matches `listExercises`.
+ */
+export async function exercisesByKeys(
+  db: ExerciseDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  keys: readonly string[],
+): Promise<ExerciseRecord[]> {
+  if (keys.length === 0) return [];
+
+  const rows = await db.exercise.findMany({
+    where: {
+      key: { in: [...keys] },
+      archivedAt: null,
+      OR: [{ organizationId: tenant.organizationId }, { organizationId: null }],
+    },
+    select: exerciseSelect,
+    orderBy: [{ organizationId: 'desc' }, { name: 'asc' }],
+  });
+
+  return rows.map(toRecord);
+}
+
 export async function getExercise(
   db: ExerciseDb,
   tenant: Pick<TenantContext, 'organizationId'>,

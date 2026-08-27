@@ -16,6 +16,7 @@ import { MODULE_STATUS_LABELS_DE } from '../components/labels';
 import { measurementsRouter } from '../measurements/server/router';
 import {
   addModuleSchema,
+  analysisTargetSchema,
   assessmentIdSchema,
   copyAssessmentSchema,
   copyModuleSchema,
@@ -29,6 +30,7 @@ import {
   updateModuleSchema,
 } from '../schemas';
 
+import { openAnalysisTarget } from './analysis-target';
 import {
   addModule,
   availableMeasurementTypes,
@@ -174,6 +176,31 @@ export const assessmentsRouter = createTRPCRouter({
   measurementTypes: withPermission('assessment:read').query(({ ctx }) =>
     availableMeasurementTypes(ctx.db, ctx.tenant.organizationId),
   ),
+
+  /**
+   * The test a standalone video analysis is filed under, opened if absent.
+   *
+   * A separate procedure rather than a flag on `addModule`: this one answers
+   * "where does this belong", finds an existing test before creating anything,
+   * and is the only path that may create three objects at once. Keeping it
+   * named makes that visible in the router rather than hidden behind an option.
+   */
+  openAnalysisTarget: withCoachPermission('assessment:write')
+    .input(analysisTargetSchema)
+    .mutation(async ({ ctx, input }) => {
+      const result = await openAnalysisTarget(ctx.db, ctx.tenant, ctx.coach.id, input);
+
+      if (!result.ok) {
+        if (result.reason === 'ATHLETE_NOT_FOUND') throw notFound('Athlete');
+
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Die Messgröße „Range of Motion" fehlt im Katalog dieses Workspace.',
+        });
+      }
+
+      return result;
+    }),
 
   addModule: withCoachPermission('assessment:write')
     .input(addModuleSchema)

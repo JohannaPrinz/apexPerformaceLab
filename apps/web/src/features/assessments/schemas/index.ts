@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import {
+  angleTargetSchema,
   assessmentStatusSchema,
   measurementTemplateKeySchema,
   moduleConfigurationSchema,
@@ -227,3 +228,23 @@ export type SetAssessmentStatusInput = z.infer<typeof setAssessmentStatusSchema>
 /** Which examinations a list shows. Archived ones stay out of the working view. */
 export const ASSESSMENT_VIEWS = ['live', 'all'] as const;
 export type AssessmentView = (typeof ASSESSMENT_VIEWS)[number];
+
+/**
+ * Where a standalone video analysis should be filed.
+ *
+ * No `moduleId`: the point of a standalone analysis is that the coach has not
+ * chosen a test — the server finds the athlete's video-analysis test or opens
+ * one (§8). `purpose` is the coach's own words and becomes the Assessment's
+ * question when one has to be created; it is never generated.
+ */
+export const analysisTargetSchema = z.object({
+  athleteId: z.string().min(1),
+  purpose: z.string().trim().min(1, 'Wofür wurde diese Analyse gemacht?').max(500),
+  /** Which movement profile the values were measured under. */
+  profileKey: z.string().min(1).max(40),
+  /** The angles the coach kept for this test, and the targets they set. */
+  tracks: z.array(z.string().min(1).max(40)).max(20),
+  targets: z.array(angleTargetSchema).max(20),
+});
+
+export type AnalysisTargetInputShape = z.infer<typeof analysisTargetSchema>;

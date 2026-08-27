@@ -440,10 +440,23 @@ export interface ModuleWorkspace {
   archivedAt: Date | null;
   createdByCoachId: string;
   configuration: ModuleConfiguration | null;
-  /** Type id → what a coach needs to see and validate against. */
-  types: Record<string, { name: string; unit: string; valueType: string }>;
-  /** Exercise id → display name, for the movements this test covers. */
-  exercises: Record<string, string>;
+  /**
+   * Type id → what a coach needs to see and validate against.
+   *
+   * `key` is the catalogue key (§12). Carried because a caller that has to
+   * decide "is this the range-of-motion quantity" cannot do it from a display
+   * name — a workspace may define its own type under a system key, and a name
+   * is translated text.
+   */
+  types: Record<string, { key: string; name: string; unit: string; valueType: string }>;
+  /**
+   * Exercise id → what the movements of this test are.
+   *
+   * `key` is the catalogue key: it is what resolves a movement profile, and a
+   * display name cannot — a workspace may rename an exercise, and the name is
+   * translated text.
+   */
+  exercises: Record<string, { key: string; name: string }>;
   measurements: MeasurementRecord[];
   /** Superseded values, for the correction history. */
   superseded: MeasurementRecord[];
@@ -553,7 +566,7 @@ export async function moduleWorkspace(
             // inherits it.
             OR: [{ organizationId: tenant.organizationId }, { organizationId: null }],
           },
-          select: { id: true, name: true },
+          select: { id: true, key: true, name: true },
         })
       : [];
 
@@ -565,7 +578,7 @@ export async function moduleWorkspace(
           // `organizationId = null` and every workspace inherits them (§12).
           OR: [{ organizationId: tenant.organizationId }, { organizationId: null }],
         },
-        select: { id: true, name: true, unit: true, valueType: true },
+        select: { id: true, key: true, name: true, unit: true, valueType: true },
       })
     : [];
 
@@ -585,10 +598,12 @@ export async function moduleWorkspace(
     types: Object.fromEntries(
       types.map((type) => [
         type.id,
-        { name: type.name, unit: type.unit, valueType: type.valueType },
+        { key: type.key, name: type.name, unit: type.unit, valueType: type.valueType },
       ]),
     ),
-    exercises: Object.fromEntries(exercises.map((exercise) => [exercise.id, exercise.name])),
+    exercises: Object.fromEntries(
+      exercises.map((exercise) => [exercise.id, { key: exercise.key, name: exercise.name }]),
+    ),
     measurements: all.filter((m) => m.supersededById === null).map(plainValue),
     superseded: all.filter((m) => m.supersededById !== null).map(plainValue),
     notes,

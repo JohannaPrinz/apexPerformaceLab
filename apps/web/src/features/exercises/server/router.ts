@@ -2,7 +2,11 @@ import 'server-only';
 
 import { TRPCError } from '@trpc/server';
 
-import { describeRemovalRefusal, describeVariantRefusal } from '@apex/domain';
+import {
+  ANALYSABLE_EXERCISE_KEYS,
+  describeRemovalRefusal,
+  describeVariantRefusal,
+} from '@apex/domain';
 import { AppError } from '@apex/types';
 
 import { createTRPCRouter, withCoachPermission, withPermission } from '@/server/api/trpc';
@@ -18,6 +22,7 @@ import {
 
 import {
   createExercise,
+  exercisesByKeys,
   exerciseUsage,
   getExercise,
   linkVariants,
@@ -47,6 +52,17 @@ export const exercisesRouter = createTRPCRouter({
   count: withPermission('exercise:read')
     .input(listExercisesSchema)
     .query(({ ctx, input }) => countExercises(ctx.db, ctx.tenant, input)),
+
+  /**
+   * The catalogue entries a movement analysis can be run on.
+   *
+   * A procedure of its own rather than a filter on `list`: the caller knows the
+   * keys, and paging the whole catalogue to find three of them would return
+   * none — the list is ordered by name and runs to hundreds of entries.
+   */
+  analysable: withPermission('exercise:read').query(({ ctx }) =>
+    exercisesByKeys(ctx.db, ctx.tenant, ANALYSABLE_EXERCISE_KEYS),
+  ),
 
   byId: withPermission('exercise:read')
     .input(exerciseIdSchema)

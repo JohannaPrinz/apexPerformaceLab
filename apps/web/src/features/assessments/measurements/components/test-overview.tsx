@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 
-import { ArrowRight, Check, History } from 'lucide-react';
+import { ArrowRight, Check, History, Video } from 'lucide-react';
 
 import type { AssessmentModuleStatus, ModuleConfiguration, Readiness } from '@apex/domain';
 import { Badge, Button } from '@apex/ui';
@@ -21,6 +21,7 @@ import {
   SKINFOLD_SITE_LABELS_DE,
 } from '../../components/labels';
 
+import { AnalysisList } from './analysis-list';
 import { ArchiveModuleButton } from './archive-module-button';
 import { MeasurementChart, type ChartGroupView } from './measurement-chart';
 import { RunTestButton } from './run-test-button';
@@ -49,6 +50,13 @@ import {
  * This screen reads. The one thing it edits is what the coach *called* the test
  * and what they wrote about it — text about the test, never the record itself.
  */
+/** Type id → unit, the shape the analysis list needs. */
+function unitsOf(
+  types: Readonly<Record<string, { unit: string }>>,
+): Readonly<Record<string, string>> {
+  return Object.fromEntries(Object.entries(types).map(([id, type]) => [id, type.unit]));
+}
+
 export function TestOverview({
   moduleId,
   assessmentId,
@@ -112,6 +120,7 @@ export function TestOverview({
     );
 
   const runHref = `/assessments/${assessmentId}/tests/${moduleId}/run`;
+  const videoHref = `/assessments/${assessmentId}/tests/${moduleId}/video`;
   const performed = measurements.length > 0 || status === 'COMPLETED' || status === 'ABORTED';
 
   return (
@@ -152,9 +161,25 @@ export function TestOverview({
             assessmentId={assessmentId}
             archived={archivedAt !== null}
           />
+          {/* Beside "Durchführen", not inside it: analysing a recording is a
+              second way to arrive at values for this test, not a step of the
+              entry screen. Offered on every test — what a given test can
+              actually store is decided on that screen, against its own
+              configuration, and saying it there beats hiding the door. */}
+          <Button variant="outline" className={TOUCH_BUTTON} asChild>
+            <Link href={videoHref}>
+              <Video aria-hidden="true" className="size-4" />
+              Videoanalyse
+            </Link>
+          </Button>
           <RunTestButton moduleId={moduleId} href={runHref} status={status} performed={performed} />
         </div>
       </header>
+
+      {/* Before the raw value table: on a test that holds several analyses the
+          rows are otherwise an undifferentiated list of ranges, and which
+          recording a number came from is the first thing a coach asks. */}
+      <AnalysisList measurements={measurements} units={unitsOf(types)} />
 
       {/* "Zeitpunkte", not "Verlauf": this block lists moments in the life of
           the test, and the diagrams below are where its values move over time.
