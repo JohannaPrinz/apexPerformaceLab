@@ -251,3 +251,59 @@ describe('expectedMeasurementCount', () => {
     expect(expectedMeasurementCount(configuration)).toBe(1);
   });
 });
+
+/**
+ * The structured protocol.
+ *
+ * The rule that has to hold above the others: a configuration written before
+ * this existed must parse unchanged and mean exactly what it meant.
+ */
+describe('the test protocol', () => {
+  const base = {
+    measurementTypes: [{ measurementTypeId: 'mt_1', role: 'required' as const }],
+  };
+
+  it('is absent from a configuration that declares none', () => {
+    const parsed = moduleConfigurationSchema.parse(base);
+
+    expect(parsed.protocol).toBeUndefined();
+  });
+
+  it('leaves an older payload readable and unchanged', () => {
+    // Version 1 payloads carried neither roles nor a protocol.
+    const old = readModuleConfiguration(
+      { measurementTypeIds: ['mt_1'], passes: 3, recordsSide: true, dimensions: [] },
+      1,
+    );
+
+    expect(old?.passes).toBe(3);
+    expect(old?.recordsSide).toBe(true);
+    expect(old?.protocol).toBeUndefined();
+  });
+
+  it('travels through a full parse with every field', () => {
+    const parsed = moduleConfigurationSchema.parse({
+      ...base,
+      protocol: {
+        key: 'erg_1000m_ski',
+        distanceM: 1000,
+        division: 'open',
+        device: 'skierg',
+        betterDirection: 'lower',
+      },
+    });
+
+    expect(parsed.protocol?.key).toBe('erg_1000m_ski');
+    expect(parsed.protocol?.distanceM).toBe(1000);
+    expect(parsed.protocol?.betterDirection).toBe('lower');
+  });
+
+  it('refuses a distance that is not a distance', () => {
+    const refused = moduleConfigurationSchema.safeParse({
+      ...base,
+      protocol: { key: 'run', distanceM: -5 },
+    });
+
+    expect(refused.success).toBe(false);
+  });
+});

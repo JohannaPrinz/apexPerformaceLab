@@ -18,6 +18,9 @@ import {
 
 describe('the system catalogue', () => {
   it('ships exactly the movements that were specified', () => {
+    // Pinned so that growing the catalogue is a decision somebody took. The six
+    // barbell lifts of the MVP, plus the two ergometers the standardised time
+    // trials are run on.
     expect(SYSTEM_EXERCISES.map((exercise) => exercise.key)).toEqual([
       'bench_press',
       'squat',
@@ -25,7 +28,21 @@ describe('the system catalogue', () => {
       'overhead_press',
       'pull_up',
       'leg_press',
+      'row_erg',
+      'ski_erg',
     ]);
+  });
+
+  it('keeps the distance out of the ergometers', () => {
+    // A rowing ergometer is one movement whether the piece is 500, 1000 or 2000
+    // metres. Folding the distance into the name would grow the catalogue with
+    // the protocol — the distance belongs to the test, and the templates set it.
+    for (const key of ['row_erg', 'ski_erg']) {
+      const exercise = SYSTEM_EXERCISES.find((entry) => entry.key === key);
+
+      expect(exercise?.name).not.toMatch(/\d/);
+      expect(exercise?.canonicalName).not.toMatch(/\d/);
+    }
   });
 
   it('uses stable identifiers', () => {

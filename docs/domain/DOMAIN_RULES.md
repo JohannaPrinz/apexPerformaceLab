@@ -186,10 +186,12 @@ Every Module contains:
 - **Device manufacturers are not modules.** VALD, MYOACT, Garmin and Polar are
   data sources. Their measurements are assigned to the appropriate module;
   the origin is recorded on the measurement.
-- **Competition formats are not modules.** HYROX and similar formats are
-  Assessment Presets — named combinations of modules such as
-  `hyrox`, `movement_screening` or `lactate_test`.
+- **Competition formats are presets.** A format is a way of assembling an
+  examination — `hyrox_assessment`, `movement_screening`, `lactate_test`.
   A preset name never equals a module key.
+  **Exception: `hyrox` is also a module**, because its standardised tests are an
+  area of analysis in their own right — see §11. The preset that assembles a
+  whole HYROX examination is `hyrox_assessment`.
 - **Video is not a module.** Video is a domain object of its own.
 
 ---

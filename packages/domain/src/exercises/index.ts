@@ -265,6 +265,18 @@ export const SYSTEM_EXERCISES = [
   { key: 'overhead_press', name: 'Schulterdrücken', canonicalName: 'Overhead Press' },
   { key: 'pull_up', name: 'Klimmzug', canonicalName: 'Pull-up' },
   { key: 'leg_press', name: 'Beinpresse', canonicalName: 'Leg Press' },
+  // The two ergometers. **The distance is deliberately not in the name**: a
+  // rowing ergometer is one movement whether the piece is 500, 1000 or 2000
+  // metres, and folding the distance in would grow the catalogue with the
+  // protocol — the same reason there is no "Bench Press Load" measurement type
+  // (§12a). How far was rowed belongs to the test's protocol; the templates
+  // named "1000 m Rudern" and "1000 m SkiErg" set it in one click.
+  //
+  // They are separate exercises and never interchangeable: the same distance on
+  // a rower and on a ski ergometer are different measurements of different
+  // movements.
+  { key: 'row_erg', name: 'Rudern (Ergometer)', canonicalName: 'Rowing Ergometer' },
+  { key: 'ski_erg', name: 'SkiErg', canonicalName: 'Ski Ergometer' },
 ] as const satisfies readonly SystemExercise[];
 
 export type SystemExerciseKey = (typeof SYSTEM_EXERCISES)[number]['key'];

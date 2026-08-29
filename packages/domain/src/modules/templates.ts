@@ -42,10 +42,21 @@ import type { ModuleKey } from './index';
  * No dimension value lists. Naming joints, muscle sites or body regions is a
  * professional decision that has not been taken.
  *
- * **No exercises.** A template configures *what is measured*; which movement a
- * strength test covers is chosen per assessment, and proposing one here would
- * be a professional recommendation the specification did not make. The builder
- * asks for it as its own step.
+ * **Exercises and protocols, where the test is defined by them.**
+ *
+ * This reverses an earlier rule here, which read "no exercises — proposing one
+ * would be a professional recommendation the specification did not make". That
+ * held while every template described a *kind* of test: a strength test covers
+ * whichever movement the coach chose, and naming one would have been an opinion.
+ *
+ * It stops holding for a standardised test. "1000 m Rudern" is not a proposal
+ * about which movement to pick — the movement and the distance **are** the test,
+ * and a template that left them out would ask the coach to reconstruct the
+ * standard by hand every time, which is the opposite of what a template is for.
+ *
+ * So: a template may name exercises and a protocol **only** where they are part
+ * of the definition. Templates that describe a kind of test still name neither,
+ * and the builder asks for them in its own step.
  */
 
 /** One proposed quantity, with the role the template suggests for it. */
@@ -92,6 +103,27 @@ export interface MeasurementTemplate {
   readonly derivations?: readonly { readonly key: string; readonly method: BodyFatMethod }[];
   readonly recordsSide: boolean;
   readonly dimensions: readonly ContextDimension[];
+  /**
+   * Exercises this test is carried out on, by catalogue key.
+   *
+   * Only where the movement *is* the test. A workspace without one of these
+   * exercises gets a template without it rather than a reference to nothing —
+   * the same rule the measurement types follow.
+   */
+  readonly exerciseKeys?: readonly string[];
+  /**
+   * The standardised conditions this test is defined by.
+   *
+   * Set only for tests whose whole point is that they are always run the same
+   * way. Everything in it is a statement about *this* template, never a default
+   * the platform proposes for tests in general.
+   */
+  readonly protocol?: {
+    readonly key: string;
+    readonly label: string;
+    readonly distanceM?: number;
+    readonly betterDirection?: 'lower' | 'higher';
+  };
 }
 
 export const MEASUREMENT_TEMPLATES = [
@@ -273,6 +305,84 @@ export const MEASUREMENT_TEMPLATES = [
     // The site is an axis, but which sites exist is a professional decision.
     // Declared without values so the coach names them.
     dimensions: [{ key: 'site', label: 'Measurement site' }],
+  },
+  // ── Standardised time trials ───────────────────────────────────────────────
+  //
+  // Four templates that differ in exactly one thing each, and each difference is
+  // one a comparison must not ignore:
+  //
+  //   • rowing vs ski — different movements, never one series
+  //   • fresh vs compromised running — the same kilometre run in two different
+  //     states, and treating them as one series would hide the very thing the
+  //     second one is run to show
+  //
+  // The measured quantity is `duration` in all four. Nothing else is asked for:
+  // a time trial produces a time, and a heart rate beside it is the coach's
+  // addition, not part of the standard.
+  {
+    key: 'row_1000m',
+    name: '1000 m Rudern',
+    moduleKey: 'hyrox',
+    measurements: [{ key: 'duration', role: 'required' }],
+    passes: 1,
+    recordsSide: false,
+    dimensions: [],
+    exerciseKeys: ['row_erg'],
+    protocol: {
+      key: 'row_erg_1000m',
+      label: '1000 m Rudern',
+      distanceM: 1000,
+      betterDirection: 'lower',
+    },
+  },
+  {
+    key: 'ski_1000m',
+    name: '1000 m SkiErg',
+    moduleKey: 'hyrox',
+    measurements: [{ key: 'duration', role: 'required' }],
+    passes: 1,
+    recordsSide: false,
+    dimensions: [],
+    exerciseKeys: ['ski_erg'],
+    protocol: {
+      key: 'ski_erg_1000m',
+      label: '1000 m SkiErg',
+      distanceM: 1000,
+      betterDirection: 'lower',
+    },
+  },
+  {
+    key: 'run_1km_fresh',
+    name: '1 km Laufen, frisch',
+    moduleKey: 'hyrox',
+    measurements: [{ key: 'duration', role: 'required' }],
+    passes: 1,
+    recordsSide: false,
+    dimensions: [],
+    // No exercise: running is not a catalogue movement, and inventing one to
+    // fill this in would put a row in the exercise catalogue that no coach asked
+    // for. The protocol carries what makes the test what it is.
+    protocol: {
+      key: 'run_1km_fresh',
+      label: '1 km Laufen, frisch',
+      distanceM: 1000,
+      betterDirection: 'lower',
+    },
+  },
+  {
+    key: 'run_1km_compromised',
+    name: '1 km Laufen, ermüdet',
+    moduleKey: 'hyrox',
+    measurements: [{ key: 'duration', role: 'required' }],
+    passes: 1,
+    recordsSide: false,
+    dimensions: [],
+    protocol: {
+      key: 'run_1km_compromised',
+      label: '1 km Laufen, ermüdet',
+      distanceM: 1000,
+      betterDirection: 'lower',
+    },
   },
 ] as const satisfies readonly MeasurementTemplate[];
 

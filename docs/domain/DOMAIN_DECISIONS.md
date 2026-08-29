@@ -701,17 +701,29 @@ Their origin is recorded on the Measurement itself (§13), not in the module tax
 Module and data source are orthogonal dimensions:
 a VALD jump test belongs to the `strength` module and has VALD as its source.
 
-### Competition Formats are not Modules
+### Competition Formats are Presets — with one exception
 
-Competition formats (e.g. HYROX) are **not** Modules.
-
-They are **Assessment Presets** — named combinations of modules.
+A competition format is a way of **assembling** an examination, not an area of
+analysis. Formats are therefore **Assessment Presets** — named combinations of
+modules.
 
 | Preset               | Modules                           |
 | -------------------- | --------------------------------- |
-| `hyrox`              | `running`, `strength`, `movement` |
+| `hyrox_assessment`   | `running`, `strength`, `movement` |
 | `movement_screening` | `movement`, `mobility`            |
 | `lactate_test`       | `lactate`                         |
+
+**`hyrox` is also a Module.** This reverses the earlier rule that no competition
+format may be a module, and the reason is narrower than the name suggests: the
+standardised HYROX tests — a 1000 m row, a 1000 m ski, a kilometre run fresh and
+the same kilometre run under fatigue — are an area of analysis of their own.
+What makes them comparable is that the format prescribes the distance, the load
+and the order, and no existing module says that. Filing a rowing time under
+`running` would also pool it with treadmill tests, since a comparison searches by
+module key.
+
+The preset that assembles a whole HYROX examination is therefore named
+`hyrox_assessment`, so the rule below still holds unchanged.
 
 **A preset name never equals a module key.** Preset and module share one
 namespace in the interface; identical names would make "select `movement`"

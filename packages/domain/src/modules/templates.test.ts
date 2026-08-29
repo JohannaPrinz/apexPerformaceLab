@@ -237,10 +237,62 @@ describe('a template is a starting point, never a live link', () => {
     expect(second.measurementTypes).toHaveLength(4);
   });
 
-  it('proposes no exercise — which movement a test covers is chosen per assessment', () => {
-    for (const template of MEASUREMENT_TEMPLATES) {
+  it('proposes a movement only where the movement is the test', () => {
+    // The rule that held while every template described a *kind* of test: a
+    // strength test covers whichever movement the coach chose, and naming one
+    // would have been an opinion. It stops holding for a standardised time
+    // trial, where the ergometer and the distance **are** the test.
+    const standardised = ['row_1000m', 'ski_1000m'];
+
+    for (const template of MEASUREMENT_TEMPLATES as readonly MeasurementTemplate[]) {
+      if (standardised.includes(template.key)) {
+        expect(template.exerciseKeys, `${template.key} names no movement`).toBeDefined();
+        continue;
+      }
+
       expect(template, `${template.key} presumes an exercise`).not.toHaveProperty('exerciseKeys');
       expect(applyTemplate(template).exerciseIds).toEqual([]);
+    }
+  });
+
+  it('proposes conditions only for the standardised time trials', () => {
+    const withProtocol = (MEASUREMENT_TEMPLATES as readonly MeasurementTemplate[])
+      .filter((template) => template.protocol !== undefined)
+      .map((template) => template.key);
+
+    // Everything else starts blank: a condition nobody chose is a claim about a
+    // test nobody ran.
+    expect(withProtocol).toEqual([
+      'row_1000m',
+      'ski_1000m',
+      'run_1km_fresh',
+      'run_1km_compromised',
+    ]);
+  });
+
+  it('gives the two ergometer trials different identities', () => {
+    // The same distance on a rower and on a ski ergometer are different
+    // measurements of different movements, and must never form one series.
+    const row = findMeasurementTemplate('row_1000m')?.protocol;
+    const ski = findMeasurementTemplate('ski_1000m')?.protocol;
+
+    expect(row?.key).not.toBe(ski?.key);
+    expect(row?.distanceM).toBe(ski?.distanceM);
+  });
+
+  it('separates the fresh kilometre from the compromised one', () => {
+    // The same kilometre run in two states. Treating them as one series would
+    // hide the very thing the second one is run to show.
+    expect(findMeasurementTemplate('run_1km_fresh')?.protocol?.key).not.toBe(
+      findMeasurementTemplate('run_1km_compromised')?.protocol?.key,
+    );
+  });
+
+  it('measures the time trials in the one time quantity', () => {
+    for (const key of ['row_1000m', 'ski_1000m', 'run_1km_fresh', 'run_1km_compromised']) {
+      expect(findMeasurementTemplate(key)?.measurements.map((entry) => entry.key)).toEqual([
+        'duration',
+      ]);
     }
   });
 });
@@ -298,6 +350,8 @@ describe('the two strength test methods', () => {
   });
 
   it('proposes no exercise for either — the movement is chosen per assessment', () => {
+    // Still true for these two: which lift a maximal-strength test covers is a
+    // professional decision, unlike the ergometer a 1000 m row is rowed on.
     for (const key of ['max_strength_test', 'force_measurement']) {
       expect(findMeasurementTemplate(key)).not.toHaveProperty('exerciseKeys');
     }

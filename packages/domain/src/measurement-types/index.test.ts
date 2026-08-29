@@ -21,8 +21,9 @@ describe('system measurement type catalogue', () => {
   it('holds the shipped types', () => {
     // The number is pinned so that growing the catalogue is a decision somebody
     // took, not a side effect. Fourteen at the MVP, plus `speed`, the seven
-    // caliper sites and `joint_angle` for video analysis.
-    expect(SYSTEM_MEASUREMENT_TYPES).toHaveLength(23);
+    // caliper sites, `joint_angle` for video analysis and `duration` for
+    // anything measured in time.
+    expect(SYSTEM_MEASUREMENT_TYPES).toHaveLength(24);
   });
 
   /**
@@ -59,6 +60,7 @@ describe('system measurement type catalogue', () => {
       'range_of_motion',
       'joint_angle',
       'jump_height',
+      'duration',
       'running_cadence',
     ]);
   });

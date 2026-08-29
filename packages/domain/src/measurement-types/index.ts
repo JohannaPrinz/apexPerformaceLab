@@ -306,6 +306,28 @@ export const SYSTEM_MEASUREMENT_TYPES = [
     category: 'performance',
   },
   {
+    key: 'duration',
+    name: 'Duration',
+    // **The one time quantity.** A run, a station, a hold, a single repetition
+    // and a whole race are all durations; what a given one *is* comes from the
+    // exercise it names, the pass it belongs to and its context — never from a
+    // second type. A `station_time` beside a `run_time` would grow the catalogue
+    // with the protocol and make "every duration of this athlete" unanswerable
+    // (§12, the same rule that keeps `external_load` from becoming one type per
+    // movement).
+    //
+    // Seconds, not minutes and not a formatted clock: one unit that arithmetic
+    // works on. How it is shown — 4:38 or 278 s — is the interface's business.
+    //
+    // Deliberately no reference range, like every other type here.
+    unit: 's',
+    valueType: 'NUMERIC',
+    // Category is a filter, never a binding (§12): a duration belongs just as
+    // much to a strength test as to an endurance one, and the coach adds it to
+    // whichever test they want it in.
+    category: 'performance',
+  },
+  {
     key: 'running_cadence',
     name: 'Running Cadence',
     unit: 'steps/min',

@@ -123,6 +123,129 @@ export type ContextDimension = z.infer<typeof contextDimensionSchema>;
  * entries that carry a role, and adds `exerciseIds`. Version 1 payloads are
  * still readable — see `readModuleConfiguration`.
  */
+/**
+ * What a test was carried out under, structured.
+ *
+ * ## Why this is not the notes field
+ *
+ * `notes` already holds "load steps, device settings, conditions" — as prose,
+ * for a person. This holds the same kind of information for a **comparison**:
+ * whether two tests may be put beside each other at all. A coach who reads
+ * "1 km, Bahn, frisch" understands it; a query cannot.
+ *
+ * ## Why nothing here is a catalogue
+ *
+ * Every value is entered by the coach. The platform ships **no** distances, no
+ * loads and no repetition counts — not for HYROX and not for anything else.
+ * Those belong to a rulebook this software does not own, and a wrong constant
+ * shipped as a default would be copied into every test that used it. What the
+ * platform contributes is the *shape*: that a distance is a number of metres and
+ * that two tests with different ones are not the same test.
+ *
+ * ## Comparability is exact or absent
+ *
+ * Two protocols match when every field matches. There is no "close enough": a
+ * sled time on one hall floor and the same sled on another are different
+ * numbers, and the whole point of recording the venue is to stop them being
+ * subtracted from each other.
+ *
+ * A test **without** a protocol block compares to other tests without one,
+ * exactly as before this existed. Nothing that already works changes.
+ */
+export const testProtocolSchema = z.object({
+  /**
+   * The stable name of this exact setup, e.g. `1km_bahn_frisch`.
+   *
+   * The coach's own word, not a key from a list the platform maintains. It is
+   * what makes "the same test again" expressible before anything else about it
+   * is filled in.
+   */
+  key: z
+    .string()
+    .trim()
+    .min(1)
+    .max(60)
+    .regex(/^[a-z0-9_]+$/, 'Nur Kleinbuchstaben, Ziffern und Unterstriche.'),
+  /**
+   * What the coach reads — "1000 m Rudern", not `row_erg_1000m`.
+   *
+   * Separate from `key` because the two answer different questions: the key
+   * decides which tests belong to one series and must survive being typed
+   * twice; the label is a sentence on a screen and may be reworded at any time.
+   * Renaming must never cut a series in half, which is why it is **not** part of
+   * `protocolKey`.
+   *
+   * Absent on a protocol written before this existed — the key is then shown,
+   * which is what those screens already did.
+   */
+  label: z.string().trim().min(1).max(80).optional(),
+  /** How far, in metres. Absent where the test has no distance. */
+  distanceM: z.number().positive().max(1_000_000).optional(),
+  /**
+   * Which class the test was performed in, e.g. a competition division.
+   *
+   * A property of the **protocol**, not of the athlete: it decides the loads and
+   * repetition counts that were prescribed. An athlete who moves up a class has
+   * not retroactively performed their old tests in the new one.
+   */
+  division: z.string().trim().min(1).max(40).optional(),
+  /**
+   * The instrument, where the instrument changes the number.
+   *
+   * A rowing ergometer and a ski ergometer over the same distance are different
+   * measurements; two dynamometer models disagree systematically.
+   */
+  device: z.string().trim().min(1).max(80).optional(),
+  /**
+   * Where it happened, **only** where the place changes the number.
+   *
+   * A sled time is a statement about a floor as much as about an athlete.
+   * A grip-strength reading is not, and filling this in there would split a
+   * series for no reason.
+   */
+  venue: z.string().trim().min(1).max(80).optional(),
+  /**
+   * Which end of the scale the coach is working towards, per this test.
+   *
+   * **The only place a direction is ever set, and a person sets it.** Without it
+   * the comparison reports the highest and the lowest value and stops; with it,
+   * one of the two may be called the best. It stays here rather than on the
+   * measurement type because the same quantity points both ways in different
+   * tests — a duration is better shorter in a time trial and longer in a hold.
+   *
+   * It never produces "improved" or "worsened": a difference stays a signed
+   * number. It decides one thing only — which extreme is worth naming.
+   */
+  betterDirection: z.enum(['lower', 'higher']).optional(),
+});
+
+export type TestProtocol = z.infer<typeof testProtocolSchema>;
+
+/**
+ * The comparison identity of a protocol.
+ *
+ * Every field, in a fixed order, so two configurations written in a different
+ * key order produce the same string — the same reasoning as `canonicalContext`.
+ * `null` where no protocol was declared, which is its own comparison class and
+ * not a wildcard.
+ *
+ * `label` and `betterDirection` are deliberately **not** part of it: one is a
+ * wording, the other says how to read the numbers. Neither changes what was
+ * measured, and a coach who edits either must not thereby cut their own series
+ * in half.
+ */
+export function protocolKey(protocol: TestProtocol | null | undefined): string | null {
+  if (!protocol) return null;
+
+  return [
+    protocol.key,
+    protocol.distanceM === undefined ? '' : String(protocol.distanceM),
+    protocol.division ?? '',
+    protocol.device ?? '',
+    protocol.venue ?? '',
+  ].join('|');
+}
+
 export const moduleConfigurationSchema = z
   .object({
     /**
@@ -214,6 +337,14 @@ export const moduleConfigurationSchema = z
 
     /** Free-form protocol notes: load steps, device settings, conditions. */
     notes: z.string().trim().max(4000).optional(),
+
+    /**
+     * The structured conditions this test was carried out under.
+     *
+     * Optional, and absent on every configuration written before it existed —
+     * which is the truth about those tests, not a gap to fill in.
+     */
+    protocol: testProtocolSchema.optional(),
   })
   .superRefine((configuration, ctx) => {
     // A test cannot compute a quantity it does not record: the derived value is

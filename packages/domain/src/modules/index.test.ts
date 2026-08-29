@@ -15,7 +15,8 @@ import {
  * break without anything else failing.
  */
 describe('module registry', () => {
-  it('holds the canonical eleven (§11)', () => {
+  it('holds the canonical eleven (§11) plus hyrox', () => {
+    // Pinned so that growing the registry stays a decision somebody took.
     expect(MODULE_KEYS).toEqual([
       'running',
       'strength',
@@ -28,6 +29,7 @@ describe('module registry', () => {
       'sleep',
       'cycle',
       'custom',
+      'hyrox',
     ]);
   });
 
@@ -37,19 +39,26 @@ describe('module registry', () => {
     }
   });
 
-  it('carries no device, vendor or competition name', () => {
-    // Module names are domain terms only (DOMAIN_RULES #8). These are the names
-    // the documents name explicitly as *not* modules.
-    const forbidden = ['vald', 'myoact', 'garmin', 'polar', 'hyrox', 'video'];
+  it('carries no device or vendor name', () => {
+    // Module names are domain terms, never sources (DOMAIN_RULES). A VALD jump
+    // test belongs to `strength` and records VALD as its origin.
+    //
+    // `hyrox` used to be on this list, as a competition format. That was
+    // reversed deliberately — see the registry's own note and §11 — because the
+    // standardised station and time-trial tests are an area of analysis in their
+    // own right. `video` stays off the list for its original reason: it is a
+    // domain object, not a kind of test.
+    const forbidden = ['vald', 'myoact', 'garmin', 'polar', 'video'];
 
     for (const key of MODULE_KEYS) {
-      expect(forbidden, `"${key}" is a source or format, not a module`).not.toContain(key);
+      expect(forbidden, `"${key}" is a source, not a module`).not.toContain(key);
     }
   });
 
   it('recognises a key and rejects anything else', () => {
     expect(isModuleKey('lactate')).toBe(true);
-    expect(isModuleKey('hyrox')).toBe(false);
+    expect(isModuleKey('hyrox')).toBe(true);
+    expect(isModuleKey('hyrox_assessment')).toBe(false);
     expect(isModuleKey('')).toBe(false);
   });
 });
@@ -75,7 +84,7 @@ describe('assessment presets', () => {
   });
 
   it('resolves a preset to its modules', () => {
-    expect(modulesForPreset('hyrox')).toEqual(['running', 'strength', 'movement']);
+    expect(modulesForPreset('hyrox_assessment')).toEqual(['running', 'strength', 'movement']);
     expect(modulesForPreset('lactate_test')).toEqual(['lactate']);
   });
 });
