@@ -87,6 +87,7 @@ export default async function ConfigureTestPage({
         measurementTypes={measurementTypes}
         exercises={exercises.map((exercise) => ({
           id: exercise.id,
+          key: exercise.key,
           name: exercise.name,
           ownedByWorkspace: exercise.scope === 'WORKSPACE',
         }))}

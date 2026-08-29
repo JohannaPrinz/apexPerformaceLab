@@ -58,6 +58,7 @@ export default async function NewTestPage({
         measurementTypes={measurementTypes}
         exercises={exercises.map((exercise) => ({
           id: exercise.id,
+          key: exercise.key,
           name: exercise.name,
           ownedByWorkspace: exercise.scope === 'WORKSPACE',
         }))}

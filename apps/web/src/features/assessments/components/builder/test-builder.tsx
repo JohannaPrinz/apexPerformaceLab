@@ -86,6 +86,13 @@ export function TestBuilder({
     return (key: string) => byKey.get(key);
   }, [measurementTypes]);
 
+  /** The same, for the templates that name a movement. */
+  const idForExerciseKey = useMemo(() => {
+    const byKey = new Map(exercises.map((option) => [option.key, option.id]));
+
+    return (key: string) => byKey.get(key);
+  }, [exercises]);
+
   const names = useMemo(() => {
     const types = new Map(measurementTypes.map((option) => [option.id, option.name]));
     const movements = new Map(exercises.map((option) => [option.id, option.name]));
@@ -162,7 +169,12 @@ export function TestBuilder({
             const next =
               templateKey === ''
                 ? emptyDraft(draft.moduleKey)
-                : draftFromTemplateKey(templateKey, draft.moduleKey, idForTypeKey);
+                : draftFromTemplateKey(
+                    templateKey,
+                    draft.moduleKey,
+                    idForTypeKey,
+                    idForExerciseKey,
+                  );
 
             // A template proposes a name only while the coach has not given
             // one. Overwriting "Laufband Mai" with "Lactate step test" is the
@@ -362,9 +374,14 @@ function TestStep({
                   }`}
                 >
                   {template.name}
+                  {/* German, and counted: this went unnoticed because no
+                      template belonged to a module the builder could reach with
+                      one — the string was never rendered until the standardised
+                      time trials arrived. An existing test caught it. */}
                   <span className="text-muted-foreground">
                     {' · '}
-                    {template.measurements.length} measurements
+                    {template.measurements.length}{' '}
+                    {template.measurements.length === 1 ? 'Messgröße' : 'Messgrößen'}
                     {template.passes > 1 ? `, ${String(template.passes)} Stufen` : ''}
                   </span>
                 </button>

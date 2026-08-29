@@ -5,6 +5,7 @@ import { findMeasurementTemplate, moduleConfigurationSchema } from '@apex/domain
 import {
   BUILDER_STEPS,
   canLeaveStep,
+  EMPTY_PROTOCOL,
   draftFromConfiguration,
   draftFromTemplate,
   draftFromTemplateKey,
@@ -14,6 +15,7 @@ import {
   summarise,
   toConfiguration,
   toDimensionKey,
+  toProtocolKey,
   withDimension,
   withDimensionValues,
   withExercise,
@@ -21,6 +23,7 @@ import {
   withMeasurementTypeMoved,
   withNotes,
   withLoadMeasurementType,
+  withProtocol,
   withoutDimension,
   withoutExercise,
   withoutMeasurementType,
@@ -594,5 +597,174 @@ describe('the load quantity', () => {
     );
 
     expect(lines.some((line) => line.label === 'Belastungsgröße')).toBe(false);
+  });
+});
+
+/**
+ * The structured protocol through the builder.
+ *
+ * What has to hold: a test that declares nothing is stored exactly as it was
+ * before this existed, and a test that declares something survives being
+ * reopened without drifting.
+ */
+describe('the test protocol', () => {
+  const withMeasurement = () => withMeasurementType(emptyDraft('strength'), 'mt_1');
+
+  it('is absent from the configuration until it has a name', () => {
+    const draft = withProtocol(withMeasurement(), {
+      ...EMPTY_PROTOCOL,
+      distanceM: '1000',
+      device: 'skierg',
+    });
+
+    // A distance without a name for the setup names nothing that can be
+    // compared, so the whole block is dropped rather than half-stored.
+    expect(toConfiguration(draft)?.protocol).toBeUndefined();
+  });
+
+  it('stores only the fields the coach filled in', () => {
+    const draft = withProtocol(withMeasurement(), {
+      ...EMPTY_PROTOCOL,
+      key: 'erg_1000m_ski',
+      device: 'skierg',
+    });
+
+    const protocol = toConfiguration(draft)?.protocol;
+
+    // An empty string would be a declared condition that says nothing, and two
+    // tests would then differ by a blank.
+    expect(protocol).toEqual({ key: 'erg_1000m_ski', device: 'skierg' });
+  });
+
+  it('reads a decimal distance the way a German keyboard produces one', () => {
+    const draft = withProtocol(withMeasurement(), {
+      ...EMPTY_PROTOCOL,
+      key: 'sprint',
+      distanceM: '402,3',
+    });
+
+    expect(toConfiguration(draft)?.protocol?.distanceM).toBeCloseTo(402.3, 5);
+  });
+
+  it('drops a distance that is not one rather than losing the configuration', () => {
+    const draft = withProtocol(withMeasurement(), {
+      ...EMPTY_PROTOCOL,
+      key: 'run',
+      distanceM: 'ungefähr weit',
+    });
+
+    const configuration = toConfiguration(draft);
+
+    expect(configuration).not.toBeNull();
+    expect(configuration?.protocol).toEqual({ key: 'run' });
+  });
+
+  it('survives a round trip through a stored configuration', () => {
+    const draft = withProtocol(withMeasurement(), {
+      key: 'run_1km_bahn',
+      label: '1 km Bahn',
+      distanceM: '1000',
+      division: 'open',
+      device: '',
+      venue: 'halle_a',
+      betterDirection: 'lower',
+    });
+
+    const stored = toConfiguration(draft);
+    expect(stored).not.toBeNull();
+
+    const reopened = draftFromConfiguration('strength', stored!);
+
+    expect(reopened.protocol).toEqual({
+      key: 'run_1km_bahn',
+      label: '1 km Bahn',
+      distanceM: '1000',
+      division: 'open',
+      device: '',
+      venue: 'halle_a',
+      betterDirection: 'lower',
+    });
+  });
+
+  it('slugs a label the way a dimension key is slugged', () => {
+    expect(toProtocolKey('1 km Bahn, frisch')).toBe('1_km_bahn_frisch');
+    expect(toProtocolKey('1km bahn frisch')).toBe('1km_bahn_frisch');
+  });
+
+  it('leaves a template without one', () => {
+    // A template proposes how a test is measured; under which conditions it is
+    // run is this coach's decision and never a shipped default.
+    expect(draftFromTemplateKey('lactate_step_test', 'lactate', () => 'mt_1').protocol).toEqual(
+      EMPTY_PROTOCOL,
+    );
+  });
+});
+
+/**
+ * The standardised time trials.
+ *
+ * A template that names a movement and its conditions has to arrive in the
+ * draft as a *complete* test — otherwise the coach is asked to reconstruct the
+ * standard by hand, which is what the template exists to prevent.
+ */
+describe('the standardised templates', () => {
+  const ids: Record<string, string> = { duration: 'mt_duration' };
+  const exerciseIds: Record<string, string> = { row_erg: 'ex_row', ski_erg: 'ex_ski' };
+
+  const seed = (key: string) =>
+    draftFromTemplateKey(
+      key,
+      'running',
+      (k) => ids[k],
+      (k) => exerciseIds[k],
+    );
+
+  it('arrives with the movement, the distance and the direction filled in', () => {
+    const draft = seed('row_1000m');
+
+    expect(draft.exerciseIds).toEqual(['ex_row']);
+    expect(draft.protocol.label).toBe('1000 m Rudern');
+    expect(draft.protocol.distanceM).toBe('1000');
+    expect(draft.protocol.betterDirection).toBe('lower');
+    expect(toConfiguration(draft)?.protocol?.distanceM).toBe(1000);
+  });
+
+  it('gives the rower and the ski ergometer separate identities', () => {
+    expect(toConfiguration(seed('row_1000m'))?.protocol?.key).not.toBe(
+      toConfiguration(seed('ski_1000m'))?.protocol?.key,
+    );
+  });
+
+  it('separates the fresh kilometre from the compromised one', () => {
+    expect(toConfiguration(seed('run_1km_fresh'))?.protocol?.key).not.toBe(
+      toConfiguration(seed('run_1km_compromised'))?.protocol?.key,
+    );
+  });
+
+  it('names no movement for the runs', () => {
+    // Running is not a catalogue movement, and inventing one to fill this in
+    // would put a row in the exercise catalogue nobody asked for.
+    expect(seed('run_1km_fresh').exerciseIds).toEqual([]);
+  });
+
+  it('drops a movement the workspace does not hold rather than referring to nothing', () => {
+    const draft = draftFromTemplateKey(
+      'row_1000m',
+      'running',
+      (k) => ids[k],
+      () => undefined,
+    );
+
+    expect(draft.exerciseIds).toEqual([]);
+    // The rest of the template still arrives — a missing exercise costs the
+    // exercise, not the test.
+    expect(draft.protocol.distanceM).toBe('1000');
+  });
+
+  it('leaves the older templates exactly as they were', () => {
+    const lactate = draftFromTemplateKey('lactate_step_test', 'lactate', () => 'mt_1');
+
+    expect(lactate.exerciseIds).toEqual([]);
+    expect(lactate.protocol).toEqual(EMPTY_PROTOCOL);
   });
 });

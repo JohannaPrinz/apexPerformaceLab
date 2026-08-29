@@ -7,12 +7,17 @@ import {
   contextOf,
   evaluateReadiness,
   measurementTypeIdsOf,
+  protocolKey,
   readModuleConfiguration,
+  selfComparisons,
   seriesKey,
   validateMeasurementContext,
   validatePassIndex,
+  type BetterDirection,
+  type ComparableReading,
   type ModuleConfiguration,
   type Readiness,
+  type TestProtocol,
 } from '@apex/domain';
 import type { TenantContext } from '@apex/types';
 
@@ -917,6 +922,7 @@ async function comparableMeasurements(
       textValue: true,
       booleanValue: true,
       capturedAt: true,
+      source: true,
       assessmentModule: {
         select: {
           id: true,
@@ -955,6 +961,157 @@ async function comparableMeasurements(
   return { current, rows, exerciseNames };
 }
 
+/** One series of a test, as the overview shows it. */
+export interface SelfComparisonRow {
+  readonly key: string;
+  readonly typeName: string;
+  readonly unit: string;
+  readonly side: string;
+  readonly exerciseName: string | null;
+  readonly passIndex: number | null;
+  readonly context: Record<string, string>;
+  /** How the value came about — typed, derived, from a device or an import. */
+  readonly source: string;
+  readonly current: { value: number; capturedAt: Date };
+  readonly previous: { value: number; capturedAt: Date; moduleId: string } | null;
+  readonly difference: number | null;
+  readonly highest: { value: number; capturedAt: Date; moduleId: string };
+  readonly lowest: { value: number; capturedAt: Date; moduleId: string };
+  readonly best: { value: number; capturedAt: Date; moduleId: string } | null;
+  readonly count: number;
+}
+
+export interface ModuleSelfComparison {
+  /** The protocol this test declared, for the screen to state outright. */
+  readonly protocol: TestProtocol | null;
+  /** Whether a direction was declared — decides if `best` can be filled. */
+  readonly direction: BetterDirection | null;
+  readonly rows: readonly SelfComparisonRow[];
+  /**
+   * Earlier tests of this type that were excluded because their protocol
+   * differs. Named, never silently dropped: "no previous value" and "a previous
+   * value under different conditions" are different statements, and the second
+   * is the one that tells a coach what to fix.
+   */
+  readonly mismatchedProtocols: readonly {
+    moduleId: string;
+    moduleName: string | null;
+    /**
+     * How that test's conditions are named — the coach's own key, never the
+     * canonical comparison string. `null` where it declared none.
+     */
+    protocolName: string | null;
+  }[];
+}
+
+/**
+ * The same test, earlier — and what the numbers did in between.
+ *
+ * ## It adds one condition to the existing rule and no more
+ *
+ * `comparableMeasurements` already finds every standing reading of this test
+ * type for this athlete, and `comparisonKey` already decides which of them are
+ * the same quantity. This adds the protocol: two readings are only put beside
+ * each other when the tests that produced them were carried out the same way.
+ * That is the whole extension — the sameness rule itself is untouched.
+ *
+ * ## Why the mismatches are reported rather than dropped
+ *
+ * A coach who changed the distance between two tests has not lost a comparison,
+ * they have made one. The screen can only say so if this hands the excluded
+ * tests over instead of filtering them into silence.
+ */
+export async function moduleSelfComparison(
+  db: MeasurementDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  moduleId: string,
+): Promise<ModuleSelfComparison | null> {
+  const loaded = await comparableMeasurements(db, tenant, moduleId);
+  if (loaded === null) return null;
+
+  const { rows, exerciseNames } = loaded;
+
+  /** Each involved test's protocol, read once from its own stored payload. */
+  const protocols = new Map<string, TestProtocol | null>();
+  for (const row of rows) {
+    const source = row.assessmentModule;
+    if (protocols.has(source.id)) continue;
+
+    const configuration = readModuleConfiguration(source.payload, source.moduleVersion);
+    protocols.set(source.id, configuration?.protocol ?? null);
+  }
+
+  const own = protocols.get(moduleId) ?? null;
+  const ownKey = protocolKey(own);
+
+  const readings: ComparableReading[] = [];
+  for (const row of rows) {
+    const value = numberOf(row.numericValue);
+    if (value === null) continue;
+
+    readings.push({
+      measurementTypeId: row.measurementTypeId,
+      side: row.side,
+      exerciseId: row.exerciseId,
+      passIndex: row.passIndex,
+      context: row.context,
+      value,
+      capturedAt: row.capturedAt,
+      moduleId: row.assessmentModule.id,
+      protocolKey: protocolKey(protocols.get(row.assessmentModule.id) ?? null),
+      source: row.source,
+    });
+  }
+
+  const direction = own?.betterDirection ?? null;
+  const comparisons = selfComparisons(readings, moduleId, direction);
+
+  const named = new Map(
+    rows.map((row) => [
+      row.measurementTypeId,
+      { name: row.measurementType.name, unit: row.measurementType.unit },
+    ]),
+  );
+
+  const mismatched = [...protocols.entries()]
+    .filter(([id, protocol]) => id !== moduleId && protocolKey(protocol) !== ownKey)
+    .map(([id, protocol]) => ({
+      moduleId: id,
+      moduleName: rows.find((row) => row.assessmentModule.id === id)?.assessmentModule.name ?? null,
+      protocolName: protocol?.label ?? protocol?.key ?? null,
+    }));
+
+  return {
+    protocol: own,
+    direction,
+    mismatchedProtocols: mismatched,
+    rows: comparisons.map((entry): SelfComparisonRow => {
+      const type = named.get(entry.coordinates.measurementTypeId);
+
+      return {
+        key: entry.key,
+        typeName: type?.name ?? 'Unbekannte Messgröße',
+        unit: type?.unit ?? '',
+        side: entry.coordinates.side,
+        exerciseName:
+          entry.coordinates.exerciseId === null
+            ? null
+            : (exerciseNames.get(entry.coordinates.exerciseId) ?? null),
+        passIndex: entry.coordinates.passIndex,
+        context: contextOf(entry.coordinates.context),
+        source: entry.source,
+        current: entry.current,
+        previous: entry.previous,
+        difference: entry.difference,
+        highest: entry.highest,
+        lowest: entry.lowest,
+        best: entry.best,
+        count: entry.count,
+      };
+    }),
+  };
+}
+
 /**
  * A stored numeric value as a number, or `null` when there is none.
  *
@@ -974,12 +1131,14 @@ function numberOf(value: unknown): number | null {
  * One point of a curve: a stage of one test.
  *
  * `loads` carries every **other** numeric quantity this test recorded at the
- * same stage. That is where a load axis comes from: the model has no field for
- * "what this stage demanded" — the schema says a lactate stage "holds one
- * Lactate, one Heart Rate, one RPE and one Pace", so the load of a stage is
- * itself a measurement of that stage. Which of them counts as the load is a
- * professional judgement the model does not record, so the choice is offered
- * rather than guessed.
+ * same stage. That is where a load axis comes from: the load of a stage is
+ * itself a measurement of that stage — a lactate stage "holds one Lactate, one
+ * Heart Rate, one RPE and one Pace".
+ *
+ * Which of them counts as the load **is** recorded, in the configuration's
+ * `loadMeasurementTypeId`. Every other quantity is still offered, because a
+ * coach may want to read the curve against a different axis than the protocol
+ * declared, and because older configurations declare none.
  */
 export interface ChartPoint {
   readonly passIndex: number | null;

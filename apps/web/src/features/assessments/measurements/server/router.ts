@@ -23,6 +23,7 @@ import {
   listMeasurementsForModule,
   measurementChart,
   moduleReadiness,
+  moduleSelfComparison,
   moduleWorkspace,
   recordMeasurement,
   recordMeasurements,
@@ -147,6 +148,22 @@ export const measurementsRouter = createTRPCRouter({
    * two together would make every run of a test pay for a comparison it does
    * not show.
    */
+  /**
+   * The same test, earlier.
+   *
+   * A third read beside `chart` and `derived`, for the same reason those two are
+   * separate: the entry screen never shows it, and a run of a test should not
+   * pay for a query it does not use.
+   */
+  comparison: withPermission('measurement:read')
+    .input(measurementChartSchema)
+    .query(async ({ ctx, input }) => {
+      const found = await moduleSelfComparison(ctx.db, ctx.tenant, input.moduleId);
+      if (!found) throw toError({ reason: 'MODULE_NOT_FOUND' });
+
+      return found;
+    }),
+
   /**
    * What this test computed for itself, or why it could not.
    *

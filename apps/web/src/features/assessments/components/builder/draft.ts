@@ -71,6 +71,58 @@ export interface BuilderDraft {
    */
   readonly derivations: readonly { measurementTypeId: string; method: BodyFatMethod }[];
   readonly notes: string;
+  /**
+   * The conditions this test is carried out under, structured.
+   *
+   * Held as the strings the coach typed rather than as the parsed protocol: a
+   * half-entered distance is a valid thing to be in the middle of typing, and a
+   * draft that refused to hold it could not be edited. `toConfiguration` parses
+   * it, and drops the whole block where the key is missing — a protocol without
+   * a name is not one.
+   */
+  readonly protocol: ProtocolDraft;
+}
+
+/** The protocol as it is typed, before it is a protocol. */
+export interface ProtocolDraft {
+  readonly key: string;
+  /** What the coach reads. Blank falls back to the key on screen. */
+  readonly label: string;
+  readonly distanceM: string;
+  readonly division: string;
+  readonly device: string;
+  readonly venue: string;
+  readonly betterDirection: 'lower' | 'higher' | null;
+}
+
+export const EMPTY_PROTOCOL: ProtocolDraft = {
+  key: '',
+  label: '',
+  distanceM: '',
+  division: '',
+  device: '',
+  venue: '',
+  betterDirection: null,
+};
+
+/**
+ * Turns a display name into a protocol key.
+ *
+ * The same shape as `toDimensionKey`, and for the same reason: a key that
+ * survives being typed twice. "1 km Bahn, frisch" and "1km bahn frisch" must not
+ * become two series.
+ */
+export function toProtocolKey(label: string): string {
+  return label
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 60);
+}
+
+export function withProtocol(draft: BuilderDraft, protocol: ProtocolDraft): BuilderDraft {
+  return { ...draft, protocol };
 }
 
 export function emptyDraft(moduleKey: ModuleKey): BuilderDraft {
@@ -86,6 +138,7 @@ export function emptyDraft(moduleKey: ModuleKey): BuilderDraft {
     loadMeasurementTypeId: null,
     derivations: [],
     notes: '',
+    protocol: EMPTY_PROTOCOL,
   };
 }
 
@@ -104,6 +157,15 @@ export function emptyDraft(moduleKey: ModuleKey): BuilderDraft {
 export function draftFromTemplate(
   template: MeasurementTemplate,
   idForTypeKey: (key: string) => string | undefined,
+  /**
+   * The exercise catalogue, for the templates that name a movement.
+   *
+   * Optional so every existing caller keeps working: a template without
+   * exercises never asks, and one with them yields a draft without them rather
+   * than a reference to nothing — exactly what happens to a measurement type the
+   * workspace does not hold.
+   */
+  idForExerciseKey: (key: string) => string | undefined = () => undefined,
 ): BuilderDraft {
   return {
     // A template names the test unless the coach renames it — "Laktatstufentest"
@@ -116,7 +178,11 @@ export function draftFromTemplate(
 
       return measurementTypeId ? [{ measurementTypeId, role: entry.role }] : [];
     }),
-    exerciseIds: [],
+    exerciseIds: (template.exerciseKeys ?? []).flatMap((key) => {
+      const id = idForExerciseKey(key);
+
+      return id === undefined ? [] : [id];
+    }),
     passes: template.passes,
     recordsSide: template.recordsSide,
     dimensions: template.dimensions.map((dimension) => ({ ...dimension })),
@@ -130,6 +196,20 @@ export function draftFromTemplate(
       return id === undefined ? [] : [{ measurementTypeId: id, method: derivation.method }];
     }),
     notes: '',
+    // Only the standardised templates carry one — for those the conditions *are*
+    // the test. Everything a template does not state stays blank, so nothing is
+    // asserted that nobody chose.
+    protocol:
+      template.protocol === undefined
+        ? EMPTY_PROTOCOL
+        : {
+            ...EMPTY_PROTOCOL,
+            key: template.protocol.key,
+            label: template.protocol.label,
+            distanceM:
+              template.protocol.distanceM === undefined ? '' : String(template.protocol.distanceM),
+            betterDirection: template.protocol.betterDirection ?? null,
+          },
   };
 }
 
@@ -138,10 +218,13 @@ export function draftFromTemplateKey(
   templateKey: string,
   moduleKey: ModuleKey,
   idForTypeKey: (key: string) => string | undefined,
+  idForExerciseKey: (key: string) => string | undefined = () => undefined,
 ): BuilderDraft {
   const template = findMeasurementTemplate(templateKey);
 
-  return template ? draftFromTemplate(template, idForTypeKey) : emptyDraft(moduleKey);
+  return template
+    ? draftFromTemplate(template, idForTypeKey, idForExerciseKey)
+    : emptyDraft(moduleKey);
 }
 
 /** Reopens a stored configuration for editing. */
@@ -164,6 +247,21 @@ export function draftFromConfiguration(
     loadMeasurementTypeId: configuration.loadMeasurementTypeId ?? null,
     derivations: (configuration.derivations ?? []).map((entry) => ({ ...entry })),
     notes: configuration.notes ?? '',
+    protocol:
+      configuration.protocol === undefined
+        ? EMPTY_PROTOCOL
+        : {
+            key: configuration.protocol.key,
+            label: configuration.protocol.label ?? '',
+            distanceM:
+              configuration.protocol.distanceM === undefined
+                ? ''
+                : String(configuration.protocol.distanceM),
+            division: configuration.protocol.division ?? '',
+            device: configuration.protocol.device ?? '',
+            venue: configuration.protocol.venue ?? '',
+            betterDirection: configuration.protocol.betterDirection ?? null,
+          },
   };
 }
 
@@ -351,6 +449,31 @@ export function toDimensionKey(label: string): string {
  * `AssessmentModule.payload` and the same one the procedure re-checks. There is
  * deliberately no second set of rules here to drift from it.
  */
+/**
+ * The typed block as the schema wants it.
+ *
+ * A field left blank is **absent**, never an empty string: `""` would be a
+ * declared condition that says nothing, and two tests would then differ by a
+ * blank. A distance that is not a number is dropped for the same reason —
+ * `moduleConfigurationSchema` refuses it anyway, and refusing the whole
+ * configuration over a typo in an optional field would lose the rest.
+ */
+function protocolOf(draft: ProtocolDraft) {
+  const distance = Number(draft.distanceM.replace(',', '.'));
+
+  return {
+    key: draft.key.trim(),
+    ...(draft.label.trim() === '' ? {} : { label: draft.label.trim() }),
+    ...(draft.distanceM.trim() !== '' && Number.isFinite(distance) && distance > 0
+      ? { distanceM: distance }
+      : {}),
+    ...(draft.division.trim() === '' ? {} : { division: draft.division.trim() }),
+    ...(draft.device.trim() === '' ? {} : { device: draft.device.trim() }),
+    ...(draft.venue.trim() === '' ? {} : { venue: draft.venue.trim() }),
+    ...(draft.betterDirection === null ? {} : { betterDirection: draft.betterDirection }),
+  };
+}
+
 export function toConfiguration(draft: BuilderDraft): ModuleConfiguration | null {
   const parsed = moduleConfigurationSchema.safeParse({
     measurementTypes: draft.measurementTypes,
@@ -366,6 +489,9 @@ export function toConfiguration(draft: BuilderDraft): ModuleConfiguration | null
       : {}),
     ...(draft.derivations.length === 0 ? {} : { derivations: draft.derivations }),
     ...(draft.notes.trim() === '' ? {} : { notes: draft.notes.trim() }),
+    // Dropped whole where it has no key: a protocol is the name of a setup, and
+    // a distance without one names nothing that can be compared.
+    ...(draft.protocol.key.trim() === '' ? {} : { protocol: protocolOf(draft.protocol) }),
   });
 
   return parsed.success ? parsed.data : null;

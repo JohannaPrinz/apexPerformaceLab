@@ -25,6 +25,7 @@ import { AnalysisList } from './analysis-list';
 import { ArchiveModuleButton } from './archive-module-button';
 import { MeasurementChart, type ChartGroupView } from './measurement-chart';
 import { RunTestButton } from './run-test-button';
+import { SelfComparison, type SelfComparisonView } from './self-comparison';
 import {
   findRecorded,
   formatValue,
@@ -76,6 +77,7 @@ export function TestOverview({
   archivedAt,
   charts,
   derived,
+  comparison,
   nextModule,
 }: {
   readonly moduleId: string;
@@ -98,6 +100,8 @@ export function TestOverview({
   readonly charts: readonly ChartGroupView[];
   /** What this test computed for itself, or why it could not. */
   readonly derived: readonly DerivedView[];
+  /** The same test earlier, where earlier ones exist under the same conditions. */
+  readonly comparison: SelfComparisonView | null;
   readonly nextModule: { id: string; label: string } | null;
 }) {
   const typeLabel = MODULE_LABELS_DE[moduleKey as keyof typeof MODULE_LABELS_DE] ?? moduleKey;
@@ -383,6 +387,11 @@ export function TestOverview({
       )}
 
       <DerivedSection derived={derived} types={types} />
+
+      {/* After the values and before the curves: the question "and how does
+          that compare" is the one a coach asks once they have read the numbers,
+          and the diagram is the same question drawn. */}
+      {comparison === null ? null : <SelfComparison comparison={comparison} />}
 
       <MeasurementChart groups={charts} />
 

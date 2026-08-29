@@ -4,7 +4,7 @@ import { useState } from 'react';
 
 import { Badge, Button, Input } from '@apex/ui';
 
-import { TOUCH_BUTTON, TOUCH_FIELD } from '@/components/common/touch';
+import { TOUCH_BUTTON, TOUCH_FIELD, TOUCH_TARGET } from '@/components/common/touch';
 
 import { ExercisePicker } from '../exercise-picker';
 
@@ -14,10 +14,12 @@ import {
   withDimensionValues,
   withExercise,
   withLoadMeasurementType,
+  toProtocolKey,
   withNotes,
   withoutDimension,
   withoutExercise,
   withPasses,
+  withProtocol,
   withRecordsSide,
   type BuilderDraft,
 } from './draft';
@@ -26,6 +28,8 @@ import type { MeasurementTypeOption } from './measurement-picker';
 
 export interface ExerciseOption {
   id: string;
+  /** The catalogue key, so a template can name a movement without an id. */
+  key: string;
   name: string;
   ownedByWorkspace: boolean;
 }
@@ -259,6 +263,8 @@ export function ProtocolStep({
         />
       </section>
 
+      <ProtocolFields draft={draft} onChange={onChange} />
+
       <section className="flex flex-col gap-2">
         <h3 className="text-sm font-medium">Protokollnotizen</h3>
         <p className="text-xs text-muted-foreground">
@@ -274,5 +280,215 @@ export function ProtocolStep({
         />
       </section>
     </div>
+  );
+}
+
+/**
+ * The conditions this test is carried out under.
+ *
+ * ## Why it is asked for here, and why almost nothing is asked
+ *
+ * A test only becomes repeatable once the conditions are written down, and a
+ * comparison between two runs is only honest if both were run the same way. But
+ * most tests need none of this — a caliper measurement has no distance and no
+ * venue — so the screen asks for **one thing**, a name, and puts everything else
+ * behind a disclosure together with the reason to open it.
+ *
+ * A standardised template fills all of it in, and the coach then sees a line of
+ * badges rather than a form.
+ *
+ * ## No technical vocabulary reaches the screen
+ *
+ * The coach types "1 km Bahn, frisch". The comparison identity is derived from
+ * that once, silently, and then **frozen**: renaming afterwards must not cut a
+ * series in half, which is exactly why `protocolKey` ignores the label. The
+ * screen says so, because a coach who renames something is entitled to know
+ * whether it costs them their history.
+ *
+ * ## Nothing here is prefilled by the platform
+ *
+ * No distances, no loads, no repetition counts of its own. What the four
+ * standardised templates carry is part of *those* tests' definition; a test
+ * built by hand starts empty.
+ */
+function ProtocolFields({
+  draft,
+  onChange,
+}: {
+  draft: BuilderDraft;
+  onChange: (draft: BuilderDraft) => void;
+}) {
+  const { protocol } = draft;
+  const set = (patch: Partial<typeof protocol>) =>
+    onChange(withProtocol(draft, { ...protocol, ...patch }));
+
+  const declared = protocol.key.trim() !== '';
+
+  /**
+   * The name, and — the first time only — the identity derived from it.
+   *
+   * Frozen afterwards so a reworded name keeps the series it belongs to. A
+   * genuinely different setup differs in one of the conditions below, and those
+   * do split it.
+   */
+  const rename = (label: string) =>
+    set({ label, ...(protocol.key.trim() === '' ? { key: toProtocolKey(label) } : {}) });
+
+  const conditions = [
+    protocol.distanceM.trim() === '' ? null : `${protocol.distanceM} m`,
+    protocol.division.trim() === '' ? null : protocol.division,
+    protocol.device.trim() === '' ? null : protocol.device,
+    protocol.venue.trim() === '' ? null : protocol.venue,
+    protocol.betterDirection === 'lower'
+      ? 'kleinerer Wert ist das Ziel'
+      : protocol.betterDirection === 'higher'
+        ? 'größerer Wert ist das Ziel'
+        : null,
+  ].filter((entry) => entry !== null);
+
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1">
+        <h3 className="text-sm font-medium">Testbedingungen</h3>
+        <p className="max-w-prose text-xs text-pretty text-muted-foreground">
+          Optional. Benannt wird dieser Test wiederholbar: Ein späterer Test mit denselben
+          Bedingungen wird damit vergleichbar, einer mit abweichenden ausdrücklich nicht. Leer
+          gelassen verhält sich alles wie bisher.
+        </p>
+      </div>
+
+      <label className="flex flex-col gap-1.5 text-sm">
+        <span>Name der Bedingungen</span>
+        <Input
+          className={TOUCH_FIELD}
+          value={protocol.label}
+          placeholder="z. B. 1 km Bahn, frisch"
+          aria-label="Name der Testbedingungen"
+          onChange={(event) => {
+            rename(event.target.value);
+          }}
+        />
+        {declared ? (
+          <span className="text-xs text-muted-foreground">
+            Der Name lässt sich jederzeit ändern, ohne den Vergleich mit früheren Tests zu
+            verlieren.
+          </span>
+        ) : null}
+      </label>
+
+      {!declared ? null : (
+        <>
+          {conditions.length === 0 ? null : (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {conditions.map((entry) => (
+                <Badge key={entry} variant="outline">
+                  {entry}
+                </Badge>
+              ))}
+            </div>
+          )}
+
+          <details className="rounded-md border border-border">
+            <summary className={`${TOUCH_TARGET} flex cursor-pointer items-center px-3 text-sm`}>
+              Weitere Bedingungen
+            </summary>
+
+            <div className="flex flex-col gap-3 border-t border-border px-3 py-3">
+              <p className="max-w-prose text-xs text-pretty text-muted-foreground">
+                Nur ausfüllen, was das Ergebnis tatsächlich verändert. Jede Angabe hier trennt
+                diesen Test von früheren, die sie anders oder gar nicht führen.
+              </p>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="flex flex-col gap-1.5 text-sm">
+                  <span>Distanz in Metern</span>
+                  <Input
+                    className={TOUCH_FIELD}
+                    inputMode="decimal"
+                    value={protocol.distanceM}
+                    aria-label="Distanz in Metern"
+                    onChange={(event) => {
+                      set({ distanceM: event.target.value });
+                    }}
+                  />
+                </label>
+
+                <label className="flex flex-col gap-1.5 text-sm">
+                  <span>Klasse oder Division</span>
+                  <Input
+                    className={TOUCH_FIELD}
+                    value={protocol.division}
+                    aria-label="Klasse oder Division"
+                    onChange={(event) => {
+                      set({ division: event.target.value });
+                    }}
+                  />
+                </label>
+
+                <label className="flex flex-col gap-1.5 text-sm">
+                  <span>Gerät</span>
+                  <Input
+                    className={TOUCH_FIELD}
+                    value={protocol.device}
+                    placeholder="nur wenn es das Ergebnis verändert"
+                    aria-label="Gerät"
+                    onChange={(event) => {
+                      set({ device: event.target.value });
+                    }}
+                  />
+                </label>
+
+                <label className="flex flex-col gap-1.5 text-sm">
+                  <span>Ort</span>
+                  <Input
+                    className={TOUCH_FIELD}
+                    value={protocol.venue}
+                    placeholder="nur wenn er das Ergebnis verändert"
+                    aria-label="Ort"
+                    onChange={(event) => {
+                      set({ venue: event.target.value });
+                    }}
+                  />
+                </label>
+              </div>
+
+              <fieldset className="flex flex-col gap-2">
+                <legend className="text-sm font-medium">Angestrebte Richtung</legend>
+                {/* The only place a direction is ever set, and a person sets it.
+                    It decides one thing: whether one of the two extremes may be
+                    called the best value. It never produces "besser". */}
+                <p className="max-w-prose text-xs text-pretty text-muted-foreground">
+                  Ohne Angabe nennt die Auswertung den höchsten und den niedrigsten Wert. Mit Angabe
+                  darf sie einen davon als Bestwert bezeichnen. Eine Bewertung der Veränderung
+                  findet in keinem Fall statt.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {(
+                    [
+                      { value: null, label: 'Keine Angabe' },
+                      { value: 'lower' as const, label: 'Kleiner ist das Ziel' },
+                      { value: 'higher' as const, label: 'Größer ist das Ziel' },
+                    ] as const
+                  ).map((option) => (
+                    <Button
+                      key={option.label}
+                      type="button"
+                      variant={protocol.betterDirection === option.value ? 'accent' : 'outline'}
+                      className={TOUCH_BUTTON}
+                      aria-pressed={protocol.betterDirection === option.value}
+                      onClick={() => {
+                        set({ betterDirection: option.value });
+                      }}
+                    >
+                      {option.label}
+                    </Button>
+                  ))}
+                </div>
+              </fieldset>
+            </div>
+          </details>
+        </>
+      )}
+    </section>
   );
 }

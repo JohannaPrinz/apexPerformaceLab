@@ -39,9 +39,12 @@ export default async function TestOverviewPage({
 
   // A second read rather than a wider `workspace`: the entry screen needs what
   // this test holds, only the overview needs what came before it.
-  const [charts, derived] = await Promise.all([
+  const [charts, derived, comparison] = await Promise.all([
     api.assessments.measurements.chart({ moduleId }),
     api.assessments.measurements.derived({ moduleId }),
+    // The same test earlier. A third read for the same reason as the other two:
+    // the entry screen never shows it.
+    api.assessments.measurements.comparison({ moduleId }),
   ]);
 
   /**
@@ -89,6 +92,7 @@ export default async function TestOverviewPage({
         archivedAt={workspace.archivedAt}
         charts={charts}
         derived={derived}
+        comparison={comparison}
         nextModule={found === undefined ? null : { id: found.id, label: moduleLabel(found) }}
       />
     </main>

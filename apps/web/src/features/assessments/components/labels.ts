@@ -43,6 +43,7 @@ export const MODULE_LABELS_DE: Readonly<Record<ModuleKey, string>> = {
   sleep: 'Schlaf',
   cycle: 'Zyklus',
   custom: 'Eigener Test',
+  hyrox: 'HYROX',
 };
 
 /**
