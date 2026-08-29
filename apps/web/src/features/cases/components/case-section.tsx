@@ -1,6 +1,6 @@
 import Link from 'next/link';
 
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Share2 } from 'lucide-react';
 
 import { Badge } from '@apex/ui';
 
@@ -50,6 +50,8 @@ export interface CaseAssessment {
   readonly type: string;
   readonly performedAt: Date;
   readonly testCount: number;
+  /** Whether an athlete can currently open this assessment through a link. */
+  readonly shared: boolean;
 }
 
 export function CaseSection({
@@ -127,6 +129,15 @@ export function CaseSection({
                       <span data-numeric>{assessment.performedAt.toLocaleDateString('de-DE')}</span>
                       {' · '}
                       {assessment.testCount} {assessment.testCount === 1 ? 'Test' : 'Tests'}
+                      {assessment.shared ? (
+                        /* Said where the assessments are listed, because "who
+                           can see this" is a question a coach asks about the
+                           roster, not about one screen deep inside it. */
+                        <span className="ml-2 inline-flex items-center gap-1 text-accent">
+                          <Share2 aria-hidden="true" className="size-3.5" />
+                          geteilt
+                        </span>
+                      ) : null}
                     </span>
                   </span>
 

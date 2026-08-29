@@ -4,22 +4,23 @@ import type { PrismaClientInstance } from '@apex/database';
 import { scoped, withTenant } from '@apex/database/tenant';
 import {
   combineReadiness,
-  draftBasisChange,
-  draftFromFacts,
+  contextOf,
+  draftSectionOf,
+  emptyReportDraft,
   evaluateReadiness,
-  generatedTextOf,
+  protocolKey,
   readModuleConfiguration,
+  REPORT_SNAPSHOT_VERSION,
   readReportDraft,
-  summariseAssessment,
-  summariseAssessmentOverall,
+  selfComparisons,
   withDraftText,
-  withRegeneratedText,
+  type ComparableReading,
+  type DraftField,
   type DraftTarget,
+  type ModuleConfiguration,
   type Readiness,
   type ReadinessLevel,
-  type ReportDraft,
-  type SummaryModule,
-  type SummarySection,
+  type ReportSnapshot,
 } from '@apex/domain';
 import type { TenantContext } from '@apex/types';
 
@@ -57,7 +58,7 @@ export interface ModuleLabels {
 
 type ReportDb = Pick<
   PrismaClientInstance,
-  'report' | 'reportModule' | 'assessment' | 'assessmentModule' | 'measurement'
+  'report' | 'reportModule' | 'assessment' | 'assessmentModule' | 'measurement' | 'exercise'
 >;
 
 const reportSelect = {
@@ -108,7 +109,6 @@ export async function createReport(
   tenant: Pick<TenantContext, 'organizationId'>,
   authorCoachId: string,
   { assessmentId, title }: CreateReportInput,
-  labels: ModuleLabels,
 ): Promise<ReportRecord | null> {
   const assessment = await db.assessment.findFirst({
     where: scoped(tenant, { id: assessmentId }),
@@ -116,16 +116,7 @@ export async function createReport(
       id: true,
       modules: {
         where: { archivedAt: null },
-        // Enough to word the draft in the same call: an analysis that had to be
-        // re-read to describe itself could describe a different set of tests
-        // than the one it was created over.
-        select: {
-          id: true,
-          name: true,
-          moduleKey: true,
-          payload: true,
-          moduleVersion: true,
-        },
+        select: { id: true },
         orderBy: [{ createdAt: 'asc' }],
       },
     },
@@ -133,25 +124,49 @@ export async function createReport(
 
   if (!assessment) return null;
 
+  /**
+   * An open analysis is the answer to "create one".
+   *
+   * Idempotent on purpose: completing an assessment asks for an analysis every
+   * time, and a coach who presses the button twice must not end up with two
+   * drafts of the same examination. A *published* analysis does not stop a new
+   * version — that is what versions are for.
+   */
+  const open = await db.report.findFirst({
+    where: scoped(tenant, { assessmentId, status: 'DRAFT' as const }),
+    orderBy: [{ version: 'desc' }],
+    select: reportSelect,
+  });
+
+  if (open) return open;
+
   const latest = await db.report.findFirst({
     where: scoped(tenant, { assessmentId }),
     orderBy: { version: 'desc' },
     select: { version: true },
   });
 
-  // The factual text, written now rather than on first read: a draft is a
-  // document, and a document that only exists while somebody is looking at it
-  // is not one. Nothing here judges — `summariseAssessment` states what was
-  // recorded and the domain tests pin the words it may not use.
-  const modules = await factModules(db, tenant, assessment.modules, labels);
-  const sections = summariseAssessment(modules);
-  const draft = draftFromFacts(
-    summariseAssessmentOverall(modules),
-    sections.map((section, index) => ({
-      moduleId: assessment.modules[index]?.id ?? '',
-      text: generatedTextOf(section),
-    })),
-  );
+  /**
+   * Which tests the analysis starts on.
+   *
+   * **Only those that recorded something.** A test with no standing value has
+   * nothing to analyse, and writing an inclusion row for it produced the state
+   * this rule exists to end: the selection said "not included" while the
+   * analysis text carried a paragraph for it anyway, because the two read
+   * different things. One rule, one place.
+   *
+   * A skipped or aborted test with values is still included — what matters is
+   * whether anything was recorded, not how far the coach got (§11).
+   */
+  const withValues = await db.measurement.groupBy({
+    by: ['assessmentModuleId'],
+    where: scoped(tenant, {
+      assessmentModuleId: { in: assessment.modules.map((entry) => entry.id) },
+      supersededById: null,
+    }),
+  });
+
+  const recorded = new Set(withValues.map((entry) => entry.assessmentModuleId));
 
   return db.report.create({
     data: withTenant(tenant, {
@@ -160,13 +175,17 @@ export async function createReport(
       title,
       scope: 'ASSESSMENT' as const,
       version: (latest?.version ?? 0) + 1,
-      draft,
+      // Empty: the facts are rendered from the measurements whenever the
+      // analysis is read, and everything else in here is the coach's own words.
+      draft: emptyReportDraft(),
       modules: {
-        create: assessment.modules.map((entry) => ({
-          organizationId: tenant.organizationId,
-          assessmentModuleId: entry.id,
-          included: true,
-        })),
+        create: assessment.modules
+          .filter((entry) => recorded.has(entry.id))
+          .map((entry) => ({
+            organizationId: tenant.organizationId,
+            assessmentModuleId: entry.id,
+            included: true,
+          })),
       },
     }),
     select: reportSelect,
@@ -483,192 +502,162 @@ export async function assessmentAnalysisOverview(
  * `null` where there is no draft: the summary describes a selection, and
  * without a draft there is no selection to describe.
  */
-export async function assessmentSummary(
+/**
+ * The analysis of one assessment, as its own screen reads it.
+ *
+ * ## One read, and why not five
+ *
+ * A test's own screen asks `moduleSelfComparison` for its comparison. Doing that
+ * once per included test would be one query per test plus one per history. This
+ * loads every standing reading of every test type in the assessment **in one
+ * query** and hands the domain the same function the test screen uses. Same
+ * rule, same code, one round trip.
+ *
+ * The rule itself is not restated here. `selfComparisons` decides what belongs
+ * in a series and what a comparison may say; this only supplies the readings.
+ *
+ * ## Why the facts are read and never stored
+ *
+ * They are rendered from the measurements at the moment of reading, so they are
+ * always current and there is nothing to overwrite. What *is* stored is what
+ * only a person can write — the interpretation and the recommendation — and
+ * nothing in this file ever writes into those.
+ */
+
+/** One measured series of one test, with what came before it. */
+export interface EvaluationSeries {
+  readonly key: string;
+  readonly typeName: string;
+  readonly unit: string;
+  readonly side: string;
+  readonly exerciseName: string | null;
+  readonly passIndex: number | null;
+  readonly context: Record<string, string>;
+  readonly source: string;
+  readonly current: { value: number; capturedAt: Date };
+  readonly previous: { value: number; capturedAt: Date } | null;
+  readonly difference: number | null;
+  readonly highest: { value: number; capturedAt: Date };
+  readonly lowest: { value: number; capturedAt: Date };
+  readonly best: { value: number; capturedAt: Date } | null;
+  readonly count: number;
+}
+
+/** Why a test cannot be drawn on. Derivable reasons only — see below. */
+export type EvaluationBlock = 'NO_VALUES' | 'ARCHIVED';
+
+export interface EvaluationModule {
+  readonly moduleId: string;
+  readonly name: string;
+  readonly typeLabel: string;
+  readonly status: string;
+  /**
+   * Why this test is not selectable, or `null` where it is.
+   *
+   * Only reasons the record already knows. A coach's own reason for setting a
+   * test aside — "the hall was at 34 °C" — has nowhere to live: `ReportModule`
+   * carries a boolean and no text. That is named as a gap rather than faked with
+   * a generic sentence.
+   */
+  readonly blocked: EvaluationBlock | null;
+  readonly included: boolean;
+  readonly recorded: number;
+  readonly expected: number;
+  /** Named where the test computes a value rather than asking for it. */
+  readonly derivations: readonly string[];
+  /** The conditions the test declared, so a comparison can be checked. */
+  readonly protocolLabel: string | null;
+  readonly series: readonly EvaluationSeries[];
+  readonly interpretation: string;
+  readonly recommendation: string;
+}
+
+export interface AssessmentEvaluation {
+  readonly reportId: string;
+  readonly version: number;
+  readonly title: string;
+  readonly assessment: {
+    readonly id: string;
+    readonly question: string;
+    readonly status: string;
+    readonly performedAt: Date;
+  };
+  readonly athlete: { readonly id: string; readonly firstName: string; readonly lastName: string };
+  /** Who authored the analysis, for the document and for the message. */
+  readonly coachName: string;
+  /**
+   * The one place the fill state is stated.
+   *
+   * Three numbers, once. The screen this replaced said it seven times in five
+   * different denominators, which left a coach reconciling the page against
+   * itself instead of reading it.
+   */
+  readonly summary: {
+    readonly tests: number;
+    readonly usable: number;
+    readonly included: number;
+    readonly values: number;
+  };
+  readonly modules: readonly EvaluationModule[];
+  readonly overall: { readonly interpretation: string; readonly recommendation: string };
+}
+
+/**
+ * Everything the analysis screen shows, in one read.
+ *
+ * `null` where the assessment does not exist in this workspace, or where no
+ * analysis has been created for it yet — the screen then offers to create one
+ * rather than inventing a report that was never asked for.
+ */
+/**
+ * The first of these that actually says something.
+ *
+ * A blank display name counts as absent, which `??` would not do — it only
+ * skips null and undefined, and a document signed with an empty string is worse
+ * than one signed by a fallback.
+ */
+function firstNonEmpty(...values: readonly (string | null | undefined)[]): string {
+  for (const value of values) {
+    const trimmed = value?.trim() ?? '';
+    if (trimmed !== '') return trimmed;
+  }
+
+  return '';
+}
+
+export async function assessmentEvaluation(
   db: ReportDb,
   tenant: Pick<TenantContext, 'organizationId'>,
   assessmentId: string,
   labels: ModuleLabels,
-): Promise<readonly SummarySection[] | null> {
-  const draft = await db.report.findFirst({
-    where: scoped(tenant, { assessmentId, status: 'DRAFT' as const }),
-    orderBy: [{ version: 'desc' }],
+): Promise<AssessmentEvaluation | null> {
+  const assessment = await db.assessment.findFirst({
+    where: scoped(tenant, { id: assessmentId }),
     select: {
+      id: true,
+      question: true,
+      status: true,
+      performedAt: true,
+      case: {
+        select: { athlete: { select: { id: true, firstName: true, lastName: true } } },
+      },
       modules: {
-        where: { included: true, assessmentModule: { archivedAt: null } },
+        where: { archivedAt: null },
         select: {
-          assessmentModule: {
-            select: {
-              id: true,
-              name: true,
-              moduleKey: true,
-              payload: true,
-              moduleVersion: true,
-            },
-          },
+          id: true,
+          name: true,
+          moduleKey: true,
+          status: true,
+          payload: true,
+          moduleVersion: true,
         },
+        orderBy: [{ createdAt: 'asc' }],
       },
     },
   });
 
-  if (!draft) return null;
+  if (!assessment) return null;
 
-  return factsFor(
-    db,
-    tenant,
-    draft.modules.map((entry) => entry.assessmentModule),
-    labels,
-  );
-}
-
-/** What a draft's included tests look like, as a row this module can read. */
-interface FactModule {
-  id: string;
-  name: string | null;
-  moduleKey: string;
-  payload: unknown;
-  moduleVersion: number;
-}
-
-/**
- * The facts of a set of tests, worded by the domain.
- *
- * One place, because the same numbers are needed twice over: when an analysis
- * is created and its text is written, and every time the screen asks whether
- * those numbers have moved since. Two readers would eventually disagree, and
- * the disagreement would look like a change of basis that never happened.
- */
-async function factsFor(
-  db: ReportDb,
-  tenant: Pick<TenantContext, 'organizationId'>,
-  moduleRows: readonly FactModule[],
-  labels: ModuleLabels,
-): Promise<readonly SummarySection[]> {
-  const modules = await factModules(db, tenant, moduleRows, labels);
-
-  return summariseAssessment(modules);
-}
-
-/** The same, stopping one step earlier — the assessment-wide text needs these. */
-async function factModules(
-  db: ReportDb,
-  tenant: Pick<TenantContext, 'organizationId'>,
-  moduleRows: readonly FactModule[],
-  labels: ModuleLabels,
-): Promise<readonly SummaryModule[]> {
-  const moduleIds = moduleRows.map((entry) => entry.id);
-  if (moduleIds.length === 0) return [];
-
-  const measurements = await db.measurement.findMany({
-    where: scoped(tenant, {
-      assessmentModuleId: { in: moduleIds },
-      // What stands. A corrected reading is history (§13).
-      supersededById: null,
-    }),
-    select: {
-      assessmentModuleId: true,
-      measurementTypeId: true,
-      numericValue: true,
-      passIndex: true,
-      supersededById: true,
-      source: true,
-      measurementType: { select: { name: true, unit: true } },
-    },
-    orderBy: [{ capturedAt: 'asc' }, { id: 'asc' }],
-  });
-
-  return moduleRows.map((assessmentModule) => {
-    const configuration = readModuleConfiguration(
-      assessmentModule.payload,
-      assessmentModule.moduleVersion,
-    );
-    const own = measurements.filter((row) => row.assessmentModuleId === assessmentModule.id);
-    const readiness = configuration
-      ? evaluateReadiness(configuration, own)
-      : { expected: 0, recorded: 0 };
-
-    // The method each computed quantity was produced by, from the configuration
-    // rather than from the sentence stored beside the value: parsing a stored
-    // note back into data would make the summary depend on its own wording.
-    const methods = new Map(
-      (configuration?.derivations ?? []).map((derivation) => [
-        derivation.measurementTypeId,
-        BODY_FAT_METHOD_LABELS[derivation.method] ?? derivation.method,
-      ]),
-    );
-
-    // Grouped by quantity in the order the configuration asks for them, so the
-    // summary reads in the order the test was carried out (§16: order is
-    // configuration).
-    const quantities = (configuration?.measurementTypes ?? []).flatMap((configured) => {
-      const rows = own.filter((row) => row.measurementTypeId === configured.measurementTypeId);
-      const first = rows[0];
-      if (!first) return [];
-
-      const method = methods.get(configured.measurementTypeId);
-
-      return [
-        {
-          name: first.measurementType.name,
-          unit: first.measurementType.unit,
-          values: rows.flatMap((row) => {
-            const parsed = Number(row.numericValue);
-
-            return row.numericValue === null || !Number.isFinite(parsed) ? [] : [parsed];
-          }),
-          ...(method === undefined ? {} : { derivation: { method } }),
-        },
-      ];
-    });
-
-    const name = assessmentModule.name?.trim() ?? '';
-
-    return {
-      name: name === '' ? labels.module(assessmentModule.moduleKey) : name,
-      typeLabel: labels.module(assessmentModule.moduleKey),
-      passes: configuration?.passes ?? 1,
-      recorded: readiness.recorded,
-      expected: readiness.expected,
-      quantities,
-    };
-  });
-}
-
-/** What the analysis section shows and edits. */
-export interface AssessmentDraftView {
-  readonly reportId: string;
-  readonly title: string;
-  readonly version: number;
-  readonly overall: { readonly text: string; readonly generated: boolean };
-  readonly sections: readonly {
-    readonly moduleId: string;
-    /** The test's name, so the screen never has to look one up. */
-    readonly name: string;
-    readonly typeLabel: string;
-    readonly text: string;
-    readonly generated: boolean;
-    /** Whether the values behind it have moved since it was written. */
-    readonly basisChanged: boolean;
-  }[];
-  /** Tests taken into the analysis that have no text yet. */
-  readonly addedModuleNames: readonly string[];
-  /** Sections whose test is no longer drawn on. */
-  readonly removedModuleIds: readonly string[];
-}
-
-/**
- * The draft as the screen needs it: the stored text, plus what has moved.
- *
- * The change flags are computed by comparing what the facts word **today**
- * against what each text was generated from. Nothing is rewritten by asking —
- * that is the whole point. A value that arrived after the analysis was written
- * changes what the screen says, never what the coach typed.
- */
-export async function assessmentDraftView(
-  db: ReportDb,
-  tenant: Pick<TenantContext, 'organizationId'>,
-  assessmentId: string,
-  labels: ModuleLabels,
-): Promise<AssessmentDraftView | null> {
   const report = await db.report.findFirst({
     where: scoped(tenant, { assessmentId, status: 'DRAFT' as const }),
     orderBy: [{ version: 'desc' }],
@@ -677,112 +666,298 @@ export async function assessmentDraftView(
       title: true,
       version: true,
       draft: true,
-      modules: {
-        where: { included: true, assessmentModule: { archivedAt: null } },
-        select: {
-          assessmentModule: {
-            select: { id: true, name: true, moduleKey: true, payload: true, moduleVersion: true },
-          },
-        },
-      },
+      authorCoach: { select: { displayName: true, user: { select: { name: true } } } },
+      modules: { select: { assessmentModuleId: true, included: true } },
     },
   });
 
   if (!report) return null;
 
-  const moduleRows = report.modules.map((entry) => entry.assessmentModule);
-  const modules = await factModules(db, tenant, moduleRows, labels);
-  const summaries = summariseAssessment(modules);
+  const draft = readReportDraft(report.draft) ?? emptyReportDraft();
+  const inclusion = new Map(
+    report.modules.map((entry) => [entry.assessmentModuleId, entry.included]),
+  );
 
-  const fresh = moduleRows.map((row, index) => ({
-    moduleId: row.id,
-    text: generatedTextOf(summaries[index] ?? { name: '', typeLabel: '', sentences: [] }),
-  }));
+  const athleteId = assessment.case.athlete.id;
+  const moduleKeys = [...new Set(assessment.modules.map((entry) => entry.moduleKey))];
 
-  // A report created before drafts existed, or one whose payload cannot be
-  // read, is described from the facts rather than left blank — and still not
-  // written back, because writing on a read is how a draft loses an edit.
-  const stored: ReportDraft =
-    readReportDraft(report.draft) ?? draftFromFacts(summariseAssessmentOverall(modules), fresh);
+  /**
+   * Every standing reading of every test type this assessment covers, for this
+   * athlete — the assessment's own and everything earlier it may be compared
+   * with. One query rather than one per test.
+   */
+  const readings =
+    moduleKeys.length === 0
+      ? []
+      : await db.measurement.findMany({
+          where: scoped(tenant, {
+            supersededById: null,
+            assessmentModule: {
+              moduleKey: { in: moduleKeys },
+              archivedAt: null,
+              assessment: { case: { athleteId } },
+            },
+          }),
+          select: {
+            measurementTypeId: true,
+            side: true,
+            exerciseId: true,
+            passIndex: true,
+            context: true,
+            numericValue: true,
+            capturedAt: true,
+            source: true,
+            assessmentModule: {
+              select: { id: true, moduleKey: true, payload: true, moduleVersion: true },
+            },
+            measurementType: { select: { name: true, unit: true } },
+          },
+          orderBy: [{ capturedAt: 'asc' }, { id: 'asc' }],
+        });
 
-  const change = draftBasisChange(stored, fresh);
-  const changed = new Set(change.changedModuleIds);
-  const named = new Map(modules.map((entry, index) => [moduleRows[index]?.id ?? '', entry]));
+  const exerciseIds = [...new Set(readings.map((row) => row.exerciseId))].filter(
+    (id): id is string => id !== null,
+  );
+  const exercises =
+    exerciseIds.length === 0
+      ? []
+      : await db.exercise.findMany({
+          where: {
+            id: { in: exerciseIds },
+            OR: [{ organizationId: tenant.organizationId }, { organizationId: null }],
+          },
+          select: { id: true, name: true },
+        });
+  const exerciseNames = new Map(exercises.map((exercise) => [exercise.id, exercise.name]));
+
+  /** Each involved test's protocol, read once from its own stored payload. */
+  const configurations = new Map<string, ModuleConfiguration | null>();
+  const protocolOf = (source: {
+    id: string;
+    payload: unknown;
+    moduleVersion: number;
+  }): ModuleConfiguration | null => {
+    if (!configurations.has(source.id)) {
+      configurations.set(source.id, readModuleConfiguration(source.payload, source.moduleVersion));
+    }
+
+    return configurations.get(source.id) ?? null;
+  };
+
+  const comparable: ComparableReading[] = [];
+  for (const row of readings) {
+    const value = row.numericValue === null ? null : Number(row.numericValue.toString());
+    if (value === null || !Number.isFinite(value)) continue;
+
+    comparable.push({
+      measurementTypeId: row.measurementTypeId,
+      side: row.side,
+      exerciseId: row.exerciseId,
+      passIndex: row.passIndex,
+      context: row.context,
+      value,
+      capturedAt: row.capturedAt,
+      moduleId: row.assessmentModule.id,
+      protocolKey: protocolKey(protocolOf(row.assessmentModule)?.protocol ?? null),
+      source: row.source,
+    });
+  }
+
+  const named = new Map(
+    readings.map((row) => [
+      row.measurementTypeId,
+      { name: row.measurementType.name, unit: row.measurementType.unit },
+    ]),
+  );
+
+  const measurementsOf = (moduleId: string) =>
+    readings.filter((row) => row.assessmentModule.id === moduleId);
+
+  const modules = assessment.modules.map((entry): EvaluationModule => {
+    const configuration = protocolOf(entry);
+    const own = measurementsOf(entry.id);
+    const readiness = configuration
+      ? evaluateReadiness(
+          configuration,
+          own.map((row) => ({ ...row, supersededById: null })),
+        )
+      : { level: 'INSUFFICIENT' as const, expected: 0, recorded: 0 };
+
+    const blocked: EvaluationBlock | null = own.length === 0 ? 'NO_VALUES' : null;
+    const section = draftSectionOf(draft, entry.id);
+    const name = (entry.name ?? '').trim();
+
+    const comparisons =
+      blocked !== null
+        ? []
+        : selfComparisons(comparable, entry.id, configuration?.protocol?.betterDirection ?? null);
+
+    return {
+      moduleId: entry.id,
+      name: name === '' ? labels.module(entry.moduleKey) : name,
+      typeLabel: labels.module(entry.moduleKey),
+      status: entry.status,
+      blocked,
+      included: blocked === null && (inclusion.get(entry.id) ?? false),
+      recorded: readiness.recorded,
+      expected: readiness.expected,
+      derivations: (configuration?.derivations ?? []).map(
+        (derivation) => BODY_FAT_METHOD_LABELS[derivation.method] ?? derivation.method,
+      ),
+      protocolLabel: configuration?.protocol?.label ?? configuration?.protocol?.key ?? null,
+      series: comparisons.map((comparison): EvaluationSeries => {
+        const type = named.get(comparison.coordinates.measurementTypeId);
+
+        return {
+          key: comparison.key,
+          typeName: type?.name ?? 'Unbekannte Messgröße',
+          unit: type?.unit ?? '',
+          side: comparison.coordinates.side,
+          exerciseName:
+            comparison.coordinates.exerciseId === null
+              ? null
+              : (exerciseNames.get(comparison.coordinates.exerciseId) ?? null),
+          passIndex: comparison.coordinates.passIndex,
+          context: contextOf(comparison.coordinates.context),
+          source: comparison.source,
+          current: comparison.current,
+          previous: comparison.previous,
+          difference: comparison.difference,
+          highest: comparison.highest,
+          lowest: comparison.lowest,
+          best: comparison.best,
+          count: comparison.count,
+        };
+      }),
+      interpretation: section.interpretation,
+      recommendation: section.recommendation,
+    };
+  });
+
+  const usable = modules.filter((entry) => entry.blocked === null);
 
   return {
     reportId: report.id,
-    title: report.title,
     version: report.version,
-    overall: { text: stored.overall.text, generated: stored.overall.generated },
-    sections: stored.sections.flatMap((section) => {
-      const described = named.get(section.moduleId);
-      // A section whose test is no longer included keeps its text in the record
-      // but leaves the screen: the analysis does not draw on it any more.
-      if (!described) return [];
-
-      return [
-        {
-          moduleId: section.moduleId,
-          name: described.name,
-          typeLabel: described.typeLabel,
-          text: section.text,
-          generated: section.generated,
-          basisChanged: changed.has(section.moduleId),
-        },
-      ];
-    }),
-    addedModuleNames: change.addedModuleIds.map(
-      (moduleId) => named.get(moduleId)?.name ?? 'Ein Test',
-    ),
-    removedModuleIds: change.removedModuleIds,
-  };
-}
-
-/** Loads a draft for writing, with the facts needed to regenerate from. */
-async function draftForWriting(
-  db: ReportDb,
-  tenant: Pick<TenantContext, 'organizationId'>,
-  reportId: string,
-  labels: ModuleLabels,
-) {
-  const report = await db.report.findFirst({
-    where: scoped(tenant, { id: reportId, status: 'DRAFT' as const }),
-    select: {
-      id: true,
-      draft: true,
-      modules: {
-        where: { included: true, assessmentModule: { archivedAt: null } },
-        select: {
-          assessmentModule: {
-            select: { id: true, name: true, moduleKey: true, payload: true, moduleVersion: true },
-          },
-        },
-      },
+    title: report.title,
+    assessment: {
+      id: assessment.id,
+      question: assessment.question,
+      status: assessment.status,
+      performedAt: assessment.performedAt,
     },
-  });
-
-  if (!report) return null;
-
-  const moduleRows = report.modules.map((entry) => entry.assessmentModule);
-  const modules = await factModules(db, tenant, moduleRows, labels);
-  const summaries = summariseAssessment(modules);
-
-  const fresh = moduleRows.map((row, index) => ({
-    moduleId: row.id,
-    text: generatedTextOf(summaries[index] ?? { name: '', typeLabel: '', sentences: [] }),
-  }));
-
-  return {
-    id: report.id,
-    stored:
-      readReportDraft(report.draft) ?? draftFromFacts(summariseAssessmentOverall(modules), fresh),
-    fresh,
-    overall: summariseAssessmentOverall(modules),
+    athlete: assessment.case.athlete,
+    // Optional in the record — a coach may never have filled in a display name,
+    // and a document signed "null" would be worse than one signed by nobody.
+    // An empty display name counts as absent, which is why this is a helper
+    // and not `??` — the coalescing operator would keep the blank.
+    coachName: firstNonEmpty(
+      report.authorCoach.displayName,
+      report.authorCoach.user?.name,
+      'Ihr Coach',
+    ),
+    summary: {
+      tests: modules.length,
+      usable: usable.length,
+      included: modules.filter((entry) => entry.included).length,
+      values: modules.reduce((total, entry) => total + entry.recorded, 0),
+    },
+    modules,
+    overall: draft.overall,
   };
 }
 
 /**
- * Stores what the coach wrote.
+ * Freezes an analysis into a document.
+ *
+ * ## Why the facts are copied rather than referenced
+ *
+ * §2: Reports are snapshots. An athlete opening a link a week later must see
+ * what the coach signed off — not what the record says today. A correction
+ * entered afterwards would otherwise rewrite a document somebody has already
+ * read, and a later change is meant to be a **new version**, which is what the
+ * version column is for.
+ *
+ * ## What the document does not carry
+ *
+ * The assessment's question, which tests were set aside, and how full the
+ * examination was. All three are the coach's working notes about their own
+ * thoroughness, and the first regularly names an injury. The athlete gets the
+ * results and what the coach wrote about them.
+ *
+ * Refuses an analysis with nothing in it: publishing an empty document would
+ * produce a link that opens onto nothing.
+ */
+export async function publishReport(
+  db: ReportDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  reportId: string,
+  labels: ModuleLabels,
+): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'EMPTY' }> {
+  const report = await db.report.findFirst({
+    where: scoped(tenant, { id: reportId, status: 'DRAFT' as const }),
+    select: { id: true, assessmentId: true },
+  });
+
+  if (!report?.assessmentId) return { ok: false, reason: 'NOT_FOUND' };
+
+  const evaluation = await assessmentEvaluation(db, tenant, report.assessmentId, labels);
+  if (!evaluation) return { ok: false, reason: 'NOT_FOUND' };
+
+  const included = evaluation.modules.filter((entry) => entry.included);
+  if (included.length === 0) return { ok: false, reason: 'EMPTY' };
+
+  const publishedAt = new Date();
+  const moment = (point: { value: number; capturedAt: Date }) => ({
+    value: point.value,
+    capturedAt: point.capturedAt.toISOString(),
+  });
+
+  const content: ReportSnapshot = {
+    version: REPORT_SNAPSHOT_VERSION,
+    publishedAt: publishedAt.toISOString(),
+    assessment: { performedAt: evaluation.assessment.performedAt.toISOString() },
+    athlete: {
+      firstName: evaluation.athlete.firstName,
+      lastName: evaluation.athlete.lastName,
+    },
+    coach: { name: evaluation.coachName },
+    modules: included.map((entry) => ({
+      moduleId: entry.moduleId,
+      name: entry.name,
+      typeLabel: entry.typeLabel,
+      protocolLabel: entry.protocolLabel,
+      derivations: [...entry.derivations],
+      series: entry.series.map((row) => ({
+        key: row.key,
+        typeName: row.typeName,
+        unit: row.unit,
+        side: row.side,
+        exerciseName: row.exerciseName,
+        passIndex: row.passIndex,
+        context: row.context,
+        source: row.source,
+        current: moment(row.current),
+        previous: row.previous === null ? null : moment(row.previous),
+        difference: row.difference,
+        best: row.best === null ? null : moment(row.best),
+      })),
+      interpretation: entry.interpretation,
+      recommendation: entry.recommendation,
+    })),
+    overall: evaluation.overall,
+  };
+
+  const { count } = await db.report.updateMany({
+    where: scoped(tenant, { id: reportId, status: 'DRAFT' as const }),
+    data: { status: 'PUBLISHED', publishedAt, content },
+  });
+
+  return count > 0 ? { ok: true } : { ok: false, reason: 'NOT_FOUND' };
+}
+
+/**
+ * Stores one of the coach's texts.
  *
  * `updateMany` with the tenant in the filter, never `update` by id: a bare
  * update would write the row before anyone checked whose workspace it is in.
@@ -794,48 +969,21 @@ export async function updateDraftText(
   tenant: Pick<TenantContext, 'organizationId'>,
   reportId: string,
   target: DraftTarget,
+  field: DraftField,
   text: string,
-  labels: ModuleLabels,
 ): Promise<boolean> {
-  const loaded = await draftForWriting(db, tenant, reportId, labels);
-  if (!loaded) return false;
-
-  const { count } = await db.report.updateMany({
+  const report = await db.report.findFirst({
     where: scoped(tenant, { id: reportId, status: 'DRAFT' as const }),
-    data: { draft: withDraftText(loaded.stored, target, text) },
+    select: { id: true, draft: true },
   });
 
-  return count > 0;
-}
+  if (!report) return false;
 
-/**
- * Regenerates one text, and only that one.
- *
- * The single path in this slice that replaces something a coach may have
- * written, and it runs because they asked for it. Every other text in the draft
- * is carried through untouched.
- */
-export async function regenerateDraftText(
-  db: ReportDb,
-  tenant: Pick<TenantContext, 'organizationId'>,
-  reportId: string,
-  target: DraftTarget,
-  labels: ModuleLabels,
-): Promise<boolean> {
-  const loaded = await draftForWriting(db, tenant, reportId, labels);
-  if (!loaded) return false;
-
-  const text =
-    target.kind === 'overall'
-      ? loaded.overall
-      : loaded.fresh.find((section) => section.moduleId === target.moduleId)?.text;
-
-  // Nothing to regenerate from: the test is not part of this analysis.
-  if (text === undefined) return false;
+  const stored = readReportDraft(report.draft) ?? emptyReportDraft();
 
   const { count } = await db.report.updateMany({
     where: scoped(tenant, { id: reportId, status: 'DRAFT' as const }),
-    data: { draft: withRegeneratedText(loaded.stored, target, text) },
+    data: { draft: withDraftText(stored, target, field, text) },
   });
 
   return count > 0;

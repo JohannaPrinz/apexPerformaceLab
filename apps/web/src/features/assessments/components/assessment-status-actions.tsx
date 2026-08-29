@@ -14,6 +14,7 @@ import {
 import { Button, Dialog, DialogContent, DialogFooter } from '@apex/ui';
 
 import { TOUCH_BUTTON } from '@/components/common/touch';
+import { createAnalysisAction } from '@/features/reports';
 
 import { setAssessmentStatusAction } from '../server/actions';
 
@@ -72,6 +73,24 @@ export function AssessmentStatusActions({
         setError(result.message);
 
         return;
+      }
+
+      /**
+       * Completing an examination brings its analysis into being.
+       *
+       * The same shape as §8's open case: mandatory in the model, never a manual
+       * step. A coach who finishes an assessment has not asked for an empty
+       * screen with a button on it — and the call is idempotent, so pressing
+       * "complete" twice cannot produce two drafts.
+       */
+      if (next === 'COMPLETED') {
+        const created = await createAnalysisAction(assessmentId, 'Auswertung');
+
+        if (created.message) {
+          setError(created.message);
+
+          return;
+        }
       }
 
       setConfirmingAbort(false);
@@ -143,8 +162,11 @@ export function AssessmentStatusActions({
                 ? undefined
                 : 'Es sind noch Tests offen. Schließen Sie sie ab oder überspringen Sie sie.'
             }
+            // Completing leads to the analysis. A status change with no visible
+            // consequence left the coach on the same screen wondering whether
+            // anything had happened — and the analysis is the step that follows.
             onClick={() => {
-              move('COMPLETED');
+              move('COMPLETED', `/assessments/${assessmentId}/auswertung`);
             }}
           >
             <Check aria-hidden="true" className="size-4" />

@@ -1,8 +1,14 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { headers } from 'next/headers';
 
+import type { DraftField } from '@apex/domain';
+
+import { env } from '@/env';
 import { api } from '@/trpc/server';
+
+import { shareMessage } from './share-message';
 
 /**
  * Form entry points for the analysis section.
@@ -81,10 +87,11 @@ export type DraftTargetInput = { kind: 'overall' } | { kind: 'section'; moduleId
 export async function updateDraftTextAction(
   reportId: string,
   target: DraftTargetInput,
+  field: DraftField,
   text: string,
 ): Promise<AnalysisActionState> {
   try {
-    await api.reports.updateDraftText({ reportId, target, text });
+    await api.reports.updateDraftText({ reportId, target, field, text });
   } catch (error) {
     return failed(error, 'Der Text konnte nicht gespeichert werden.');
   }
@@ -93,20 +100,102 @@ export async function updateDraftTextAction(
 }
 
 /**
- * Regenerates one text from the values as they stand.
+ * Freezes the analysis.
  *
- * The only action that replaces something the coach may have written, and it
- * runs because they pressed the button that says so.
+ * The point of no return (§16), so it revalidates: every screen that showed a
+ * draft now shows a document.
  */
-export async function regenerateDraftAction(
+export async function publishReportAction(
+  assessmentId: string,
   reportId: string,
-  target: DraftTargetInput,
 ): Promise<AnalysisActionState> {
   try {
-    await api.reports.regenerateDraftText({ reportId, target });
+    await api.reports.publish({ reportId });
   } catch (error) {
-    return failed(error, 'Der Text konnte nicht neu erzeugt werden.');
+    return failed(error, 'Die Auswertung konnte nicht abgeschlossen werden.');
   }
+
+  revalidatePath(`/assessments/${assessmentId}/auswertung`);
+  revalidatePath(`/assessments/${assessmentId}`);
+
+  return { status: 'idle' };
+}
+
+export interface ShareCreated extends AnalysisActionState {
+  readonly share?: {
+    readonly url: string;
+    /** Shown once. Only its hash is stored; nothing can display it again. */
+    readonly password: string;
+    readonly expiresAt: string;
+    readonly message: { subject: string; text: string; mailto: string };
+  };
+}
+
+/**
+ * Grants access and composes the message that carries it.
+ *
+ * The message is **composed, not sent**: there is no mail transport in this
+ * system and no sender domain has been decided. Handing it to the coach's own
+ * mail client is not a placeholder for that — it puts the coach's own address on
+ * correspondence the athlete already recognises, which no receiving server has
+ * reason to distrust.
+ */
+export async function createShareAction(
+  assessmentId: string,
+  reportId: string,
+  days: number,
+  withOffer: boolean,
+): Promise<ShareCreated> {
+  try {
+    const [share, evaluation] = await Promise.all([
+      api.reports.createShare({ reportId, days }),
+      api.reports.evaluation({ assessmentId }),
+    ]);
+
+    const origin = (await headers()).get('origin') ?? env.NEXT_PUBLIC_APP_URL;
+    const url = `${origin}/geteilt/${share.token}`;
+
+    const message = shareMessage({
+      athleteFirstName: evaluation?.athlete.firstName ?? '',
+      coachName: evaluation?.coachName ?? 'Dein Coach',
+      performedAt: evaluation?.assessment.performedAt ?? new Date(),
+      expiresAt: share.expiresAt,
+      url,
+      withOffer,
+    });
+
+    revalidatePath(`/assessments/${assessmentId}/auswertung`);
+
+    return {
+      status: 'idle',
+      share: {
+        url,
+        password: share.password,
+        expiresAt: share.expiresAt.toISOString(),
+        message: {
+          subject: message.subject,
+          text: message.text,
+          mailto: `mailto:?subject=${encodeURIComponent(message.subject)}&body=${encodeURIComponent(message.text)}`,
+        },
+      },
+    };
+  } catch (error) {
+    return failed(error, 'Der Link konnte nicht erstellt werden.');
+  }
+}
+
+/** Withdraws access. The row survives as part of the audit trail (§17). */
+export async function revokeShareAction(
+  assessmentId: string,
+  shareId: string,
+): Promise<AnalysisActionState> {
+  try {
+    await api.reports.revokeShare({ shareId });
+  } catch (error) {
+    return failed(error, 'Der Zugang konnte nicht zurückgezogen werden.');
+  }
+
+  revalidatePath(`/assessments/${assessmentId}/auswertung`);
 
   return { status: 'idle' };
 }

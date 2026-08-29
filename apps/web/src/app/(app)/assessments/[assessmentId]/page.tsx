@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { TRPCError } from '@trpc/server';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, ArrowRight } from 'lucide-react';
 
 import { assessmentProgress, isAssessmentLive } from '@apex/domain';
 import { Badge, Button } from '@apex/ui';
@@ -19,7 +19,6 @@ import {
   ASSESSMENT_STATUS_LABELS_DE,
   ASSESSMENT_TYPE_LABELS_DE,
 } from '@/features/assessments/components/labels';
-import { AnalysisSection } from '@/features/reports/components/analysis-section';
 import { api } from '@/trpc/server';
 
 import type { Metadata } from 'next';
@@ -50,18 +49,15 @@ export default async function AssessmentPage({
 
   // A configured test is copied into this assessment — a second run of it — or
   // into another assessment of the same athlete.
-  const [siblings, exerciseCatalogue, analysis, draft, athlete] = await Promise.all([
+  const [siblings, exerciseCatalogue, analysis, athlete] = await Promise.all([
     api.assessments.listForAthlete({ athleteId: assessment.athleteId }),
     // The ordinary catalogue procedure — this workspace plus system-wide, and
     // never another tenant's. The dialog picks from what it is given; it does
     // not query and does not decide reachability.
     api.exercises.list({ includeArchived: false, limit: 200, offset: 0 }),
-    // One read for the whole analysis section: which tests have results, which
-    // the draft draws on, and whether an interim analysis is possible. Asking
-    // separately would let the selection disagree with the readiness beside it.
+    // Only the counts the link needs. The analysis itself has its own screen
+    // now, and reading it here would load a page nobody is looking at.
     api.reports.assessmentOverview({ assessmentId }),
-    // Null while no analysis has been started — the text describes a selection.
-    api.reports.assessmentDraft({ assessmentId }),
     // The name for the way back. An existing procedure rather than widening
     // the assessment payload — this is presentation, not part of what an
     // assessment is.
@@ -295,13 +291,33 @@ export default async function AssessmentPage({
         )}
       </section>
 
-      {/* After the tests, because it is the step after them. */}
-      <AnalysisSection
-        assessmentId={assessment.id}
-        overview={analysis}
-        draft={draft}
-        readOnly={assessmentClosed}
-      />
+      {/* After the tests, because it is the step after them — and a link
+          rather than a disclosure: the analysis has a version, will have a
+          published state and a link handed to an athlete, and what earns a URL
+          does not belong folded away at the bottom of another screen. */}
+      <section aria-labelledby="analysis" className="flex flex-col gap-3">
+        <h2 id="analysis" className="text-xl font-semibold">
+          Auswertung
+        </h2>
+
+        <Link
+          href={`/assessments/${assessment.id}/auswertung`}
+          className={`${FOCUS_RING} flex flex-wrap items-center justify-between gap-3 rounded-md border border-border p-4 hover:border-border-strong`}
+        >
+          <span className="flex min-w-0 flex-col gap-0.5">
+            <span className="text-sm font-medium">
+              {analysis.draft === null ? 'Auswertung anlegen' : 'Auswertung öffnen'}
+            </span>
+            <span className="text-xs text-muted-foreground" data-numeric>
+              {analysis.draft === null
+                ? `${String(analysis.modules.filter((entry) => entry.selectable).length)} auswertbare Tests`
+                : `Entwurf · Version ${String(analysis.draft.version)} · ${String(analysis.includedCount)} Tests einbezogen`}
+            </span>
+          </span>
+
+          <ArrowRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+        </Link>
+      </section>
     </main>
   );
 }

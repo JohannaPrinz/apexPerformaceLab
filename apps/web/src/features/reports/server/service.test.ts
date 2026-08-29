@@ -2,10 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   assessmentAnalysisOverview,
-  assessmentDraftView,
-  assessmentSummary,
+  assessmentEvaluation,
   createReport,
-  regenerateDraftText,
   updateDraftText,
   listReportsForAssessment,
   reportReadiness,
@@ -84,6 +82,10 @@ function reportDb(
     reportFound?: boolean;
     moduleFound?: boolean;
     measurements?: MeasurementRow[];
+    /** Which modules hold a standing value. */
+    recorded?: string[];
+    /** An analysis already open for this assessment. */
+    openDraft?: Record<string, unknown> | undefined;
   } = {},
 ) {
   const created: Record<string, unknown>[] = [];
@@ -100,17 +102,25 @@ function reportDb(
   };
 
   const report = {
-    findFirst: vi.fn((args: { select?: Record<string, unknown> }) => {
-      if (options.reportFound === false) return Promise.resolve(null);
-      // The version lookup and the readiness read share one spy; they are told
-      // apart by what they select.
-      if (args.select && 'version' in args.select) return Promise.resolve({ version: 2 });
+    findFirst: vi.fn(
+      (args: { select?: Record<string, unknown>; where?: Record<string, unknown> }) => {
+        // The "is one already open" lookup, told apart by the status it filters
+        // on. It answers null unless a test says an open draft exists.
+        if (args.where?.['status'] === 'DRAFT' && args.select && 'title' in args.select) {
+          return Promise.resolve(options.openDraft ?? null);
+        }
 
-      return Promise.resolve({
-        id: 'rep_1',
-        modules: options.reportModules ?? [{ included: true, assessmentModule: moduleRow() }],
-      });
-    }),
+        if (options.reportFound === false) return Promise.resolve(null);
+        // The version lookup and the readiness read share one spy; they are told
+        // apart by what they select.
+        if (args.select && 'version' in args.select) return Promise.resolve({ version: 2 });
+
+        return Promise.resolve({
+          id: 'rep_1',
+          modules: options.reportModules ?? [{ included: true, assessmentModule: moduleRow() }],
+        });
+      },
+    ),
     findMany: vi.fn(() => Promise.resolve([])),
     create: vi.fn((args: { data: Record<string, unknown> }) => {
       created.push(args.data);
@@ -133,7 +143,16 @@ function reportDb(
 
   const measurement = {
     findMany: vi.fn(() => Promise.resolve(options.measurements ?? [])),
+    // Which tests recorded anything. The creation rule reads this and nothing
+    // else — a test with no standing value gets no inclusion row.
+    groupBy: vi.fn(() =>
+      Promise.resolve(
+        (options.recorded ?? ['mod_1']).map((assessmentModuleId) => ({ assessmentModuleId })),
+      ),
+    ),
   };
+
+  const exercise = { findMany: vi.fn(() => Promise.resolve([])) };
 
   const db = {
     report,
@@ -141,9 +160,20 @@ function reportDb(
     assessment,
     assessmentModule,
     measurement,
+    exercise,
   } as unknown as Parameters<typeof createReport>[0];
 
-  return { db, report, reportModule, assessment, assessmentModule, measurement, created, upserted };
+  return {
+    db,
+    report,
+    reportModule,
+    assessment,
+    assessmentModule,
+    measurement,
+    exercise,
+    created,
+    upserted,
+  };
 }
 
 const argsOf = (spy: { mock: { calls: unknown[][] } }, call = 0) =>
@@ -160,16 +190,10 @@ describe('creating an analysis', () => {
     // carry status, versioning, export and sharing a second time.
     const { db, created } = reportDb();
 
-    return createReport(
-      db,
-      TENANT,
-      'coach_1',
-      {
-        assessmentId: 'ass_1',
-        title: 'Auswertung',
-      },
-      LABELS,
-    ).then(() => {
+    return createReport(db, TENANT, 'coach_1', {
+      assessmentId: 'ass_1',
+      title: 'Auswertung',
+    }).then(() => {
       expect(created[0]).toMatchObject({ scope: 'ASSESSMENT', assessmentId: 'ass_1' });
     });
   });
@@ -177,7 +201,7 @@ describe('creating an analysis', () => {
   it('starts as a draft', async () => {
     const { db, created } = reportDb();
 
-    await createReport(db, TENANT, 'coach_1', { assessmentId: 'ass_1', title: 'A' }, LABELS);
+    await createReport(db, TENANT, 'coach_1', { assessmentId: 'ass_1', title: 'A' });
 
     // The column default is DRAFT, so nothing here may set a status at all.
     expect(created[0]?.['status']).toBeUndefined();
@@ -186,16 +210,18 @@ describe('creating an analysis', () => {
   it('takes the next free version', async () => {
     const { db, created } = reportDb();
 
-    await createReport(db, TENANT, 'coach_1', { assessmentId: 'ass_1', title: 'A' }, LABELS);
+    await createReport(db, TENANT, 'coach_1', { assessmentId: 'ass_1', title: 'A' });
 
     expect(created[0]?.['version']).toBe(3);
   });
 
   it('starts at version one where there is no earlier analysis', async () => {
     const { db, report, created } = reportDb();
-    report.findFirst.mockImplementationOnce(() => Promise.resolve(null));
+    // Two lookups run before the write: is one already open, and what is the
+    // highest version so far. Both answer nothing here.
+    report.findFirst.mockImplementation(() => Promise.resolve(null));
 
-    await createReport(db, TENANT, 'coach_1', { assessmentId: 'ass_1', title: 'A' }, LABELS);
+    await createReport(db, TENANT, 'coach_1', { assessmentId: 'ass_1', title: 'A' });
 
     expect(created[0]?.['version']).toBe(1);
   });
@@ -203,28 +229,32 @@ describe('creating an analysis', () => {
   it('takes authorship from the signed-in coach, never from the request', async () => {
     const { db, created } = reportDb();
 
-    await createReport(db, TENANT, 'coach_1', { assessmentId: 'ass_1', title: 'A' }, LABELS);
+    await createReport(db, TENANT, 'coach_1', { assessmentId: 'ass_1', title: 'A' });
 
     expect(created[0]?.['authorCoachId']).toBe('coach_1');
   });
 
-  it('includes every working test to begin with', async () => {
-    // An analysis of an examination naturally covers what was examined.
-    const { db, created } = reportDb({ assessmentModules: [{ id: 'mod_1' }, { id: 'mod_2' }] });
+  it('includes only the tests that recorded something', async () => {
+    // The rule that ended two rules disagreeing: a test with no standing value
+    // has nothing to analyse, and writing an inclusion row for it produced a
+    // selection that said "not included" beside a text that included it anyway.
+    const { db, created } = reportDb({
+      assessmentModules: [{ id: 'mod_1' }, { id: 'mod_2' }],
+      recorded: ['mod_1'],
+    });
 
-    await createReport(db, TENANT, 'coach_1', { assessmentId: 'ass_1', title: 'A' }, LABELS);
+    await createReport(db, TENANT, 'coach_1', { assessmentId: 'ass_1', title: 'Auswertung' });
 
-    const modules = created[0]?.['modules'] as { create: Record<string, unknown>[] };
+    const rows = (created[0]?.['modules'] as { create: { assessmentModuleId: string }[] }).create;
 
-    expect(modules.create.map((entry) => entry['assessmentModuleId'])).toEqual(['mod_1', 'mod_2']);
-    expect(modules.create.every((entry) => entry['included'] === true)).toBe(true);
+    expect(rows.map((row) => row.assessmentModuleId)).toEqual(['mod_1']);
   });
 
   it('writes the rows rather than relying on their absence', async () => {
     // "Excluded" and "not yet decided" have to stay distinguishable.
     const { db, created } = reportDb();
 
-    await createReport(db, TENANT, 'coach_1', { assessmentId: 'ass_1', title: 'A' }, LABELS);
+    await createReport(db, TENANT, 'coach_1', { assessmentId: 'ass_1', title: 'A' });
 
     expect(created[0]).toHaveProperty('modules');
   });
@@ -234,7 +264,7 @@ describe('creating an analysis', () => {
     // analysis created afterwards must not quietly draw on it again.
     const { db, assessment } = reportDb();
 
-    await createReport(db, TENANT, 'coach_1', { assessmentId: 'ass_1', title: 'A' }, LABELS);
+    await createReport(db, TENANT, 'coach_1', { assessmentId: 'ass_1', title: 'A' });
 
     const select = argsOf(assessment.findFirst).select as {
       modules: { where: Record<string, unknown> };
@@ -243,11 +273,25 @@ describe('creating an analysis', () => {
     expect(select.modules.where).toEqual({ archivedAt: null });
   });
 
+  it('answers with the open analysis rather than making a second one', async () => {
+    // Completing an assessment asks for an analysis every time. A coach who
+    // presses it twice must not end up with two drafts of one examination.
+    const { db, created } = reportDb({ openDraft: { id: 'rep_open', version: 3 } });
+
+    const report = await createReport(db, TENANT, 'coach_1', {
+      assessmentId: 'ass_1',
+      title: 'Auswertung',
+    });
+
+    expect(report?.id).toBe('rep_open');
+    expect(created).toHaveLength(0);
+  });
+
   it('refuses an assessment of another workspace', async () => {
     const { db, report } = reportDb({ assessmentFound: false });
 
     expect(
-      await createReport(db, OTHER, 'coach_1', { assessmentId: 'ass_1', title: 'A' }, LABELS),
+      await createReport(db, OTHER, 'coach_1', { assessmentId: 'ass_1', title: 'A' }),
     ).toBeNull();
     expect(report.create).not.toHaveBeenCalled();
   });
@@ -655,218 +699,100 @@ describe('what an analysis could draw on', () => {
  * The factual summary, at the seam between the database and the pure function
  * that words it.
  */
-describe('summarising what was recorded', () => {
-  const labels = { module: (key: string) => (key === 'lactate' ? 'Laktat' : key) };
-
-  interface SummaryReading {
-    assessmentModuleId: string;
-    measurementTypeId: string;
-    numericValue: number | null;
-    passIndex: number | null;
-    supersededById: string | null;
-    source: string;
-    measurementType: { name: string; unit: string };
-  }
-
-  function summaryDb(options: {
-    draft?: boolean;
-    included?: { id: string; name: string | null; payload: unknown }[];
-    measurements?: SummaryReading[];
-  }) {
-    const report = {
-      findFirst: vi.fn(() =>
-        Promise.resolve(
-          options.draft === false
-            ? null
-            : {
-                modules: (
-                  options.included ?? [
-                    { id: 'mod_1', name: 'Laufband Mai', payload: CONFIGURATION },
-                  ]
-                ).map((entry) => ({
-                  assessmentModule: {
-                    id: entry.id,
-                    name: entry.name,
-                    moduleKey: 'lactate',
-                    payload: entry.payload,
-                    moduleVersion: 2,
-                  },
-                })),
-              },
-        ),
-      ),
-      findMany: vi.fn(() => Promise.resolve([])),
-      create: vi.fn(() => Promise.resolve({})),
-    };
-
-    const measurement = { findMany: vi.fn(() => Promise.resolve(options.measurements ?? [])) };
-
-    const db = {
-      report,
-      measurement,
-      assessment: {},
-      reportModule: {},
-      assessmentModule: {},
-    } as unknown as Parameters<typeof assessmentSummary>[0];
-
-    return { db, report, measurement };
-  }
-
-  const reading = (over: Partial<SummaryReading> = {}): SummaryReading => ({
-    assessmentModuleId: 'mod_1',
-    measurementTypeId: 'mt_lactate',
-    numericValue: 1.2,
-    passIndex: 1,
-    supersededById: null,
-    source: 'MANUAL',
-    measurementType: { name: 'Laktat', unit: 'mmol/L' },
-    ...over,
-  });
-
-  it('says nothing at all while there is no draft', async () => {
-    // The summary describes a selection, and without a draft there is none.
-    const { db } = summaryDb({ draft: false });
-
-    expect(await assessmentSummary(db, TENANT, 'ass_1', labels)).toBeNull();
-  });
-
-  it('describes each included test', async () => {
-    const { db } = summaryDb({
-      measurements: [reading({ passIndex: 1 }), reading({ passIndex: 2, numericValue: 2.6 })],
-    });
-
-    const sections = await assessmentSummary(db, TENANT, 'ass_1', labels);
-
-    expect(sections?.[0]?.name).toBe('Laufband Mai');
-    expect(sections?.[0]?.sentences.join(' ')).toContain('Laktat: 1,2 bis 2,6 mmol/L (2 Werte)');
-  });
-
-  it('asks only for readings that still stand', async () => {
-    const { db, measurement } = summaryDb({ measurements: [] });
-
-    await assessmentSummary(db, TENANT, 'ass_1', labels);
-
-    expect(argsOf(measurement.findMany).where).toMatchObject({ supersededById: null });
-  });
-
-  it('draws only on the tests the draft includes and that are not archived', async () => {
-    const { db, report } = summaryDb({ measurements: [] });
-
-    await assessmentSummary(db, TENANT, 'ass_1', labels);
-
-    const select = argsOf(report.findFirst).select as {
-      modules: { where: Record<string, unknown> };
-    };
-
-    expect(select.modules.where).toEqual({
-      included: true,
-      assessmentModule: { archivedAt: null },
-    });
-  });
-
-  it('falls back to the type where a test has no name', async () => {
-    const { db } = summaryDb({
-      included: [{ id: 'mod_1', name: null, payload: CONFIGURATION }],
-      measurements: [reading()],
-    });
-
-    expect((await assessmentSummary(db, TENANT, 'ass_1', labels))?.[0]?.name).toBe('Laktat');
-  });
-
-  it('names the method of a computed value', async () => {
-    const { db } = summaryDb({
-      included: [
-        {
-          id: 'mod_1',
-          name: 'Körperfett',
-          payload: {
-            ...CONFIGURATION,
-            passes: 1,
-            measurementTypes: [{ measurementTypeId: 'mt_body_fat', role: 'optional' }],
-            derivations: [{ measurementTypeId: 'mt_body_fat', method: 'jackson_pollock_3' }],
-          },
-        },
-      ],
-      measurements: [
-        reading({
-          measurementTypeId: 'mt_body_fat',
-          numericValue: 16.3,
-          passIndex: null,
-          source: 'DERIVED',
-          measurementType: { name: 'Body Fat', unit: '%' },
-        }),
-      ],
-    });
-
-    const sections = await assessmentSummary(db, TENANT, 'ass_1', labels);
-
-    expect(sections?.[0]?.sentences.join(' ')).toContain(
-      'berechnet nach Jackson & Pollock, 3 Punkte',
-    );
-  });
-
-  it('returns nothing to describe where the selection is empty', async () => {
-    const { db, measurement } = summaryDb({ included: [], measurements: [] });
-
-    expect(await assessmentSummary(db, TENANT, 'ass_1', labels)).toEqual([]);
-    expect(measurement.findMany).not.toHaveBeenCalled();
-  });
-
-  it('never reaches outside the workspace', async () => {
-    const { db, report, measurement } = summaryDb({ measurements: [reading()] });
-
-    await assessmentSummary(db, OTHER, 'ass_1', labels);
-
-    expect(argsOf(report.findFirst).where).toMatchObject({ organizationId: 'org_b' });
-    expect(argsOf(measurement.findMany).where).toMatchObject({ organizationId: 'org_b' });
-  });
-});
 
 /**
- * The draft text, at the seam between the database and the pure functions that
- * word it.
+ * The analysis screen's one read.
  *
- * The rule these guard is the one the whole feature turns on: **nothing
- * overwrites what the coach wrote except the coach asking for it.**
+ * Two things are under test that nothing else can catch: that a result keeps the
+ * coordinates which make it readable — side, exercise, stage, context — and that
+ * a test with no values never reaches the analysis, neither as a selectable row
+ * nor as a section of text. The second is the rule that replaced two rules
+ * disagreeing with each other.
  */
-describe('the analysis draft', () => {
-  interface DraftModule {
+
+const DAY = (iso: string) => new Date(`${iso}T09:00:00.000Z`);
+
+interface Reading {
+  measurementTypeId: string;
+  side: string;
+  exerciseId: string | null;
+  passIndex: number | null;
+  context: unknown;
+  numericValue: { toString: () => string } | null;
+  capturedAt: Date;
+  source: string;
+  assessmentModule: { id: string; moduleKey: string; payload: unknown; moduleVersion: number };
+  measurementType: { name: string; unit: string };
+}
+
+/** The configuration the evaluation fixture's readings belong to. */
+const LOAD_CONFIGURATION = {
+  measurementTypes: [{ measurementTypeId: 'mt_load', role: 'required' }],
+  exerciseIds: [],
+  passes: 1,
+  recordsSide: true,
+  dimensions: [],
+};
+
+const reading = (over: Partial<Reading> = {}): Reading => ({
+  measurementTypeId: 'mt_load',
+  side: 'BILATERAL',
+  exerciseId: null,
+  passIndex: null,
+  context: null,
+  numericValue: { toString: () => '100' },
+  capturedAt: DAY('2026-03-01'),
+  source: 'MANUAL',
+  assessmentModule: {
+    id: 'mod_1',
+    moduleKey: 'strength',
+    payload: LOAD_CONFIGURATION,
+    moduleVersion: 2,
+  },
+  measurementType: { name: 'Last', unit: 'kg' },
+  ...over,
+});
+
+function evaluationDb(options: {
+  modules?: {
     id: string;
     name: string | null;
     moduleKey: string;
+    status: string;
     payload: unknown;
     moduleVersion: number;
-  }
+  }[];
+  reportModules?: { assessmentModuleId: string; included: boolean }[];
+  readings?: Reading[];
+  draft?: unknown;
+  reportFound?: boolean;
+  exercises?: { id: string; name: string }[];
+}) {
+  const modules = options.modules ?? [
+    {
+      id: 'mod_1',
+      name: 'Krafttest',
+      moduleKey: 'strength',
+      status: 'COMPLETED',
+      payload: LOAD_CONFIGURATION,
+      moduleVersion: 2,
+    },
+  ];
 
-  const draftModule = (over: Partial<DraftModule> = {}): DraftModule => ({
-    id: 'mod_1',
-    name: 'Laufband Mai',
-    moduleKey: 'lactate',
-    payload: CONFIGURATION,
-    moduleVersion: 2,
-    ...over,
-  });
-
-  const reading = (over: Record<string, unknown> = {}) => ({
-    assessmentModuleId: 'mod_1',
-    measurementTypeId: 'mt_lactate',
-    numericValue: 1.2,
-    passIndex: 1,
-    supersededById: null,
-    source: 'MANUAL',
-    measurementType: { name: 'Laktat', unit: 'mmol/L' },
-    ...over,
-  });
-
-  function draftDb(options: {
-    modules?: DraftModule[];
-    stored?: unknown;
-    measurements?: Record<string, unknown>[];
-    reportFound?: boolean;
-  }) {
-    const written: Record<string, unknown>[] = [];
-
-    const report = {
+  const db = {
+    assessment: {
+      findFirst: vi.fn(() =>
+        Promise.resolve({
+          id: 'ass_1',
+          question: 'Wie steht es um die Kraft?',
+          status: 'COMPLETED',
+          performedAt: DAY('2026-03-01'),
+          case: { athlete: { id: 'ath_1', firstName: 'Anna', lastName: 'Beispiel' } },
+          modules,
+        }),
+      ),
+    },
+    report: {
       findFirst: vi.fn(() =>
         Promise.resolve(
           options.reportFound === false
@@ -875,300 +801,318 @@ describe('the analysis draft', () => {
                 id: 'rep_1',
                 title: 'Auswertung',
                 version: 1,
-                draft: options.stored ?? null,
-                modules: (options.modules ?? [draftModule()]).map((entry) => ({
-                  assessmentModule: entry,
-                })),
+                draft: options.draft ?? null,
+                authorCoach: { displayName: 'Johanna Prinz', user: { name: 'Johanna' } },
+                modules:
+                  options.reportModules ??
+                  modules.map((entry) => ({ assessmentModuleId: entry.id, included: true })),
               },
         ),
       ),
-      findMany: vi.fn(() => Promise.resolve([])),
-      create: vi.fn(() => Promise.resolve({})),
-      updateMany: vi.fn((args: Record<string, unknown>) => {
-        written.push(args);
+      updateMany: vi.fn(() => Promise.resolve({ count: 1 })),
+    },
+    measurement: { findMany: vi.fn(() => Promise.resolve(options.readings ?? [])) },
+    exercise: { findMany: vi.fn(() => Promise.resolve(options.exercises ?? [])) },
+  } as unknown as Parameters<typeof assessmentEvaluation>[0];
 
-        return Promise.resolve({ count: 1 });
-      }),
-    };
+  return db;
+}
 
-    const measurement = { findMany: vi.fn(() => Promise.resolve(options.measurements ?? [])) };
+describe('the analysis screen read', () => {
+  it('offers to start one where none exists', async () => {
+    const found = await assessmentEvaluation(
+      evaluationDb({ reportFound: false }),
+      TENANT,
+      'ass_1',
+      LABELS,
+    );
 
-    const db = {
-      report,
-      measurement,
-      assessment: {},
-      reportModule: {},
-      assessmentModule: {},
-    } as unknown as Parameters<typeof assessmentDraftView>[0];
-
-    return { db, report, measurement, written };
-  }
-
-  const storedDraft = (over: Record<string, unknown> = {}) => ({
-    version: 1,
-    overall: { text: 'Gesamt.', generated: true, basis: 'Gesamt.' },
-    sections: [{ moduleId: 'mod_1', text: 'Alt.', generated: true, basis: 'Alt.' }],
-    ...over,
+    expect(found).toBeNull();
   });
 
-  const writtenDraft = (written: Record<string, unknown>[]) =>
-    (written[0]?.['data'] as { draft: Record<string, unknown> }).draft;
-
-  describe('reading it', () => {
-    it('says nothing while no analysis has been started', async () => {
-      const { db } = draftDb({ reportFound: false });
-
-      expect(await assessmentDraftView(db, TENANT, 'ass_1', LABELS)).toBeNull();
-    });
-
-    it('returns what was stored, not what the facts say today', async () => {
-      const { db } = draftDb({ stored: storedDraft(), measurements: [reading()] });
-
-      const view = await assessmentDraftView(db, TENANT, 'ass_1', LABELS);
-
-      expect(view?.sections[0]?.text).toBe('Alt.');
-      expect(view?.overall.text).toBe('Gesamt.');
-    });
-
-    it('names the test each section describes', async () => {
-      const { db } = draftDb({ stored: storedDraft(), measurements: [reading()] });
-
-      const view = await assessmentDraftView(db, TENANT, 'ass_1', LABELS);
-
-      expect(view?.sections[0]).toMatchObject({ name: 'Laufband Mai', typeLabel: 'Laktat' });
-    });
-
-    it('reports that the values have moved since the text was written', async () => {
-      // The basis is compared, never the coach's wording.
-      const { db } = draftDb({ stored: storedDraft(), measurements: [reading()] });
-
-      expect(
-        (await assessmentDraftView(db, TENANT, 'ass_1', LABELS))?.sections[0]?.basisChanged,
-      ).toBe(true);
-    });
-
-    it('reports no change where the facts still word the same text', async () => {
-      const { db, report } = draftDb({ measurements: [reading()] });
-      const generated = (await assessmentDraftView(db, TENANT, 'ass_1', LABELS))?.sections[0]?.text;
-
-      const again = draftDb({
-        stored: storedDraft({
-          sections: [{ moduleId: 'mod_1', text: generated, generated: true, basis: generated }],
-        }),
-        measurements: [reading()],
-      });
-
-      expect(
-        (await assessmentDraftView(again.db, TENANT, 'ass_1', LABELS))?.sections[0]?.basisChanged,
-      ).toBe(false);
-      expect(report.updateMany).not.toHaveBeenCalled();
-    });
-
-    it('names a test taken into the analysis after the draft was written', async () => {
-      const { db } = draftDb({
-        modules: [draftModule(), draftModule({ id: 'mod_2', name: 'Kraft QA' })],
-        stored: storedDraft(),
-        measurements: [reading()],
-      });
-
-      const view = await assessmentDraftView(db, TENANT, 'ass_1', LABELS);
-
-      expect(view?.addedModuleNames).toEqual(['Kraft QA']);
-    });
-
-    it('drops a section whose test is no longer drawn on', async () => {
-      const { db } = draftDb({
-        stored: storedDraft({
-          sections: [
-            { moduleId: 'mod_1', text: 'Alt.', generated: true, basis: 'Alt.' },
-            { moduleId: 'mod_gone', text: 'Weg.', generated: true, basis: 'Weg.' },
-          ],
-        }),
-        measurements: [reading()],
-      });
-
-      const view = await assessmentDraftView(db, TENANT, 'ass_1', LABELS);
-
-      expect(view?.sections.map((section) => section.moduleId)).toEqual(['mod_1']);
-      expect(view?.removedModuleIds).toEqual(['mod_gone']);
-    });
-
-    it('describes an analysis written before drafts existed without writing to it', async () => {
-      const { db, report } = draftDb({ stored: null, measurements: [reading()] });
-
-      const view = await assessmentDraftView(db, TENANT, 'ass_1', LABELS);
-
-      expect(view?.sections[0]?.text).toContain('Laktat: 1,2 mmol/L');
-      // Writing on a read is how a draft loses an edit.
-      expect(report.updateMany).not.toHaveBeenCalled();
-    });
-
-    it('never reaches outside the workspace', async () => {
-      const { db, report, measurement } = draftDb({ measurements: [reading()] });
-
-      await assessmentDraftView(db, OTHER, 'ass_1', LABELS);
-
-      expect(argsOf(report.findFirst).where).toMatchObject({
-        organizationId: 'org_b',
-        status: 'DRAFT',
-      });
-      expect(argsOf(measurement.findMany).where).toMatchObject({ organizationId: 'org_b' });
-    });
-
-    it('draws only on included, unarchived tests', async () => {
-      const { db, report } = draftDb({ measurements: [] });
-
-      await assessmentDraftView(db, TENANT, 'ass_1', LABELS);
-
-      const select = argsOf(report.findFirst).select as {
-        modules: { where: Record<string, unknown> };
-      };
-
-      expect(select.modules.where).toEqual({
-        included: true,
-        assessmentModule: { archivedAt: null },
-      });
-    });
-  });
-
-  describe('the coach writing into it', () => {
-    it('stores the text and drops the generated marking', async () => {
-      const { db, written } = draftDb({ stored: storedDraft(), measurements: [reading()] });
-
-      await updateDraftText(
-        db,
-        TENANT,
-        'rep_1',
-        { kind: 'section', moduleId: 'mod_1' },
-        'Eigener Text.',
-        LABELS,
-      );
-
-      const draft = writtenDraft(written) as { sections: Record<string, unknown>[] };
-
-      expect(draft.sections[0]).toMatchObject({ text: 'Eigener Text.', generated: false });
-    });
-
-    it('leaves every other text as it was', async () => {
-      const { db, written } = draftDb({ stored: storedDraft(), measurements: [reading()] });
-
-      await updateDraftText(
-        db,
-        TENANT,
-        'rep_1',
-        { kind: 'overall' },
-        'Meine Einschätzung.',
-        LABELS,
-      );
-
-      const draft = writtenDraft(written) as {
-        overall: Record<string, unknown>;
-        sections: Record<string, unknown>[];
-      };
-
-      expect(draft.overall).toMatchObject({ text: 'Meine Einschätzung.', generated: false });
-      expect(draft.sections[0]).toMatchObject({ text: 'Alt.', generated: true });
-    });
-
-    it('writes through the tenant filter, never by id alone', async () => {
-      const { db, written } = draftDb({ stored: storedDraft(), measurements: [reading()] });
-
-      await updateDraftText(db, OTHER, 'rep_1', { kind: 'overall' }, 'Text.', LABELS);
-
-      expect(written[0]?.['where']).toMatchObject({
-        id: 'rep_1',
-        organizationId: 'org_b',
-        status: 'DRAFT',
-      });
-    });
-
-    it('refuses an analysis of another workspace', async () => {
-      const { db, report } = draftDb({ reportFound: false });
-
-      expect(await updateDraftText(db, OTHER, 'rep_1', { kind: 'overall' }, 'Text.', LABELS)).toBe(
-        false,
-      );
-      expect(report.updateMany).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('regenerating one text', () => {
-    const edited = () =>
-      storedDraft({
-        overall: { text: 'Meine Einschätzung.', generated: false, basis: 'Gesamt.' },
-        sections: [
-          { moduleId: 'mod_1', text: 'Mein Text.', generated: false, basis: 'Alt.' },
-          { moduleId: 'mod_2', text: 'Auch meiner.', generated: false, basis: 'Alt 2.' },
+  it('keeps the exercise, so two lifts never collapse into one row', async () => {
+    // The failure this rule exists for: a strength test over two movements read
+    // back as "Last: 60 bis 120 kg", with nothing saying which was which.
+    const found = await assessmentEvaluation(
+      evaluationDb({
+        exercises: [
+          { id: 'ex_squat', name: 'Kniebeuge' },
+          { id: 'ex_bench', name: 'Bankdrücken' },
         ],
-      });
+        readings: [
+          reading({ exerciseId: 'ex_squat', numericValue: { toString: () => '120' } }),
+          reading({ exerciseId: 'ex_bench', numericValue: { toString: () => '60' } }),
+        ],
+      }),
+      TENANT,
+      'ass_1',
+      LABELS,
+    );
 
-    it('replaces only the text it was asked for', async () => {
-      const { db, written } = draftDb({
-        modules: [draftModule(), draftModule({ id: 'mod_2', name: 'Kraft QA' })],
-        stored: edited(),
-        measurements: [reading()],
-      });
+    const series = found?.modules[0]?.series ?? [];
 
-      await regenerateDraftText(
-        db,
-        TENANT,
-        'rep_1',
-        { kind: 'section', moduleId: 'mod_1' },
-        LABELS,
-      );
+    expect(series).toHaveLength(2);
+    expect(series.map((entry) => entry.exerciseName).sort()).toEqual(['Bankdrücken', 'Kniebeuge']);
+    expect(series.map((entry) => entry.current.value).sort((a, b) => a - b)).toEqual([60, 120]);
+  });
 
-      const draft = writtenDraft(written) as {
-        overall: Record<string, unknown>;
-        sections: Record<string, unknown>[];
-      };
+  it('keeps the side, so a left and a right value stay two results', async () => {
+    const found = await assessmentEvaluation(
+      evaluationDb({
+        readings: [
+          reading({ side: 'LEFT', numericValue: { toString: () => '38' } }),
+          reading({ side: 'RIGHT', numericValue: { toString: () => '45' } }),
+        ],
+      }),
+      TENANT,
+      'ass_1',
+      LABELS,
+    );
 
-      expect(draft.sections[0]).toMatchObject({ generated: true });
-      expect(draft.sections[0]?.['text']).toContain('Laktat: 1,2 mmol/L');
-      // The coach's other paragraphs stand.
-      expect(draft.sections[1]).toMatchObject({ text: 'Auch meiner.', generated: false });
-      expect(draft.overall).toMatchObject({ text: 'Meine Einschätzung.', generated: false });
+    expect(found?.modules[0]?.series.map((entry) => entry.side).sort()).toEqual(['LEFT', 'RIGHT']);
+  });
+
+  it('keeps the stage and the context dimensions', async () => {
+    const found = await assessmentEvaluation(
+      evaluationDb({
+        readings: [
+          reading({ passIndex: 1, context: { joint: 'Knie' } }),
+          reading({ passIndex: 2, context: { joint: 'Knie' } }),
+          reading({ passIndex: 1, context: { joint: 'Hüfte' } }),
+        ],
+      }),
+      TENANT,
+      'ass_1',
+      LABELS,
+    );
+
+    // Three coordinates, three results — a stage and a joint are not the same
+    // measurement however equal the numbers are.
+    expect(found?.modules[0]?.series).toHaveLength(3);
+    expect(found?.modules[0]?.series[0]?.context).toEqual({ joint: 'Knie' });
+  });
+
+  it('carries the unit, the source and the moment through', async () => {
+    const found = await assessmentEvaluation(
+      evaluationDb({ readings: [reading({ source: 'DERIVED' })] }),
+      TENANT,
+      'ass_1',
+      LABELS,
+    );
+
+    const row = found?.modules[0]?.series[0];
+
+    expect(row?.typeName).toBe('Last');
+    expect(row?.unit).toBe('kg');
+    expect(row?.source).toBe('DERIVED');
+    expect(row?.current.capturedAt).toEqual(DAY('2026-03-01'));
+  });
+
+  it('compares a series with its own earlier reading', async () => {
+    const found = await assessmentEvaluation(
+      evaluationDb({
+        readings: [
+          reading({
+            assessmentModule: {
+              id: 'mod_old',
+              moduleKey: 'strength',
+              payload: LOAD_CONFIGURATION,
+              moduleVersion: 2,
+            },
+            capturedAt: DAY('2026-01-10'),
+            numericValue: { toString: () => '92.5' },
+          }),
+          reading({ numericValue: { toString: () => '100' } }),
+        ],
+      }),
+      TENANT,
+      'ass_1',
+      LABELS,
+    );
+
+    const row = found?.modules[0]?.series[0];
+
+    expect(row?.previous?.value).toBe(92.5);
+    expect(row?.previous?.capturedAt).toEqual(DAY('2026-01-10'));
+    expect(row?.difference).toBe(7.5);
+  });
+
+  it('says nothing about a best value without a declared direction', async () => {
+    const found = await assessmentEvaluation(
+      evaluationDb({ readings: [reading()] }),
+      TENANT,
+      'ass_1',
+      LABELS,
+    );
+
+    expect(found?.modules[0]?.series[0]?.best).toBeNull();
+  });
+
+  it('blocks a test with no values, and never lets it into the analysis', async () => {
+    const found = await assessmentEvaluation(
+      evaluationDb({
+        modules: [
+          {
+            id: 'mod_1',
+            name: 'Krafttest',
+            moduleKey: 'strength',
+            status: 'COMPLETED',
+            payload: LOAD_CONFIGURATION,
+            moduleVersion: 2,
+          },
+          {
+            id: 'mod_2',
+            name: 'Nie erfasst',
+            moduleKey: 'strength',
+            status: 'SKIPPED',
+            payload: LOAD_CONFIGURATION,
+            moduleVersion: 2,
+          },
+        ],
+        // Both carry an inclusion row, as an older analysis would have written.
+        reportModules: [
+          { assessmentModuleId: 'mod_1', included: true },
+          { assessmentModuleId: 'mod_2', included: true },
+        ],
+        readings: [reading()],
+      }),
+      TENANT,
+      'ass_1',
+      LABELS,
+    );
+
+    const empty = found?.modules.find((entry) => entry.moduleId === 'mod_2');
+
+    // One rule, read in one place: blocked, therefore not included, therefore no
+    // section of its own. The state this replaced showed it unticked and
+    // disabled while a paragraph for it stood in the text below.
+    expect(empty?.blocked).toBe('NO_VALUES');
+    expect(empty?.included).toBe(false);
+    expect(empty?.series).toEqual([]);
+    expect(found?.summary.usable).toBe(1);
+    expect(found?.summary.included).toBe(1);
+  });
+
+  it('states the fill state once, as three numbers', async () => {
+    const found = await assessmentEvaluation(
+      evaluationDb({ readings: [reading(), reading({ side: 'LEFT' })] }),
+      TENANT,
+      'ass_1',
+      LABELS,
+    );
+
+    expect(found?.summary).toEqual({ tests: 1, usable: 1, included: 1, values: 2 });
+  });
+
+  it("hands over the coach's texts and writes none of its own", async () => {
+    const found = await assessmentEvaluation(
+      evaluationDb({
+        readings: [reading()],
+        draft: {
+          version: 2,
+          overall: { interpretation: 'Gesamtbild stabil.', recommendation: 'Weiter so.' },
+          sections: [{ moduleId: 'mod_1', interpretation: 'Kraft gehalten.', recommendation: '' }],
+        },
+      }),
+      TENANT,
+      'ass_1',
+      LABELS,
+    );
+
+    expect(found?.overall.interpretation).toBe('Gesamtbild stabil.');
+    expect(found?.modules[0]?.interpretation).toBe('Kraft gehalten.');
+    // Nothing was generated into the empty one.
+    expect(found?.modules[0]?.recommendation).toBe('');
+  });
+
+  it('reads a version 1 draft without losing what the coach wrote', async () => {
+    const found = await assessmentEvaluation(
+      evaluationDb({
+        readings: [reading()],
+        draft: {
+          version: 1,
+          overall: { text: 'Alter Text', generated: false, basis: 'erzeugt' },
+          sections: [{ moduleId: 'mod_1', text: 'Alter Abschnitt', generated: false, basis: 'x' }],
+        },
+      }),
+      TENANT,
+      'ass_1',
+      LABELS,
+    );
+
+    expect(found?.overall.interpretation).toBe('Alter Text');
+    expect(found?.modules[0]?.interpretation).toBe('Alter Abschnitt');
+  });
+
+  it('never leaves the workspace', async () => {
+    const db = evaluationDb({ readings: [reading()] });
+    await assessmentEvaluation(db, OTHER, 'ass_1', LABELS);
+
+    for (const spy of [
+      (db as unknown as { assessment: { findFirst: { mock: { calls: unknown[][] } } } }).assessment
+        .findFirst,
+      (db as unknown as { report: { findFirst: { mock: { calls: unknown[][] } } } }).report
+        .findFirst,
+      (db as unknown as { measurement: { findMany: { mock: { calls: unknown[][] } } } }).measurement
+        .findMany,
+    ]) {
+      const where = (spy.mock.calls[0]?.[0] as { where?: Record<string, unknown> } | undefined)
+        ?.where;
+
+      expect(where?.['organizationId']).toBe('org_b');
+    }
+  });
+});
+
+describe('storing what the coach wrote', () => {
+  it('writes only the addressed text', async () => {
+    const db = evaluationDb({
+      draft: {
+        version: 2,
+        overall: { interpretation: 'A', recommendation: 'B' },
+        sections: [{ moduleId: 'mod_1', interpretation: 'C', recommendation: 'D' }],
+      },
     });
 
-    it('regenerates the assessment-wide text on its own', async () => {
-      const { db, written } = draftDb({ stored: edited(), measurements: [reading()] });
+    await updateDraftText(
+      db,
+      TENANT,
+      'rep_1',
+      { kind: 'section', moduleId: 'mod_1' },
+      'recommendation',
+      'neu',
+    );
 
-      await regenerateDraftText(db, TENANT, 'rep_1', { kind: 'overall' }, LABELS);
+    const written = (
+      (db as unknown as { report: { updateMany: { mock: { calls: unknown[][] } } } }).report
+        .updateMany.mock.calls[0]?.[0] as {
+        data?: { draft?: { sections?: unknown[]; overall?: unknown } };
+      }
+    ).data?.draft;
 
-      const draft = writtenDraft(written) as {
-        overall: Record<string, unknown>;
-        sections: Record<string, unknown>[];
-      };
+    expect(written?.overall).toEqual({ interpretation: 'A', recommendation: 'B' });
+    expect(written?.sections).toEqual([
+      { moduleId: 'mod_1', interpretation: 'C', recommendation: 'neu' },
+    ]);
+  });
 
-      expect(draft.overall).toMatchObject({ generated: true });
-      expect(draft.overall['text']).toContain('Ein Test einbezogen');
-      expect(draft.sections[0]).toMatchObject({ text: 'Mein Text.', generated: false });
-    });
+  it('refuses an analysis of another workspace', async () => {
+    const db = evaluationDb({ reportFound: false });
 
-    it('refuses a test the analysis does not draw on', async () => {
-      const { db, report } = draftDb({ stored: edited(), measurements: [reading()] });
+    expect(
+      await updateDraftText(db, TENANT, 'rep_1', { kind: 'overall' }, 'interpretation', 'x'),
+    ).toBe(false);
+  });
 
-      expect(
-        await regenerateDraftText(
-          db,
-          TENANT,
-          'rep_1',
-          { kind: 'section', moduleId: 'mod_fremd' },
-          LABELS,
-        ),
-      ).toBe(false);
-      expect(report.updateMany).not.toHaveBeenCalled();
-    });
+  it('reaches only a draft, because a published analysis is immutable', async () => {
+    const db = evaluationDb({});
+    await updateDraftText(db, TENANT, 'rep_1', { kind: 'overall' }, 'interpretation', 'x');
 
-    it('writes through the tenant filter', async () => {
-      const { db, written } = draftDb({ stored: edited(), measurements: [reading()] });
+    const where = (
+      (db as unknown as { report: { findFirst: { mock: { calls: unknown[][] } } } }).report
+        .findFirst.mock.calls[0]?.[0] as { where?: Record<string, unknown> }
+    ).where;
 
-      await regenerateDraftText(db, OTHER, 'rep_1', { kind: 'overall' }, LABELS);
-
-      expect(written[0]?.['where']).toMatchObject({
-        id: 'rep_1',
-        organizationId: 'org_b',
-        status: 'DRAFT',
-      });
-    });
+    expect(where?.['status']).toBe('DRAFT');
   });
 });

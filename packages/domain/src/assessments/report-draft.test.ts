@@ -1,262 +1,166 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  draftBasisChange,
-  draftFromFacts,
-  generatedTextOf,
+  draftSectionOf,
+  emptyReportDraft,
+  hasWrittenText,
   readReportDraft,
-  summariseAssessmentOverall,
+  REPORT_DRAFT_VERSION,
   withDraftText,
-  withRegeneratedText,
-  type ReportDraft,
 } from './report-draft';
 
-import type { SummaryModule } from './summary';
-
 /**
- * The working text of an analysis.
+ * The coach's own words.
  *
- * One rule dominates this file and every test below serves it: **nothing
- * overwrites what a coach wrote except a coach asking for it.** Values arriving
- * late, a test being added or removed, the page being reloaded — none of them
- * may touch a sentence a person typed. What changes instead is what the screen
- * *says* about the basis.
+ * Two things have to hold above the rest: what a coach already wrote must
+ * survive a change of shape, and nothing in here may ever be authored by the
+ * system. The second is easy to break by accident — a default value, a seeded
+ * section — and impossible to notice afterwards, because a stored sentence looks
+ * the same whoever wrote it.
  */
 
-const facts = [
-  { moduleId: 'mod_1', text: '16 von 16 Werten erfasst, 4 Stufen.' },
-  { moduleId: 'mod_2', text: '2 von 2 Werten erfasst, einfache Erfassung.' },
-];
+describe('a new draft', () => {
+  it('is empty, because nothing here is written by us', () => {
+    const draft = emptyReportDraft();
 
-const fresh = (draft: ReportDraft = draftFromFacts('Zwei Tests einbezogen.', facts)) => draft;
-
-describe('a draft made from the facts', () => {
-  const draft = fresh();
-
-  it('starts marked as generated throughout', () => {
-    expect(draft.overall.generated).toBe(true);
-    expect(draft.sections.every((section) => section.generated)).toBe(true);
+    expect(draft.version).toBe(REPORT_DRAFT_VERSION);
+    expect(draft.overall).toEqual({ interpretation: '', recommendation: '' });
+    expect(draft.sections).toEqual([]);
   });
 
-  it('holds one section per included test, in order', () => {
-    expect(draft.sections.map((section) => section.moduleId)).toEqual(['mod_1', 'mod_2']);
-  });
-
-  it('remembers what each text was generated from', () => {
-    expect(draft.sections[0]?.basis).toBe(draft.sections[0]?.text);
-    expect(draft.overall.basis).toBe(draft.overall.text);
-  });
-
-  it('carries its shape version, so a later shape is not half-read', () => {
-    expect(draft.version).toBe(1);
-  });
-
-  it('reads back through its own contract', () => {
-    expect(readReportDraft(draft)).toEqual(draft);
-  });
-
-  it('refuses a payload it does not understand', () => {
-    expect(readReportDraft({ version: 99, overall: {}, sections: [] })).toBeNull();
-    expect(readReportDraft(null)).toBeNull();
-    expect(readReportDraft({ sections: [] })).toBeNull();
+  it('reports that nothing has been written', () => {
+    expect(hasWrittenText(emptyReportDraft())).toBe(false);
   });
 });
 
-describe('the coach editing a text', () => {
-  it('keeps what they wrote', () => {
-    const edited = withDraftText(fresh(), { kind: 'section', moduleId: 'mod_1' }, 'Eigener Text.');
+describe('writing', () => {
+  it('stores an interpretation for the analysis as a whole', () => {
+    const draft = withDraftText(
+      emptyReportDraft(),
+      { kind: 'overall' },
+      'interpretation',
+      'Die Seitendifferenz besteht fort.',
+    );
 
-    expect(edited.sections[0]?.text).toBe('Eigener Text.');
+    expect(draft.overall.interpretation).toBe('Die Seitendifferenz besteht fort.');
+    expect(draft.overall.recommendation).toBe('');
   });
 
-  it('drops the generated marking for that text', () => {
-    // A sentence a person wrote must never carry a label saying a machine
-    // produced it.
-    const edited = withDraftText(fresh(), { kind: 'section', moduleId: 'mod_1' }, 'Eigener Text.');
+  it('keeps the two texts of one test apart', () => {
+    let draft = withDraftText(
+      emptyReportDraft(),
+      { kind: 'section', moduleId: 'mod_1' },
+      'interpretation',
+      'Tiefe links eingeschränkt.',
+    );
+    draft = withDraftText(
+      draft,
+      { kind: 'section', moduleId: 'mod_1' },
+      'recommendation',
+      'Sprunggelenksmobilisation, 3× wöchentlich.',
+    );
 
-    expect(edited.sections[0]?.generated).toBe(false);
+    const section = draftSectionOf(draft, 'mod_1');
+
+    expect(section.interpretation).toBe('Tiefe links eingeschränkt.');
+    expect(section.recommendation).toBe('Sprunggelenksmobilisation, 3× wöchentlich.');
+    expect(draft.sections).toHaveLength(1);
   });
 
-  it('leaves every other text exactly as it was', () => {
-    const edited = withDraftText(fresh(), { kind: 'section', moduleId: 'mod_1' }, 'Eigener Text.');
+  it('creates a section on first writing, never up front', () => {
+    // A draft holds the texts that exist. A test the coach never wrote about
+    // leaves no trace, so an empty section can never be mistaken for a
+    // considered blank.
+    const draft = withDraftText(
+      emptyReportDraft(),
+      { kind: 'section', moduleId: 'mod_9' },
+      'recommendation',
+      'Wiederholung in vier Wochen.',
+    );
 
-    expect(edited.sections[1]).toEqual(fresh().sections[1]);
-    expect(edited.overall).toEqual(fresh().overall);
+    expect(draft.sections.map((section) => section.moduleId)).toEqual(['mod_9']);
   });
 
-  it('keeps the basis, so a later change of the values is still noticed', () => {
-    const edited = withDraftText(fresh(), { kind: 'section', moduleId: 'mod_1' }, 'Eigener Text.');
+  it('leaves every other text untouched', () => {
+    let draft = withDraftText(emptyReportDraft(), { kind: 'overall' }, 'interpretation', 'A');
+    draft = withDraftText(draft, { kind: 'section', moduleId: 'mod_1' }, 'interpretation', 'B');
+    draft = withDraftText(draft, { kind: 'section', moduleId: 'mod_2' }, 'interpretation', 'C');
+    draft = withDraftText(draft, { kind: 'section', moduleId: 'mod_1' }, 'interpretation', 'B2');
 
-    expect(edited.sections[0]?.basis).toBe(facts[0]!.text);
+    expect(draft.overall.interpretation).toBe('A');
+    expect(draftSectionOf(draft, 'mod_1').interpretation).toBe('B2');
+    expect(draftSectionOf(draft, 'mod_2').interpretation).toBe('C');
   });
 
-  it('is generated again if the coach types the generated wording back', () => {
-    const edited = withDraftText(fresh(), { kind: 'section', moduleId: 'mod_1' }, facts[0]!.text);
-
-    expect(edited.sections[0]?.generated).toBe(true);
-  });
-
-  it('edits the assessment-wide text the same way', () => {
-    const edited = withDraftText(fresh(), { kind: 'overall' }, 'Gesamteinschätzung.');
-
-    expect(edited.overall).toMatchObject({ text: 'Gesamteinschätzung.', generated: false });
-    expect(edited.sections).toEqual(fresh().sections);
-  });
-
-  it('ignores a section the draft does not hold', () => {
-    const edited = withDraftText(fresh(), { kind: 'section', moduleId: 'mod_x' }, 'Nichts.');
-
-    expect(edited).toEqual(fresh());
-  });
-});
-
-describe('regenerating one text on purpose', () => {
-  const edited = withDraftText(fresh(), { kind: 'section', moduleId: 'mod_1' }, 'Eigener Text.');
-
-  it('overwrites only where it was asked to', () => {
-    // The one path that replaces coach text, and it exists because they asked.
-    const again = withRegeneratedText(edited, { kind: 'section', moduleId: 'mod_1' }, 'Neu.');
-
-    expect(again.sections[0]?.text).toBe('Neu.');
-    expect(again.sections[1]).toEqual(edited.sections[1]);
-    expect(again.overall).toEqual(edited.overall);
-  });
-
-  it('marks the replaced text as generated again', () => {
-    const again = withRegeneratedText(edited, { kind: 'section', moduleId: 'mod_1' }, 'Neu.');
-
-    expect(again.sections[0]).toMatchObject({ generated: true, basis: 'Neu.' });
-  });
-
-  it('never touches another section that the coach edited', () => {
-    const both = withDraftText(edited, { kind: 'section', moduleId: 'mod_2' }, 'Auch eigener.');
-    const again = withRegeneratedText(both, { kind: 'section', moduleId: 'mod_1' }, 'Neu.');
-
-    expect(again.sections[1]).toMatchObject({ text: 'Auch eigener.', generated: false });
-  });
-
-  it('adds a section for a test included after the draft was made', () => {
-    const added = withRegeneratedText(fresh(), { kind: 'section', moduleId: 'mod_3' }, 'Dritter.');
-
-    expect(added.sections.map((section) => section.moduleId)).toEqual(['mod_1', 'mod_2', 'mod_3']);
-  });
-
-  it('regenerates the assessment-wide text on its own', () => {
-    const again = withRegeneratedText(edited, { kind: 'overall' }, 'Neu gesamt.');
-
-    expect(again.overall).toMatchObject({ text: 'Neu gesamt.', generated: true });
-    expect(again.sections).toEqual(edited.sections);
-  });
-});
-
-/**
- * What moved under a finished draft.
- */
-describe('noticing that the basis has changed', () => {
-  it('says nothing while the facts are unchanged', () => {
-    expect(draftBasisChange(fresh(), facts)).toEqual({
-      changedModuleIds: [],
-      addedModuleIds: [],
-      removedModuleIds: [],
+  it('answers with empty texts for a test nobody wrote about', () => {
+    expect(draftSectionOf(emptyReportDraft(), 'mod_unknown')).toEqual({
+      moduleId: 'mod_unknown',
+      interpretation: '',
+      recommendation: '',
     });
   });
 
-  it('notices a value that arrived after the draft was written', () => {
-    const later = [{ ...facts[0]!, text: '17 von 16 Werten erfasst, 4 Stufen.' }, facts[1]!];
+  it('notices as soon as anything at all stands', () => {
+    const draft = withDraftText(
+      emptyReportDraft(),
+      { kind: 'section', moduleId: 'mod_1' },
+      'recommendation',
+      'x',
+    );
 
-    expect(draftBasisChange(fresh(), later).changedModuleIds).toEqual(['mod_1']);
-  });
-
-  it('notices it even where the coach has rewritten the text', () => {
-    // The basis is what is compared, never the coach's wording — otherwise
-    // editing a section would hide every later change to its numbers.
-    const edited = withDraftText(fresh(), { kind: 'section', moduleId: 'mod_1' }, 'Eigener Text.');
-    const later = [{ ...facts[0]!, text: 'Anders.' }, facts[1]!];
-
-    expect(draftBasisChange(edited, later).changedModuleIds).toEqual(['mod_1']);
-  });
-
-  it('notices a test taken into the analysis', () => {
-    const later = [...facts, { moduleId: 'mod_3', text: 'Neu.' }];
-
-    expect(draftBasisChange(fresh(), later).addedModuleIds).toEqual(['mod_3']);
-  });
-
-  it('notices a test set aside', () => {
-    expect(draftBasisChange(fresh(), [facts[0]!]).removedModuleIds).toEqual(['mod_2']);
-  });
-
-  it('changes nothing about the draft by looking', () => {
-    const draft = fresh();
-    const before = structuredClone(draft);
-
-    draftBasisChange(draft, [{ moduleId: 'mod_1', text: 'Anders.' }]);
-
-    expect(draft).toEqual(before);
+    expect(hasWrittenText(draft)).toBe(true);
+    // Whitespace is not writing.
+    expect(
+      hasWrittenText(
+        withDraftText(emptyReportDraft(), { kind: 'overall' }, 'interpretation', '   '),
+      ),
+    ).toBe(false);
   });
 });
 
-describe('the assessment-wide opening', () => {
-  const summaryModule = (over: Partial<SummaryModule> = {}): SummaryModule => ({
-    name: 'Laufband',
-    typeLabel: 'Laktat',
-    passes: 4,
-    recorded: 16,
-    expected: 16,
-    quantities: [],
-    ...over,
+describe('reading what is already stored', () => {
+  it('reads the current shape', () => {
+    const stored = {
+      version: 2,
+      overall: { interpretation: 'A', recommendation: 'B' },
+      sections: [{ moduleId: 'mod_1', interpretation: 'C', recommendation: 'D' }],
+    };
+
+    expect(readReportDraft(stored)?.overall.recommendation).toBe('B');
   });
 
-  it('counts the tests and names their kinds', () => {
-    const text = summariseAssessmentOverall([
-      summaryModule(),
-      summaryModule({ typeLabel: 'Körperzusammensetzung', recorded: 2, expected: 2 }),
-    ]);
+  it('upgrades a version 1 draft without losing a word', () => {
+    // The paragraph a coach edited was their reading of the test — which is
+    // exactly what the interpretation field now means.
+    const legacy = {
+      version: 1,
+      overall: { text: 'Gesamtbild unverändert.', generated: false, basis: 'erzeugt' },
+      sections: [
+        { moduleId: 'mod_1', text: 'Knie links flacher.', generated: false, basis: 'erzeugt' },
+      ],
+    };
 
-    expect(text).toBe(
-      '2 Tests einbezogen: Laktat, Körperzusammensetzung. Insgesamt 18 von 18 Werten erfasst.',
-    );
+    const upgraded = readReportDraft(legacy);
+
+    expect(upgraded?.version).toBe(REPORT_DRAFT_VERSION);
+    expect(upgraded?.overall.interpretation).toBe('Gesamtbild unverändert.');
+    expect(upgraded?.sections[0]?.interpretation).toBe('Knie links flacher.');
   });
 
-  it('names a kind once even where two tests share it', () => {
-    const text = summariseAssessmentOverall([summaryModule(), summaryModule()]);
+  it('leaves the upgraded recommendation empty rather than inventing one', () => {
+    const legacy = {
+      version: 1,
+      overall: { text: 'A', generated: true, basis: 'A' },
+      sections: [{ moduleId: 'mod_1', text: 'B', generated: true, basis: 'B' }],
+    };
 
-    expect(text).toContain('Laktat.');
-    expect(text).not.toContain('Laktat, Laktat');
+    expect(readReportDraft(legacy)?.overall.recommendation).toBe('');
+    expect(readReportDraft(legacy)?.sections[0]?.recommendation).toBe('');
   });
 
-  it('speaks of one test in the singular', () => {
-    expect(summariseAssessmentOverall([summaryModule()])).toContain('Ein Test einbezogen');
-  });
-
-  it('says plainly when nothing is drawn on', () => {
-    expect(summariseAssessmentOverall([])).toBe('Diese Auswertung zieht noch keinen Test heran.');
-  });
-
-  it('never assesses anything', () => {
-    const text = summariseAssessmentOverall([
-      summaryModule(),
-      summaryModule({ typeLabel: 'Kraft', recorded: 3, expected: 12 }),
-    ]).toLowerCase();
-
-    for (const word of [
-      'gut',
-      'schlecht',
-      'auffällig',
-      'unvollständig',
-      'empfehl',
-      'norm',
-      'verbessert',
-    ]) {
-      expect(text, word).not.toContain(word);
-    }
-  });
-});
-
-describe('turning a summary section into text', () => {
-  it('joins the sentences into one paragraph', () => {
-    expect(generatedTextOf({ name: 'A', typeLabel: 'Laktat', sentences: ['Eins.', 'Zwei.'] })).toBe(
-      'Eins. Zwei.',
-    );
+  it('refuses a shape it does not know rather than half-reading it', () => {
+    expect(readReportDraft({ version: 99, overall: {}, sections: [] })).toBeNull();
+    expect(readReportDraft(null)).toBeNull();
+    expect(readReportDraft('a draft')).toBeNull();
   });
 });

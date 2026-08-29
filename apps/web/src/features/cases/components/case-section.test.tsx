@@ -43,6 +43,7 @@ const assessment = (
   type: 'INITIAL',
   performedAt: new Date('2026-03-17T00:00:00.000Z'),
   testCount: 3,
+  shared: false,
   ...over,
 });
 
@@ -128,5 +129,28 @@ describe('an athlete with no engagement at all', () => {
     expect(screen.getByText('Noch kein Betreuungsfall angelegt.')).toBeVisible();
     expect(screen.getByText(/bündelt die Assessments/)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Betreuungsfall anlegen' })).toBeVisible();
+  });
+});
+
+/**
+ * Whether an athlete can open an assessment right now.
+ *
+ * Stated where the assessments are listed, because "who can see this" is a
+ * question a coach asks about the roster — not one they should have to open
+ * three screens to answer.
+ */
+describe('an assessment behind a link', () => {
+  it('is marked as shared', () => {
+    renderSection(performanceCase(), [assessment({ shared: true })]);
+
+    expect(screen.getByText('geteilt')).toBeInTheDocument();
+  });
+
+  it('says nothing where no link is active', () => {
+    // A withdrawn or expired link is history. A badge that stayed would be a
+    // false reassurance in the direction that matters.
+    renderSection(performanceCase(), [assessment({ shared: false })]);
+
+    expect(screen.queryByText('geteilt')).toBeNull();
   });
 });

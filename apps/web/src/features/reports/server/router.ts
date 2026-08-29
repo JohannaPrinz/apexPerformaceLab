@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { TRPCError } from '@trpc/server';
+import { z } from 'zod';
 
 import { AppError } from '@apex/types';
 
@@ -11,22 +12,25 @@ import {
   assessmentAnalysisSchema,
   createReportSchema,
   listReportsSchema,
-  regenerateDraftSchema,
   reportIdSchema,
+  createShareSchema,
+  publishReportSchema,
+  revokeShareSchema,
   setReportModuleSchema,
   updateDraftTextSchema,
 } from '../schemas';
 
 import {
   assessmentAnalysisOverview,
-  assessmentDraftView,
+  assessmentEvaluation,
+  publishReport,
   createReport,
   listReportsForAssessment,
-  regenerateDraftText,
   reportReadiness,
   setReportModuleInclusion,
   updateDraftText,
 } from './service';
+import { createReportShare, revokeShare, sharedAssessmentIds, sharesForReport } from './sharing';
 
 /** The one vocabulary for test types, handed to a service that holds none. */
 const moduleLabels = {
@@ -74,10 +78,16 @@ export const reportsRouter = createTRPCRouter({
    *
    * `null` while no analysis has been started.
    */
-  assessmentDraft: withPermission('report:read')
+  /**
+   * Everything the analysis screen shows, in one read.
+   *
+   * `null` while no analysis exists for this assessment — the screen then offers
+   * to create one rather than showing an analysis nobody asked for.
+   */
+  evaluation: withPermission('report:read')
     .input(assessmentAnalysisSchema)
     .query(({ ctx, input }) =>
-      assessmentDraftView(ctx.db, ctx.tenant, input.assessmentId, moduleLabels),
+      assessmentEvaluation(ctx.db, ctx.tenant, input.assessmentId, moduleLabels),
     ),
 
   /**
@@ -94,8 +104,8 @@ export const reportsRouter = createTRPCRouter({
         ctx.tenant,
         input.reportId,
         input.target,
+        input.field,
         input.text,
-        moduleLabels,
       );
 
       if (!updated) throw notFound('Analysis');
@@ -104,31 +114,71 @@ export const reportsRouter = createTRPCRouter({
     }),
 
   /**
-   * Regenerates one text from the values as they stand now.
-   *
-   * The only path that replaces something the coach may have written, and it
-   * runs because they asked. Every other text is carried through untouched.
+   * Freezes the analysis (§16). The point of no return: a published analysis is
+   * immutable, and a later change is a new version.
    */
-  regenerateDraftText: withPermission('report:write')
-    .input(regenerateDraftSchema)
+  publish: withPermission('report:write')
+    .input(publishReportSchema)
     .mutation(async ({ ctx, input }) => {
-      const updated = await regenerateDraftText(
-        ctx.db,
-        ctx.tenant,
-        input.reportId,
-        input.target,
-        moduleLabels,
-      );
+      const result = await publishReport(ctx.db, ctx.tenant, input.reportId, moduleLabels);
 
-      if (!updated) throw notFound('Analysis');
+      if (!result.ok && result.reason === 'NOT_FOUND') throw notFound('Analysis');
+      if (!result.ok) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Diese Auswertung zieht keinen Test heran.',
+        });
+      }
 
       return { ok: true };
     }),
 
+  /**
+   * Grants access to a published analysis.
+   *
+   * The password comes back **once**, in this response, and is never readable
+   * again — only its hash is stored.
+   */
+  createShare: withCoachPermission('report:write')
+    .input(createShareSchema)
+    .mutation(async ({ ctx, input }) => {
+      const share = await createReportShare(
+        ctx.db,
+        ctx.tenant,
+        ctx.coach.id,
+        input.reportId,
+        input.days,
+      );
+
+      if (!share) throw notFound('Analysis');
+
+      return share;
+    }),
+
+  /** Withdraws access. The row stays as part of the audit trail (§17). */
+  revokeShare: withPermission('report:write')
+    .input(revokeShareSchema)
+    .mutation(async ({ ctx, input }) => {
+      const revoked = await revokeShare(ctx.db, ctx.tenant, input.shareId);
+      if (!revoked) throw notFound('Share');
+
+      return { ok: true };
+    }),
+
+  /** Which of an athlete's assessments are behind an active link right now. */
+  sharedAssessments: withPermission('report:read')
+    .input(z.object({ athleteId: z.string().min(1).max(64) }))
+    .query(({ ctx, input }) => sharedAssessmentIds(ctx.db, ctx.tenant, input.athleteId)),
+
+  /** Every link ever granted for one analysis. */
+  shares: withPermission('report:read')
+    .input(reportIdSchema)
+    .query(({ ctx, input }) => sharesForReport(ctx.db, ctx.tenant, input.reportId)),
+
   create: withCoachPermission('report:write')
     .input(createReportSchema)
     .mutation(async ({ ctx, input }) => {
-      const report = await createReport(ctx.db, ctx.tenant, ctx.coach.id, input, moduleLabels);
+      const report = await createReport(ctx.db, ctx.tenant, ctx.coach.id, input);
       if (!report) throw notFound('Assessment');
 
       return report;

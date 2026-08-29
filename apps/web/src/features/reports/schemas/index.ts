@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { draftFieldSchema, shareDaysSchema } from '@apex/domain';
+
 /**
  * Analysis input.
  *
@@ -74,14 +76,30 @@ export type DraftTargetInput = z.infer<typeof draftTargetSchema>;
 
 export const updateDraftTextSchema = reportIdSchema.extend({
   target: draftTargetSchema,
+  /**
+   * Which of the two texts.
+   *
+   * The reading of the facts and what follows from it are different statements,
+   * and a coach must be able to write one without the other. The vocabulary is
+   * the domain's, so a third field cannot appear here without appearing there.
+   */
+  field: draftFieldSchema,
   /** Generous, but bounded: this is a paragraph, not a document store. */
   text: z.string().max(20_000),
 });
 
 export type UpdateDraftTextInput = z.infer<typeof updateDraftTextSchema>;
 
-export const regenerateDraftSchema = reportIdSchema.extend({
-  target: draftTargetSchema,
-});
+/** Publishing takes nothing but the analysis it freezes. */
+export const publishReportSchema = reportIdSchema;
 
-export type RegenerateDraftInput = z.infer<typeof regenerateDraftSchema>;
+/**
+ * Granting access.
+ *
+ * The password is **not** an input: it is generated, shown once and only its
+ * hash is kept. A coach-chosen one would end up the same for every athlete.
+ */
+export const createShareSchema = reportIdSchema.extend({ days: shareDaysSchema });
+export type CreateShareInput = z.infer<typeof createShareSchema>;
+
+export const revokeShareSchema = z.object({ shareId: z.string().min(1).max(64) });
