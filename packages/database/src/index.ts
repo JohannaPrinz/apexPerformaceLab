@@ -39,6 +39,9 @@ export type {
   // Standing alone in time rather than inside an assessment: what was
   // documented, never a computed cycle phase.
   BleedingEpisodeModel as BleedingEpisode,
+  // A value that stands alone in time (§13): shares the measurement type, and
+  // therefore the unit, with a Measurement — and nothing else.
+  TrackingEntryModel as TrackingEntry,
   PerformanceCaseModel as PerformanceCase,
   GoalModel as Goal,
   AssessmentModel as Assessment,

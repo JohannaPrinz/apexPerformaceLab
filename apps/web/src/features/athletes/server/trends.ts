@@ -39,7 +39,7 @@ import type { TenantContext } from '@apex/types';
 
 type TrendDb = Pick<
   PrismaClientInstance,
-  'measurement' | 'measurementType' | 'bleedingEpisode' | 'exercise'
+  'measurement' | 'measurementType' | 'bleedingEpisode' | 'exercise' | 'trackingEntry'
 >;
 
 /** The one card that is not a measurement type. */
@@ -77,7 +77,7 @@ export interface TrendOption {
 export interface TrendPoint {
   readonly at: Date;
   readonly value: number;
-  /** Which test it came from, so a point can be traced back. */
+  /** Which test it came from, so a point can be traced back. `null` for a self-report. */
   readonly moduleName: string | null;
 }
 
@@ -86,6 +86,17 @@ export interface TrendSeries {
   /** What distinguishes this line from the others in the same chart. */
   readonly label: string;
   readonly points: readonly TrendPoint[];
+  /**
+   * Where the line's readings come from.
+   *
+   * `measured` is a diagnostic finding taken inside an examination; `tracked` is
+   * a self-report or a device reading that stands alone in time. §13 is explicit
+   * that the two do not carry the same evidential weight — so they share an axis,
+   * because they are the same quantity in the same unit, and stay **separate
+   * lines**, because a screen that drew them identically would be hiding which
+   * is which.
+   */
+  readonly origin: 'measured' | 'tracked';
 }
 
 /** A bleeding, as it was written down. Never a computed cycle phase. */
@@ -210,6 +221,44 @@ export async function athleteTrendOptions(
       count: 1,
       exerciseIds: new Set(row.exerciseId === null ? [] : [row.exerciseId]),
     });
+  }
+
+  /**
+   * What the athlete contributed counts too.
+   *
+   * A quantity that only exists as self-reports still has a curve worth
+   * offering — otherwise a coach who asked an athlete to weigh themselves would
+   * find no card for the answers.
+   */
+  const tracked = await db.trackingEntry.groupBy({
+    by: ['measurementTypeId'],
+    where: scoped(tenant, { athleteId: athlete.id }),
+    _count: { _all: true },
+  });
+
+  if (tracked.length > 0) {
+    const types = await db.measurementType.findMany({
+      where: { id: { in: tracked.map((entry) => entry.measurementTypeId) } },
+      select: { id: true, key: true, name: true, unit: true },
+    });
+    const byId = new Map(types.map((type) => [type.id, type]));
+
+    for (const entry of tracked) {
+      const type = byId.get(entry.measurementTypeId);
+      if (!type) continue;
+
+      const found = byKey.get(type.key);
+
+      if (found) found.count += entry._count._all;
+      else {
+        byKey.set(type.key, {
+          name: type.name,
+          unit: type.unit,
+          count: entry._count._all,
+          exerciseIds: new Set(),
+        });
+      }
+    }
   }
 
   // The documentation cards, added where they are not already there.
@@ -367,16 +416,56 @@ export async function athleteTrend(
     if (!described.has(key)) described.set(key, seriesLabel(row, exerciseNames));
   }
 
+  /**
+   * What the athlete or their device contributed.
+   *
+   * One line, never split by coordinates: a tracking entry has no side, no
+   * exercise and no stage — it is a quantity at a moment. Left out entirely when
+   * the card is narrowed to particular movements, because a self-reported body
+   * weight belongs to no lift and showing it under one would be a claim nobody
+   * made.
+   */
+  const tracked =
+    selection.exerciseIds.length === 0
+      ? await db.trackingEntry.findMany({
+          where: scoped(tenant, {
+            athleteId: athlete.id,
+            measurementType: { key: selection.key },
+          }),
+          select: { capturedAt: true, numericValue: true },
+          orderBy: [{ capturedAt: 'asc' }],
+        })
+      : [];
+
+  const trackedPoints: TrendPoint[] = tracked.flatMap((row) => {
+    const value = numberOf(row.numericValue);
+
+    return value === null ? [] : [{ at: row.capturedAt, value, moduleName: null }];
+  });
+
   return {
     key: selection.key,
     kind: 'measurement',
     title: type.name,
     unit: type.unit,
-    series: [...grouped.entries()].map(([key, points]) => ({
-      key,
-      label: described.get(key) ?? '',
-      points: [...points].sort((left, right) => left.at.getTime() - right.at.getTime()),
-    })),
+    series: [
+      ...[...grouped.entries()].map((entry) => ({
+        key: entry[0],
+        label: described.get(entry[0]) ?? '',
+        points: [...entry[1]].sort((left, right) => left.at.getTime() - right.at.getTime()),
+        origin: 'measured' as const,
+      })),
+      ...(trackedPoints.length === 0
+        ? []
+        : [
+            {
+              key: 'tracked',
+              label: 'Selbst erfasst',
+              points: trackedPoints,
+              origin: 'tracked' as const,
+            },
+          ]),
+    ],
     episodes: [],
     exercises: [...exerciseNames.entries()].map(([id, name]) => ({ id, name })),
     exerciseIds: [...selection.exerciseIds],

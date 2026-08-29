@@ -30,6 +30,7 @@
  */
 export * from './athletes/age';
 export * from './athletes/body-fat';
+export * from './athletes/trend-cards';
 export * from './athletes/sex';
 export * from './exercises';
 // Exported from the root rather than the exercises barrel: `import.ts` reads

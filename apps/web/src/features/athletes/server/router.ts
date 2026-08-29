@@ -27,6 +27,13 @@ import {
   setAthleteArchived,
   updateAthlete,
 } from './service';
+import {
+  deleteTrackingEntry,
+  recordTrackingEntry,
+  setTrendCard,
+  trackingEntriesFor,
+  trendCardsFor,
+} from './tracking';
 import { athleteTrend, athleteTrendOptions } from './trends';
 
 /** A missing athlete and another tenant's athlete are the same answer (§4). */
@@ -109,13 +116,109 @@ export const athletesRouter = createTRPCRouter({
       // with the read rather than being looked up a second time.
       const subject = { id: athlete.id, sex: athlete.sex };
 
+      const stored = await trendCardsFor(ctx.db, ctx.tenant, athlete.id);
+
+      /**
+       * What to draw.
+       *
+       * The address bar wins where it says something — that is how one
+       * particular view gets linked. Otherwise the profile opens with what the
+       * coach chose. Resolved here rather than on the page so the charts and the
+       * selection come from one read instead of two round trips.
+       */
+      const slots =
+        input.slots.length > 0
+          ? input.slots
+          : stored.map((key) => ({ key, exerciseIds: [] as string[] }));
+
       const options = await athleteTrendOptions(ctx.db, ctx.tenant, subject);
       const charts = await Promise.all(
-        input.slots.map((slot) => athleteTrend(ctx.db, ctx.tenant, subject, slot)),
+        slots.map((slot) => athleteTrend(ctx.db, ctx.tenant, subject, slot)),
       );
 
-      return { options, charts };
+      return { options, charts, cards: stored, slots };
     }),
+
+  /**
+   * Shows or hides one card on this athlete's profile.
+   *
+   * A decision about *this* athlete, so it lives on their row. The platform
+   * chooses nothing: an athlete without a selection has no cards.
+   */
+  setTrendCard: withPermission('athlete:write')
+    .input(
+      z.object({
+        athleteId: z.string().min(1).max(64),
+        key: z
+          .string()
+          .trim()
+          .min(1)
+          .max(40)
+          .regex(/^[a-z0-9_]+$/),
+        shown: z.boolean(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const ok = await setTrendCard(ctx.db, ctx.tenant, input.athleteId, input.key, input.shown);
+      if (!ok) throw notFound();
+
+      return { ok: true };
+    }),
+
+  /**
+   * Writes one reading outside an examination.
+   *
+   * `withCoachPermission` because the entry records who put it there — §13 keeps
+   * the person separate from the instrument, and a value with no author would
+   * lose the distinction between a coach's note and an athlete's self-report.
+   */
+  recordTracking: withCoachPermission('athlete:write')
+    .input(
+      z.object({
+        athleteId: z.string().min(1).max(64),
+        measurementTypeKey: z
+          .string()
+          .trim()
+          .min(1)
+          .max(40)
+          .regex(/^[a-z0-9_]+$/),
+        value: z.number().finite(),
+        capturedAt: z.date(),
+        note: z.string().trim().max(500).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const result = await recordTrackingEntry(
+        ctx.db,
+        ctx.tenant,
+        { by: 'COACH', coachId: ctx.coach.id },
+        input,
+      );
+
+      if (!result.ok) throw notFound();
+
+      return result;
+    }),
+
+  /** Removes one reading. Deleted, never superseded — see §13. */
+  deleteTracking: withPermission('athlete:write')
+    .input(z.object({ entryId: z.string().min(1).max(64) }))
+    .mutation(async ({ ctx, input }) => {
+      const ok = await deleteTrackingEntry(ctx.db, ctx.tenant, input.entryId);
+      if (!ok) throw notFound();
+
+      return { ok: true };
+    }),
+
+  /** One athlete's readings of one quantity, for the card's own list. */
+  trackingEntries: withPermission('athlete:read')
+    .input(
+      z.object({
+        athleteId: z.string().min(1).max(64),
+        key: z.string().trim().min(1).max(40),
+      }),
+    )
+    .query(({ ctx, input }) => trackingEntriesFor(ctx.db, ctx.tenant, input.athleteId, input.key)),
 
   /**
    * Creates an athlete, warning about likely duplicates first (§7).

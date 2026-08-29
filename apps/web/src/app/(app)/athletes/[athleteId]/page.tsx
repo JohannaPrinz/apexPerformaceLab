@@ -92,7 +92,10 @@ export default async function AthletePage({
    * needs a column. It is also the only place a server-rendered chart can read
    * a choice from without a round trip through client state.
    */
-  const trendCards = parseTrendCards(query[TREND_CARD_PARAM]);
+  // The address bar wins where it says something — that is how one particular
+  // view is linked. Otherwise the profile opens with what the coach chose, which
+  // is stored on the athlete.
+  const linked = parseTrendCards(query[TREND_CARD_PARAM]);
 
   const [cases, assessments, trends] = await Promise.all([
     // The status filter exists in the schema already; only the interface was
@@ -103,7 +106,7 @@ export default async function AthletePage({
     // charts cannot fill.
     api.athletes.trends({
       athleteId,
-      slots: trendCards.map((card) => ({ key: card.key, exerciseIds: [...card.exerciseIds] })),
+      slots: linked.map((card) => ({ key: card.key, exerciseIds: [...card.exerciseIds] })),
     }),
   ]);
 
@@ -114,6 +117,10 @@ export default async function AthletePage({
    * chain `Athlete → Case → Assessment` (§3) becomes the shape of the page
    * rather than something a coach has to infer from two parallel lists.
    */
+  // Which assessments an athlete can currently open through a link. One query
+  // for the whole page — "who can see this" is a question about the roster.
+  const sharedIds = new Set(await api.reports.sharedAssessments({ athleteId }));
+
   const byCase = new Map<string, CaseAssessment[]>();
   for (const assessment of assessments) {
     const entry = {
@@ -122,6 +129,7 @@ export default async function AthletePage({
       type: assessment.type,
       performedAt: assessment.performedAt,
       testCount: assessment.modules.length,
+      shared: sharedIds.has(assessment.id),
     };
     byCase.set(assessment.caseId, [...(byCase.get(assessment.caseId) ?? []), entry]);
   }
@@ -278,7 +286,7 @@ export default async function AthletePage({
         athleteId={athleteId}
         options={trends.options}
         charts={trends.charts}
-        cards={trendCards}
+        cards={trends.slots.map((slot) => ({ key: slot.key, exerciseIds: slot.exerciseIds }))}
       />
 
       {/*

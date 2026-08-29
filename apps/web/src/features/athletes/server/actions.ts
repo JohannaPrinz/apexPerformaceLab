@@ -189,3 +189,54 @@ function toMessage(error: unknown): string {
 
   return 'Something went wrong. Please try again.';
 }
+
+/**
+ * Shows or hides one trend card on an athlete's profile.
+ *
+ * Stored on the athlete rather than in the address bar: a selection that lived
+ * only in a URL was lost on every navigation, and it is a decision about this
+ * person, not a way of looking at one screen.
+ */
+export async function setTrendCardAction(
+  athleteId: string,
+  key: string,
+  shown: boolean,
+): Promise<{ message?: string }> {
+  try {
+    await api.athletes.setTrendCard({ athleteId, key, shown });
+    revalidatePath(`/athletes/${athleteId}`);
+
+    return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
+/**
+ * Writes one reading outside an examination.
+ *
+ * The counterpart to a Measurement, not a relaxed version of one (§13): this is
+ * correctable, has no module, and records who put it there.
+ */
+export async function recordTrackingAction(
+  athleteId: string,
+  measurementTypeKey: string,
+  value: number,
+  capturedAt: Date,
+  note?: string,
+): Promise<{ message?: string }> {
+  try {
+    await api.athletes.recordTracking({
+      athleteId,
+      measurementTypeKey,
+      value,
+      capturedAt,
+      ...(note === undefined || note.trim() === '' ? {} : { note: note.trim() }),
+    });
+    revalidatePath(`/athletes/${athleteId}`);
+
+    return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}

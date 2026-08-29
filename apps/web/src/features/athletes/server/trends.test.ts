@@ -55,6 +55,9 @@ function trendDb(
     exercises?: { id: string; name: string }[];
     /** Catalogue keys this workspace knows. Everything by default. */
     knownKeys?: string[] | null;
+    /** What the athlete or a device contributed. */
+    tracked?: { capturedAt: Date; numericValue: unknown }[];
+    trackedCounts?: { measurementTypeId: string; _count: { _all: number } }[];
   } = {},
 ) {
   const measurement = { findMany: vi.fn(() => Promise.resolve(options.rows ?? [])) };
@@ -74,11 +77,23 @@ function trendDb(
     }),
   };
 
-  const db = { measurement, bleedingEpisode, exercise, measurementType } as unknown as Parameters<
-    typeof athleteTrend
-  >[0];
+  // Self-reported readings share the axis. The fake answers with none unless a
+  // test says otherwise, so every existing expectation still describes what a
+  // coach measured.
+  const trackingEntry = {
+    findMany: vi.fn(() => Promise.resolve(options.tracked ?? [])),
+    groupBy: vi.fn(() => Promise.resolve(options.trackedCounts ?? [])),
+  };
 
-  return { db, measurement, bleedingEpisode, exercise, measurementType };
+  const db = {
+    measurement,
+    bleedingEpisode,
+    exercise,
+    measurementType,
+    trackingEntry,
+  } as unknown as Parameters<typeof athleteTrend>[0];
+
+  return { db, measurement, bleedingEpisode, exercise, measurementType, trackingEntry };
 }
 
 const argsOf = (spy: { mock: { calls: unknown[][] } }) =>

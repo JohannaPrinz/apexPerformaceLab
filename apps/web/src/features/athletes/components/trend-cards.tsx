@@ -11,6 +11,7 @@ import { Badge, Button } from '@apex/ui';
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_FIELD, TOUCH_TARGET } from '@/components/common/touch';
 import { recordBleedingAction, removeBleedingAction } from '@/features/cycle/server/actions';
 
+import { recordTrackingAction, setTrendCardAction } from '../server/actions';
 import { encodeTrendCards, type TrendCardSelection } from '../trend-slots';
 
 /**
@@ -103,9 +104,23 @@ export function TrendCards({
     router.replace(`?${params.toString()}`, { scroll: false });
   };
 
+  /**
+   * Adding and removing a card writes twice, on purpose.
+   *
+   * The address bar changes immediately, so the screen responds without waiting
+   * for a round trip; the athlete's stored selection follows, so the choice
+   * survives leaving the page. The URL stays the way one particular view is
+   * linked; the record is what the profile opens with.
+   */
   const add = (key: string) => {
     setAdding(false);
     write([...cards, { key, exerciseIds: [] }]);
+    void setTrendCardAction(athleteId, key, true);
+  };
+
+  const remove = (key: string) => {
+    write(cards.filter((card) => card.key !== key));
+    void setTrendCardAction(athleteId, key, false);
   };
 
   /** What is not on screen yet. The same card twice would be one card twice. */
@@ -179,7 +194,7 @@ export function TrendCards({
               chart={charts[index] ?? null}
               cardKey={card.key}
               onRemove={() => {
-                write(cards.filter((_entry, position) => position !== index));
+                remove(card.key);
               }}
               onNarrow={(exerciseIds) => {
                 write(
@@ -193,6 +208,141 @@ export function TrendCards({
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * Writing one value down, outside any examination.
+ *
+ * ## Why it sits inside the card
+ *
+ * The card already names the quantity and its unit, so the form asks for two
+ * things and nothing else. A dialog somewhere else would have to ask which
+ * quantity — a question the coach has already answered by being here.
+ *
+ * ## Why the date is asked for and not assumed
+ *
+ * "Today" is wrong more often than it looks: a coach enters Monday's weight on
+ * Wednesday, and an athlete opening a fresh card is asked for a starting value
+ * that is by definition in the past. A reading dated to the moment it was typed
+ * would put a bend in the curve that nobody's body made.
+ */
+function AddValue({
+  athleteId,
+  cardKey,
+  unit,
+  starting,
+}: {
+  readonly athleteId: string;
+  readonly cardKey: string;
+  readonly unit: string;
+  /** True where the card holds nothing yet — the wording changes, not the form. */
+  readonly starting: boolean;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const [value, setValue] = useState('');
+  const [day, setDay] = useState(() => new Date().toISOString().slice(0, 10));
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+
+    // A German keyboard produces a comma, and refusing that would be refusing
+    // the coach's own keyboard.
+    const parsed = Number(value.replace(',', '.'));
+
+    if (!Number.isFinite(parsed)) {
+      setError('Bitte eine Zahl eintragen.');
+
+      return;
+    }
+
+    setError(null);
+    startTransition(async () => {
+      const result = await recordTrackingAction(
+        athleteId,
+        cardKey,
+        parsed,
+        new Date(`${day}T12:00:00`),
+      );
+
+      if (result.message) setError(result.message);
+      else {
+        setValue('');
+        setOpen(false);
+        router.refresh();
+      }
+    });
+  };
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          setOpen(true);
+        }}
+        className={`${FOCUS_RING} ${TOUCH_TARGET} flex w-fit items-center gap-1.5 rounded-md border border-border px-3 text-sm hover:bg-muted`}
+      >
+        <Plus aria-hidden="true" className="size-3.5" />
+        {starting ? 'Startwert eintragen' : 'Wert eintragen'}
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="flex flex-wrap items-end gap-2">
+      <label className="flex flex-col gap-1 text-xs">
+        <span>Wert{unit === '' ? '' : ` in ${unit}`}</span>
+        <input
+          inputMode="decimal"
+          value={value}
+          autoFocus
+          aria-label={`Wert${unit === '' ? '' : ` in ${unit}`}`}
+          onChange={(event) => {
+            setValue(event.target.value);
+          }}
+          className={`${FOCUS_RING} ${TOUCH_FIELD} w-28 rounded-md border border-input bg-background px-2 text-base lg:text-sm`}
+        />
+      </label>
+
+      <label className="flex flex-col gap-1 text-xs">
+        <span>Datum</span>
+        <input
+          type="date"
+          value={day}
+          aria-label="Datum"
+          onChange={(event) => {
+            setDay(event.target.value);
+          }}
+          className={`${FOCUS_RING} ${TOUCH_FIELD} rounded-md border border-input bg-background px-2 text-base lg:text-sm`}
+        />
+      </label>
+
+      <Button type="submit" variant="accent" className={TOUCH_BUTTON} disabled={pending}>
+        {pending ? 'Wird gespeichert …' : 'Speichern'}
+      </Button>
+
+      <Button
+        type="button"
+        variant="ghost"
+        className={TOUCH_BUTTON}
+        onClick={() => {
+          setOpen(false);
+          setError(null);
+        }}
+      >
+        Abbrechen
+      </Button>
+
+      {error === null ? null : (
+        <p role="alert" className="basis-full text-xs text-destructive">
+          {error}
+        </p>
+      )}
+    </form>
   );
 }
 
@@ -270,12 +420,24 @@ function TrendCard({
           )}
 
           {chart.series.length === 0 ? (
-            <p className="rounded-md border border-dashed border-border px-3 py-8 text-center text-xs text-muted-foreground">
-              Noch nichts erfasst.
+            <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
+              Noch nichts erfasst. Trage einen Startwert ein, damit der Verlauf irgendwo beginnt.
             </p>
           ) : (
             <ValueChart chart={chart} />
           )}
+
+          {/* Values can be added to any card, but only where the card is not
+              narrowed to particular movements: a value written here belongs to
+              no lift, and filing it under one would be a claim nobody made. */}
+          {chart.exerciseIds.length === 0 ? (
+            <AddValue
+              athleteId={athleteId}
+              cardKey={cardKey}
+              unit={chart.unit}
+              starting={chart.series.length === 0}
+            />
+          ) : null}
         </>
       )}
     </div>

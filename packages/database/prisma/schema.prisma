@@ -194,6 +194,7 @@ model Organization {
   appointments     Appointment[]
   timelineEntries  TimelineEntry[]
   bleedingEpisodes BleedingEpisode[]
+  trackingEntries  TrackingEntry[]
 
   @@index([slug])
   @@map("organizations")
@@ -300,6 +301,7 @@ model Coach {
   uploadedAssets   Asset[]
   sharesCreated    Share[]
   bleedingRecorded BleedingEpisode[]
+  trackingRecorded TrackingEntry[]
 
   @@map("coaches")
 }
@@ -425,6 +427,18 @@ model Athlete {
   appointments     Appointment[]
   timelineEntries  TimelineEntry[]
   bleedingEpisodes BleedingEpisode[]
+  trackingEntries  TrackingEntry[]
+
+  /// Which quantities are followed as a curve on this athlete's profile.
+  ///
+  /// A list of measurement-type **catalogue keys**, chosen by the Coach. Keys
+  /// rather than ids because a key is the same in every workspace and readable
+  /// in a payload; the shape and its rules live in `packages/domain`.
+  ///
+  /// Nullable and additive: an athlete without one has no cards chosen yet,
+  /// which is what every existing row is. No backfill and no default — a
+  /// default would be the platform choosing what matters about somebody.
+  trendCards Json?
 
   /// Covers the tenant scope on its own (leftmost prefix) and the roster
   /// listing in full. A separate `organizationId` index would be redundant.
@@ -783,7 +797,8 @@ model MeasurementType {
   organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  measurements Measurement[]
+  measurements    Measurement[]
+  trackingEntries TrackingEntry[]
 
   /// Workspace-scoped uniqueness. Postgres treats NULLs as distinct, so the
   /// system catalogue needs an additional partial unique index — see the raw
@@ -1232,6 +1247,91 @@ model RecommendationInsight {
   @@id([recommendationId, insightId])
   @@index([insightId])
   @@map("recommendation_insights")
+}
+
+/// A value that stands alone in time (§13).
+///
+/// **Not a Measurement, and the difference is not cosmetic.** A Measurement is a
+/// fact the Coach records inside an Assessment and never edits; a body weight
+/// noted on a Tuesday is neither. Three reasons it is its own object:
+///
+///   1. A Measurement is never edited — a correction supersedes it. A mistyped
+///      body weight does not deserve a supersede chain.
+///   2. `Measurement.assessmentModuleId` is mandatory, and that is a guarantee:
+///      every Measurement has a professional context. Making it optional would
+///      take that assurance away from the entire record.
+///   3. Mixing them would make every query about "this Assessment's
+///      measurements" depend on remembering an extra filter. That is where
+///      silent errors live.
+///
+/// **It reuses `MeasurementType`, and that is the point of the design.** "Body
+/// weight" is the same quantity with the same unit whether the Coach measures it
+/// during an Assessment or the Athlete steps on a scale. The two can therefore be
+/// plotted on one axis with no translation layer — which is exactly what makes
+/// self-reported data useful to a professional.
+///
+/// Numeric only. A tracked series is read as a curve, and a text or boolean
+/// reading has no position on a value axis.
+///
+/// Deliberately **not** on the Athlete Timeline (§22): daily weights would bury
+/// the assessments and reports the timeline exists to show. And never evidence
+/// for an Insight (§14) — a self-report does not carry the weight of a
+/// diagnostic finding.
+model TrackingEntry {
+  id String @id @default(cuid(2))
+
+  /// The value, in the unit the Measurement Type declares. Same precision as
+  /// `Measurement.numericValue`, so one axis never rounds two ways.
+  numericValue Decimal @db.Decimal(12, 4)
+
+  /// When it was taken — a moment, because a weight before breakfast and one
+  /// after training are different readings of the same day.
+  capturedAt DateTime
+
+  /// How it came about: typed, delivered by a device, loaded from a file. The
+  /// same enum Measurements use, so a chart can say where a point came from
+  /// without a second vocabulary.
+  source MeasurementSource @default(MANUAL)
+
+  /// A remark about this one reading. A column rather than a `Note`, for the
+  /// same reason as on `Measurement`: it qualifies a value and travels with it.
+  note String?
+
+  /// Unlike a Measurement, this may be corrected in place — see the header.
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  athleteId String
+  athlete   Athlete @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+
+  measurementTypeId String
+  measurementType   MeasurementType @relation(fields: [measurementTypeId], references: [id], onDelete: Restrict)
+
+  /// Who put it into the record. `MeasurementSource` answers "typed, device or
+  /// import" — about the instrument; this one is about the person, and the two
+  /// are independent.
+  recordedBy RecordedBy
+
+  /// Set where a Coach entered it. `Restrict` like everywhere else: a Coach row
+  /// is a tombstone that survives deletion, so authorship never silently
+  /// detaches.
+  recordedByCoachId String?
+  recordedByCoach   Coach?  @relation(fields: [recordedByCoachId], references: [id], onDelete: Restrict)
+
+  /// Where a device import came from, so a re-import is idempotent (§13).
+  externalSystem String?
+  externalId     String?
+
+  @@index([organizationId])
+  /// The read this table exists for: one athlete's series of one quantity, in
+  /// order. Covers the tenant scope through the athlete.
+  @@index([athleteId, measurementTypeId, capturedAt])
+  @@index([measurementTypeId])
+  @@index([recordedByCoachId])
+  @@map("tracking_entries")
 }
 
 // ── Report & Share ───────────────────────────────────────────────────────────

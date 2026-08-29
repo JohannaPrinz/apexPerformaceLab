@@ -5,6 +5,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TrendCards, type TrendChartView, type TrendOptionView } from './trend-cards';
 
 /**
+ * The actions are stubbed, not exercised.
+ *
+ * A server action module reaches the tRPC caller and, through it, Prisma — which
+ * has no database in a test environment and no business having one here. What
+ * these tests are about is the screen; that the writes reach the right place is
+ * asserted against the service, where a fake database can prove it.
+ */
+vi.mock('../server/actions', () => ({
+  setTrendCardAction: vi.fn(() => Promise.resolve({})),
+  recordTrackingAction: vi.fn(() => Promise.resolve({})),
+}));
+
+/**
  * The trends of one athlete, as many as the coach wants.
  *
  * What is pinned here is the screen: that it starts empty, that a card is added
@@ -307,7 +320,28 @@ describe('what a card draws', () => {
       [{ key: 'weight', exerciseIds: [] }],
     );
 
-    expect(screen.getByText('Noch nichts erfasst.')).toBeVisible();
+    // The wording now points somewhere: an empty card is the one place a coach
+    // is invited to write the first value down.
+    expect(screen.getByText(/Noch nichts erfasst/)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Startwert eintragen' })).toBeVisible();
+  });
+
+  it('asks for a value, not only for a starting one, once a curve exists', () => {
+    renderCards([option()], [chart()], [{ key: 'weight', exerciseIds: [] }]);
+
+    expect(screen.getByRole('button', { name: 'Wert eintragen' })).toBeVisible();
+  });
+
+  it('offers no entry where the card is narrowed to particular movements', () => {
+    // A value written here belongs to no lift, and filing it under one would be
+    // a claim nobody made.
+    renderCards(
+      [option()],
+      [chart({ exercises: [{ id: 'ex_1', name: 'Kniebeuge' }], exerciseIds: ['ex_1'] })],
+      [{ key: 'weight', exerciseIds: ['ex_1'] }],
+    );
+
+    expect(screen.queryByRole('button', { name: /Wert eintragen|Startwert eintragen/ })).toBeNull();
   });
 
   it('gives each line a shape of its own, not colour alone', () => {
