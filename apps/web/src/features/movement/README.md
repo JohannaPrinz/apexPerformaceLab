@@ -102,14 +102,41 @@ angelegte Test führt `joint_angle`; ein älterer mit `range_of_motion` bleibt, 
 er ist — **keine nachträgliche Umdeutung**, ein Test in
 `analysis-results.test.tsx` hält das fest.
 
-**Nicht gespeichert:** Video, Einzelbilder, Landmarks, Standbilder, sowie Dauer
-und Tempo — für die beiden hat der Katalog keine Messgröße, sie stehen im Text.
+**Nicht gespeichert:** Video, Einzelbilder, Landmarks, Standbilder, das
+Analysevideo, sowie Dauer und Tempo — für die beiden hat der Katalog keine
+Messgröße, sie stehen im Text.
 
 ## Reihenfolge auf dem Bildschirm
 
 Übung → Winkel → optionale Ziele → Video → Analyse. Jeder Schritt verengt den
 nächsten. Danach: Video links, Ergebnistext daneben, Winkeltabelle, Standbilder,
 Kurve, Speichern.
+
+## Analysevideo zum Herunterladen
+
+Nach der Analyse kann der Coach ein **annotiertes Video** erzeugen: Originalbild,
+Skelett, die gewählten Winkel, die Wiederholungsnummer, der gesetzte Zielwinkel
+und zum Schluss eine kurze Ergebnisanzeige.
+
+Es entsteht aus **denselben Daten wie die Tabelle**. Der Analysepass gibt je Bild
+einen `AnnotatedFrame` heraus — Landmarks, Winkel, laufende Wiederholung —, den
+die Pipeline auf Wunsch (`collectFrames`) sammelt. Das Modell wird **kein zweites
+Mal** befragt: eine Einzelbild-Erkennung wich auf demselben Bild um 8–16° vom
+sequenziellen Durchlauf ab, und ein Video, dessen Zahlen der Tabelle daneben
+widersprechen, erklärt nichts.
+
+Aufgezeichnet wird ein Canvas mit `MediaRecorder`, während der Clip einmal in
+Echtzeit läuft — kein Encoder, kein Worker, kein Server. Gemessen: 24,1 s für
+einen 21,5-s-Clip, also genau die Abspieldauer plus Ergebniskarte.
+
+**Ein Einzelbild trägt nie ein Zielergebnis.** Ein Ziel spricht über das Extrem
+einer Wiederholung; jedes Bild ist irgendwo auf dem Weg dorthin. Auf dem Bild
+steht deshalb nur, was gefordert war (`Ziel: Knie gebeugt höchstens 90°`), und
+die Ergebniskarte am Ende zeigt das Urteil aus `checkTargets` — dieselbe Quelle
+wie Tabelle und Text.
+
+Kein Storage, kein Link: die Datei geht über eine Object-URL direkt auf die
+Platte des Coaches und wird sofort wieder freigegeben.
 
 ## Web Worker
 

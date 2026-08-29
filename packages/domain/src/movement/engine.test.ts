@@ -20,6 +20,8 @@ import {
 } from './figure.test-helper';
 import { SQUAT_PROFILE, type MovementProfile } from './profile';
 
+import type { PoseFrame } from './engine';
+
 /**
  * The engine, driven by a profile and a stick figure.
  *
@@ -447,5 +449,101 @@ describe('the options', () => {
     expect(DEFAULT_ENGINE_OPTIONS.minUsableShare).toBeGreaterThan(0);
     expect(DEFAULT_ENGINE_OPTIONS.minUsableShare).toBeLessThanOrEqual(1);
     expect(DEFAULT_ENGINE_OPTIONS.minVisibility).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The per-frame record an annotated export is drawn from.
+ *
+ * What has to hold is one thing above all: the numbers on a frame are the
+ * numbers the analysis measured, not numbers something else worked out later.
+ * That is the failure the still image already had once — a caption disagreeing
+ * with its own picture by 8–16° — and an exported video would carry it into an
+ * athlete's hands.
+ */
+describe('the annotated frame', () => {
+  const push = (frames: readonly PoseFrame[], tracks: readonly string[] = ALL) =>
+    frames.reduce(
+      (state, frame) => pushPoseFrame(state, frame, SQUAT_PROFILE, tracks),
+      initialEngineState(SQUAT_PROFILE),
+    );
+
+  it('is absent before anything has been read', () => {
+    expect(initialEngineState(SQUAT_PROFILE).lastFrame).toBeNull();
+  });
+
+  it('carries the angles the result is built from, not a fresh calculation', () => {
+    const frames = squatVideo(3);
+    const state = push(frames);
+    const outcome = finish(state, SQUAT_PROFILE, ALL);
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+
+    const frame = state.lastFrame;
+    expect(frame).not.toBeNull();
+    if (frame === null) return;
+
+    // The very keys the engine measures under, and nothing invented beside them.
+    expect(Object.keys(frame.angles).sort()).toEqual(
+      ALL.flatMap((track) => [`${track}_left`, `${track}_right`]).sort(),
+    );
+
+    // The last frame of the recording is the athlete standing, so the knee is
+    // near its standing angle rather than somewhere in between.
+    expect(frame.angles['knee_left']).toBeCloseTo(kneeAngleOf(STANDING), 0);
+  });
+
+  it('holds only the tracks the coach kept', () => {
+    const state = push(squatVideo(2), KNEE_ONLY);
+
+    expect(Object.keys(state.lastFrame?.angles ?? {})).toEqual(['knee_left', 'knee_right']);
+  });
+
+  it('names the repetition under way, and counts the finished ones between', () => {
+    const frames = squatVideo(2);
+
+    // Walked frame by frame so both states are actually observed: mid-descent,
+    // and standing again afterwards.
+    let state = initialEngineState(SQUAT_PROFILE);
+    const seen: { inProgress: number | null; completed: number }[] = [];
+
+    for (const frame of frames) {
+      state = pushPoseFrame(state, frame, SQUAT_PROFILE, ALL);
+      const last = state.lastFrame;
+      if (last) seen.push({ inProgress: last.repInProgress, completed: last.completedReps });
+    }
+
+    // A repetition in progress is always the one after the last completed.
+    for (const entry of seen) {
+      if (entry.inProgress !== null) expect(entry.inProgress).toBe(entry.completed + 1);
+    }
+
+    expect(seen.some((entry) => entry.inProgress === 1)).toBe(true);
+    expect(seen.some((entry) => entry.inProgress === 2)).toBe(true);
+    expect(seen.at(-1)?.completed).toBe(2);
+  });
+
+  it('reports a frame the model could not read without inventing angles', () => {
+    const state = push([
+      ...squatVideo(1),
+      { timestampMs: 99_999, landmarks: null, aspectRatio: 1 },
+    ]);
+
+    expect(state.lastFrame?.landmarks).toBeNull();
+    expect(state.lastFrame?.angles).toEqual({});
+    expect(state.lastFrame?.signal).toBeNull();
+  });
+
+  it('never leaks pose data into the result', () => {
+    const outcome = finish(push(squatVideo(3)), SQUAT_PROFILE, ALL);
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+
+    // The result crosses into storage code. Whatever the export needs, it does
+    // not travel this way.
+    expect(JSON.stringify(outcome.result)).not.toContain('visibility');
+    expect('landmarks' in outcome.result).toBe(false);
   });
 });

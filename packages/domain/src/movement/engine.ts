@@ -93,6 +93,37 @@ export interface SignalPoint {
   readonly primary: number | null;
 }
 
+/**
+ * Everything the analysis knew about **one** frame, as it read it.
+ *
+ * The record an annotated export is drawn from. It exists so a later rendering
+ * pass can put the analysis's own numbers onto the analysis's own frames
+ * **without asking the model a second time** — re-detecting a frame was measured
+ * to disagree with the sequential pass by 8–16°, and an export whose caption
+ * contradicts the table beside it explains nothing.
+ *
+ * Handed out one at a time. The engine keeps only the most recent one, because
+ * whether a whole recording's worth is worth holding in memory is the caller's
+ * decision, not the domain's — `MovementResult` still carries no pose data at
+ * all, and nothing here is ever persisted.
+ */
+export interface AnnotatedFrame {
+  readonly timestampMs: number;
+  /** What the model saw, or `null` where it found nobody. */
+  readonly landmarks: readonly Landmark[] | null;
+  /**
+   * `track_side` → degrees, exactly the smoothed values the result is built
+   * from. Not recomputed anywhere: this **is** the measurement.
+   */
+  readonly angles: Readonly<Record<string, number>>;
+  /** The driving signal, or `null` where the frame had no usable pose. */
+  readonly signal: number | null;
+  /** The repetition under way, 1-based. `null` between repetitions. */
+  readonly repInProgress: number | null;
+  /** How many repetitions were complete by this frame. */
+  readonly completedReps: number;
+}
+
 /** A moment worth showing as a still image. */
 export interface KeyMoment {
   /** The position key it corresponds to, e.g. `extended`. */
@@ -168,6 +199,14 @@ export interface EngineState {
   readonly pendingFrames: Readonly<Record<string, ExtremeFrame>>;
   /** The same, closed off when a repetition completes. */
   readonly repFrames: readonly Readonly<Record<string, ExtremeFrame>>[];
+  /**
+   * The frame just folded in, annotated.
+   *
+   * One frame, not a growing list: holding a whole recording's landmarks is a
+   * memory decision, and it belongs to whoever drives the loop. `null` before
+   * the first frame.
+   */
+  readonly lastFrame: AnnotatedFrame | null;
 }
 
 export function initialEngineState(profile: MovementProfile): EngineState {
@@ -181,6 +220,7 @@ export function initialEngineState(profile: MovementProfile): EngineState {
     sideConfidence: { left: 0, right: 0 },
     pendingFrames: {},
     repFrames: [],
+    lastFrame: null,
   };
 }
 
@@ -371,6 +411,20 @@ export function pushPoseFrame(
     reps,
     pendingFrames: closed ? {} : pending,
     repFrames: closed ? [...state.repFrames, pending] : state.repFrames,
+    // Built from the same locals the result is built from, in the same pass.
+    // A second function deriving this from the frame again is exactly how the
+    // still image came to disagree with its own caption once already.
+    lastFrame: {
+      timestampMs: frame.timestampMs,
+      landmarks: frame.landmarks,
+      angles: measured,
+      signal: signalValue,
+      // A descent under way is the repetition after the last completed one. The
+      // engine counts a repetition when it ends, so this is the only moment the
+      // number is knowable while it is still running.
+      repInProgress: reps.descentStartedMs === null ? null : reps.reps.length + 1,
+      completedReps: reps.reps.length,
+    },
     frames: {
       total: state.frames.total + 1,
       usable: state.frames.usable + (readable ? 1 : 0),

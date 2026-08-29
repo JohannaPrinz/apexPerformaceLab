@@ -184,8 +184,76 @@ export const SQUAT_PROFILE: MovementProfile = {
   ],
 };
 
-/** Every profile the platform ships. One, deliberately. */
-export const MOVEMENT_PROFILES: readonly MovementProfile[] = [SQUAT_PROFILE];
+/**
+ * Kreuzheben — a hip hinge, filmed from the side.
+ *
+ * ## Why the hip counts and not the knee
+ *
+ * A squat is read off the knee: it is what closes and opens. A deadlift is a
+ * hinge — the hip travels through a much larger arc than the knee, and a knee
+ * that barely bends would make a counter miss repetitions the athlete plainly
+ * performed. Same engine, different driving signal, and that is exactly what a
+ * profile is for.
+ *
+ * ## Why there is no trunk angle here
+ *
+ * The obvious third measurement — how far the back is inclined — is **not a
+ * three-point angle**, and every track in this file is. It would need a second
+ * kind of measurement (deviation from a line), which is the same extension a
+ * frontal view would need. Left out rather than approximated.
+ *
+ * And it must not be confused with the thing a coach actually watches for: the
+ * shoulder-to-hip line gives the **inclination** of the trunk, never its
+ * curvature. A straight back at 30° and a rounded back at 30° produce the same
+ * number, because MediaPipe returns no landmark between shoulder and hip. A
+ * rounding "measurement" from this model would be invented.
+ *
+ * ## Where the thresholds come from
+ *
+ * **Measured, not chosen.** Run against a real recording (`deadlift.mp4`), the
+ * hip travels between roughly 60° at the bottom and 170° standing. The
+ * hysteresis sits inside that band, far enough from both ends that neither a
+ * pause at the top nor a shallow first pull toggles it.
+ */
+export const DEADLIFT_PROFILE: MovementProfile = {
+  key: 'deadlift',
+  name: 'Kreuzheben',
+  tracks: [
+    {
+      key: 'hip',
+      label: 'Hüfte',
+      vertex: 'hip',
+      from: 'shoulder',
+      to: 'knee',
+    },
+    {
+      key: 'knee',
+      label: 'Knie',
+      vertex: 'knee',
+      from: 'hip',
+      to: 'ankle',
+    },
+  ],
+  sides: ['left', 'right'],
+  counting: {
+    kind: 'hysteresis',
+    track: 'hip',
+    descendBelow: 140,
+    ascendAbove: 160,
+    minRepMs: 600,
+  },
+  positions: [
+    { key: 'extended', label: 'aufgerichtet', end: 'max' },
+    { key: 'flexed', label: 'gebeugt', end: 'min' },
+  ],
+  // None. A depth target belongs to a squat, where the coach works to one; a
+  // deadlift's bottom is set by the bar, not by the athlete's choice, and
+  // proposing a number here would be an opinion about somebody's build.
+  suggestedTargets: [],
+};
+
+/** Every profile the platform ships. */
+export const MOVEMENT_PROFILES: readonly MovementProfile[] = [SQUAT_PROFILE, DEADLIFT_PROFILE];
 
 /**
  * Exercise key → profile key.
@@ -201,6 +269,7 @@ export const MOVEMENT_PROFILES: readonly MovementProfile[] = [SQUAT_PROFILE];
  */
 const PROFILE_BY_EXERCISE: Readonly<Record<string, string>> = {
   squat: 'squat',
+  deadlift: 'deadlift',
 };
 
 /**

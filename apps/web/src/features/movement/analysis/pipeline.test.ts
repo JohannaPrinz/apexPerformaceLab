@@ -576,3 +576,87 @@ describe('the reader contract', () => {
     expect(onProgress).toHaveBeenCalledTimes(frameCountOf(CLIP, 10));
   });
 });
+
+/**
+ * Keeping every frame, for the annotated export.
+ *
+ * The switch is the point of these tests. Collecting is what makes an export
+ * possible; collecting *by default* would mean every analysis quietly held a
+ * recording's worth of landmarks whether anyone wanted one or not.
+ */
+describe('the annotated frames', () => {
+  it('are not kept unless asked for', async () => {
+    const run = await analyseClip2(fakeReader(5), { yieldControl: noYield });
+
+    expect(run.kind).toBe('done');
+    if (run.kind !== 'done') return;
+
+    expect(run.annotations).toEqual([]);
+  });
+
+  it('are one per frame read, in order, when asked for', async () => {
+    const reader = fakeReader(5);
+    const run = await analyseClip2(reader, { collectFrames: true, yieldControl: noYield });
+
+    expect(run.kind).toBe('done');
+    if (run.kind !== 'done') return;
+
+    expect(run.annotations).toHaveLength(run.progress.processedFrames);
+
+    const times = run.annotations.map((frame) => frame.timestampMs);
+    expect([...times].sort((a, b) => a - b)).toEqual(times);
+
+    // They line up with the positions the reader was actually asked for, so the
+    // export draws each annotation on the frame it came from.
+    expect(times).toEqual(reader.calls);
+  });
+
+  it('carry the pose and the measured angles', async () => {
+    const run = await analyseClip2(fakeReader(5), { collectFrames: true, yieldControl: noYield });
+    if (run.kind !== 'done') throw new Error('expected a completed run');
+
+    const withPose = run.annotations.filter((frame) => frame.landmarks !== null);
+
+    expect(withPose.length).toBeGreaterThan(0);
+    expect(Object.keys(withPose[0]?.angles ?? {}).length).toBeGreaterThan(0);
+  });
+
+  it('keep what was read before a cancellation', async () => {
+    const controller = new AbortController();
+    const reader = fakeReader(5);
+
+    const run = await analyseClip2(reader, {
+      collectFrames: true,
+      yieldControl: noYield,
+      signal: controller.signal,
+      onProgress: (progress) => {
+        if (progress.processedFrames >= 12) controller.abort();
+      },
+    });
+
+    expect(run.kind).toBe('cancelled');
+    if (run.kind !== 'cancelled') return;
+
+    // Everything read up to the stop is still there — an export over a
+    // half-analysed clip is the coach's call, not a reason to throw the frames
+    // away.
+    expect(run.annotations).toHaveLength(run.progress.processedFrames);
+    expect(run.annotations.length).toBeGreaterThanOrEqual(12);
+  });
+
+  it('records a frame the model found nobody in, rather than skipping it', async () => {
+    const run = await analyseClip2(fakeReader(5, { emptyAt: (index) => index % 4 === 0 }), {
+      collectFrames: true,
+      yieldControl: noYield,
+    });
+
+    if (run.kind !== 'done') throw new Error('expected a completed run');
+
+    const blank = run.annotations.filter((frame) => frame.landmarks === null);
+
+    expect(blank.length).toBeGreaterThan(0);
+    // A gap the export can draw as a gap. Inventing a pose to fill it would put
+    // a skeleton where the model saw none.
+    expect(blank.every((frame) => Object.keys(frame.angles).length === 0)).toBe(true);
+  });
+});

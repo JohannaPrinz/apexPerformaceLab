@@ -4,6 +4,7 @@ import {
   initialEngineState,
   keyFramesOf,
   pushPoseFrame,
+  type AnnotatedFrame,
   type EngineOptions,
   type EngineState,
   type Landmark,
@@ -92,12 +93,27 @@ export interface PipelineOptions {
   /**
    * The pose of the frame just read, for a live preview.
    *
-   * Handed over **transiently**: the pipeline still keeps no landmarks, and a
-   * caller that stored them would be making a decision this file deliberately
-   * does not. `null` where the model found nobody, so an overlay can clear
-   * itself rather than freeze on the last good pose.
+   * Handed over **transiently**: this callback keeps nothing, and keeping
+   * anything is `collectFrames`' job below — a separate switch, so a live
+   * preview never quietly turns into a recording. `null` where the model found
+   * nobody, so an overlay can clear itself rather than freeze on the last good
+   * pose.
    */
   readonly onFrame?: (landmarks: readonly Landmark[] | null, timestampMs: number) => void;
+  /**
+   * Whether to keep every frame's annotation for a later rendering pass.
+   *
+   * Off by default, so the sentence above stays true: this file keeps no pose
+   * data unless somebody asks for it, and asking is a visible decision at the
+   * call site. On, the run carries one `AnnotatedFrame` per processed frame —
+   * roughly 33 landmarks per frame, which is a few megabytes for a two-minute
+   * clip at 15 fps and nothing at all for the twenty-second ones this is for.
+   *
+   * It exists for one purpose: an annotated export must draw the **analysis's
+   * own** landmarks and angles. Measuring them again would produce a video whose
+   * numbers disagree with the table beside it.
+   */
+  readonly collectFrames?: boolean;
   /** Injected so a test does not depend on a real clock. */
   readonly now?: () => number;
   /** Injected so a test can prove the loop actually gives the page a turn. */
@@ -127,15 +143,17 @@ function yieldToEventLoop(): Promise<void> {
 
 export type AnalysisRun =
   /**
-   * `keyFrames` sits beside the outcome, never inside it: the outcome crosses
-   * into storage code and must carry no pose data, while the stills need exactly
-   * that. A test pins both halves of this.
+   * `keyFrames` and `annotations` sit beside the outcome, never inside it: the
+   * outcome crosses into storage code and must carry no pose data, while the
+   * stills and the annotated export need exactly that. A test pins both halves.
    */
   | {
       readonly kind: 'done';
       readonly outcome: MovementOutcome;
       readonly progress: AnalysisProgress;
       readonly keyFrames: readonly KeyFrame[];
+      /** Every frame, annotated — empty unless `collectFrames` was asked for. */
+      readonly annotations: readonly AnnotatedFrame[];
     }
   /** Stopped part way. Whatever the frames supported is still in `outcome`. */
   | {
@@ -143,6 +161,7 @@ export type AnalysisRun =
       readonly outcome: MovementOutcome;
       readonly progress: AnalysisProgress;
       readonly keyFrames: readonly KeyFrame[];
+      readonly annotations: readonly AnnotatedFrame[];
     }
   | { readonly kind: 'failed'; readonly message: string };
 
@@ -187,6 +206,7 @@ export async function analyseClip(
   /** Consecutive reader failures. A handful is noise; a run of them is broken. */
   let consecutiveFailures = 0;
   let heldSince = startedAt;
+  const annotations: AnnotatedFrame[] = [];
 
   const progressOf = (): AnalysisProgress => ({
     processedFrames: processed,
@@ -204,6 +224,7 @@ export async function analyseClip(
         outcome: finish(state, profile, tracks, engine),
         progress: progressOf(),
         keyFrames: keyFramesOf(state, profile),
+        annotations,
       };
     }
 
@@ -239,6 +260,10 @@ export async function analyseClip(
     );
     processed += 1;
 
+    if (options.collectFrames === true && state.lastFrame !== null) {
+      annotations.push(state.lastFrame);
+    }
+
     options.onFrame?.(landmarks, positionMs);
 
     options.onProgress?.(progressOf());
@@ -256,5 +281,6 @@ export async function analyseClip(
     outcome: finish(state, profile, tracks, engine),
     progress: progressOf(),
     keyFrames: keyFramesOf(state, profile),
+    annotations,
   };
 }

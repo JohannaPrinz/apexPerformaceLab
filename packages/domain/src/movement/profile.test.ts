@@ -155,8 +155,54 @@ describe('finding a profile', () => {
     expect(movementProfile('SQUAT')).toBeNull();
   });
 
-  it('ships exactly one profile, deliberately', () => {
-    expect(MOVEMENT_PROFILES).toHaveLength(1);
+  it('ships the profiles that were built, and no more', () => {
+    // Pinned so that growing this list stays a decision somebody took, and so
+    // that a profile arriving without a real recording behind it is noticed.
+    expect(MOVEMENT_PROFILES.map((profile) => profile.key)).toEqual(['squat', 'deadlift']);
+  });
+});
+
+/**
+ * Kreuzheben.
+ *
+ * The tests worth having are about the two decisions that separate it from a
+ * squat: it is counted off the hip, and it deliberately measures no trunk
+ * angle.
+ */
+describe('the deadlift profile', () => {
+  const deadlift = MOVEMENT_PROFILES.find((profile) => profile.key === 'deadlift');
+
+  it('is counted off the hip, not the knee', () => {
+    // A hinge travels through a much larger hip arc than knee arc. Counting the
+    // knee would miss repetitions the athlete plainly performed.
+    expect(deadlift?.counting.kind).toBe('hysteresis');
+    expect(deadlift?.counting.kind === 'hysteresis' ? deadlift.counting.track : null).toBe('hip');
+  });
+
+  it('keeps its hysteresis inside the arc the movement actually covers', () => {
+    if (deadlift?.counting.kind !== 'hysteresis') throw new Error('expected a counted profile');
+
+    // Measured against a real recording: the hip runs from roughly 60° to 170°.
+    expect(deadlift.counting.descendBelow).toBeGreaterThan(60);
+    expect(deadlift.counting.ascendAbove).toBeLessThan(170);
+    expect(deadlift.counting.descendBelow).toBeLessThan(deadlift.counting.ascendAbove);
+  });
+
+  it('measures no trunk angle, because it cannot', () => {
+    // The shoulder-to-hip line gives inclination, never curvature — MediaPipe
+    // returns no landmark between them. A "rounding" measurement would be
+    // invented, and would look exactly like a measured one.
+    expect(deadlift?.tracks.map((track) => track.key)).toEqual(['hip', 'knee']);
+  });
+
+  it('proposes no target', () => {
+    // A deadlift's bottom is set by the bar, not by the athlete's choice.
+    expect(deadlift?.suggestedTargets).toEqual([]);
+  });
+
+  it('reaches the profile through the exercise catalogue', () => {
+    expect(profileForExercise('deadlift')?.key).toBe('deadlift');
+    expect(hasMovementProfile('deadlift')).toBe(true);
   });
 });
 

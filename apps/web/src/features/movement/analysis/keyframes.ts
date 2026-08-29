@@ -6,8 +6,9 @@ import {
   type Landmark,
   type MovementProfile,
   type MovementSide,
-  type POSE_LANDMARKS,
 } from '@apex/domain';
+
+import { drawAngle, drawPlatedText, drawSkeleton } from './draw';
 
 import type { LoadedVideo } from './video-reader';
 
@@ -60,14 +61,6 @@ export interface Keyframe {
 /** Longest edge of a still. Big enough to read, small enough to hold in memory. */
 const MAX_EDGE = 900;
 
-/** The bones drawn: trunk and legs, which is what the shipped profile measures. */
-const BONES: readonly (readonly [keyof typeof POSE_LANDMARKS, keyof typeof POSE_LANDMARKS])[] = [
-  ['shoulder', 'hip'],
-  ['hip', 'knee'],
-  ['knee', 'ankle'],
-  ['ankle', 'footIndex'],
-];
-
 function seek(element: HTMLVideoElement, timeSec: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -88,111 +81,6 @@ function seek(element: HTMLVideoElement, timeSec: number): Promise<void> {
     element.addEventListener('seeked', done);
     element.currentTime = timeSec;
   });
-}
-
-/**
- * Draws the skeleton onto a context already sized to the frame.
- *
- * Shared with the live preview: the overlay a coach watches during the analysis
- * and the still produced afterwards must draw the same points the same way, or
- * one of them is quietly lying about what the model saw.
- */
-export function drawSkeleton(
-  context: CanvasRenderingContext2D,
-  landmarks: readonly Landmark[],
-  width: number,
-  height: number,
-  scale = 1,
-) {
-  const at = (index: number) => {
-    const point = landmarks[index];
-
-    return point === undefined ? null : { x: point.x * width, y: point.y * height };
-  };
-
-  context.lineCap = 'round';
-  context.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-  context.lineWidth = 3 * scale;
-
-  for (const side of ['left', 'right'] as const) {
-    for (const [from, to] of BONES) {
-      const a = at(landmarkIndex(from, side));
-      const b = at(landmarkIndex(to, side));
-      if (!a || !b) continue;
-
-      context.beginPath();
-      context.moveTo(a.x, a.y);
-      context.lineTo(b.x, b.y);
-      context.stroke();
-    }
-  }
-
-  context.fillStyle = '#ffb020';
-  for (const side of ['left', 'right'] as const) {
-    for (const role of ['shoulder', 'hip', 'knee', 'ankle', 'footIndex'] as const) {
-      const point = at(landmarkIndex(role, side));
-      if (!point) continue;
-
-      context.beginPath();
-      context.arc(point.x, point.y, 3.5 * scale, 0, Math.PI * 2);
-      context.fill();
-    }
-  }
-}
-
-/**
- * Draws the angle at a joint as an arc plus its value.
- *
- * The arc is drawn the **shorter** way round, which is the angle that was
- * measured — the reflex angle would be a different number and would look like an
- * error to anyone checking.
- */
-function drawAngle(
-  context: CanvasRenderingContext2D,
-  vertex: { x: number; y: number },
-  a: { x: number; y: number },
-  b: { x: number; y: number },
-  degrees: number,
-  label: string,
-  scale: number,
-) {
-  if (!Number.isFinite(degrees)) return;
-
-  const from = Math.atan2(a.y - vertex.y, a.x - vertex.x);
-  const to = Math.atan2(b.y - vertex.y, b.x - vertex.x);
-
-  let delta = to - from;
-  while (delta > Math.PI) delta -= 2 * Math.PI;
-  while (delta < -Math.PI) delta += 2 * Math.PI;
-
-  const radius = 26 * scale;
-
-  context.beginPath();
-  context.arc(vertex.x, vertex.y, radius, from, from + delta, delta < 0);
-  context.strokeStyle = '#ffb020';
-  context.lineWidth = 3 * scale;
-  context.stroke();
-
-  const middle = from + delta / 2;
-  const textX = vertex.x + Math.cos(middle) * radius * 1.9;
-  const textY = vertex.y + Math.sin(middle) * radius * 1.9;
-  const text = `${label} ${String(Math.round(degrees))}°`;
-
-  context.font = `${String(Math.round(15 * scale))}px system-ui, sans-serif`;
-  context.textAlign = 'center';
-  context.textBaseline = 'middle';
-
-  const width = context.measureText(text).width;
-  context.fillStyle = 'rgba(0, 0, 0, 0.72)';
-  context.fillRect(
-    textX - width / 2 - 6 * scale,
-    textY - 11 * scale,
-    width + 12 * scale,
-    22 * scale,
-  );
-
-  context.fillStyle = '#ffb020';
-  context.fillText(text, textX, textY);
 }
 
 /**
@@ -270,15 +158,7 @@ function render(
   // The caption, so a still pulled out of context still says what it shows.
   const caption = `${position.label} · Sekunde ${(timestampMs / 1000).toFixed(1).replace('.', ',')}`;
 
-  context.font = `${String(Math.round(15 * scale))}px system-ui, sans-serif`;
-  context.textAlign = 'left';
-  context.textBaseline = 'top';
-  const captionWidth = context.measureText(caption).width;
-
-  context.fillStyle = 'rgba(0, 0, 0, 0.72)';
-  context.fillRect(0, 0, captionWidth + 20 * scale, 30 * scale);
-  context.fillStyle = '#ffffff';
-  context.fillText(caption, 10 * scale, 8 * scale);
+  drawPlatedText(context, caption, 0, 0, scale);
 
   return { dataUrl: canvas.toDataURL('image/png'), angles };
 }

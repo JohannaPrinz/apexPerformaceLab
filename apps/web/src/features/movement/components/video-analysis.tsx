@@ -2,25 +2,30 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { FileVideo, Pause, Play, RotateCcw, ShieldCheck, Square } from 'lucide-react';
+import { Download, FileVideo, Pause, Play, RotateCcw, ShieldCheck, Square } from 'lucide-react';
 
 import {
+  checkTargets,
   defaultAnalysisConfig,
   movementValues,
   MOVEMENT_REFUSAL_MESSAGES,
   profileForExercise,
   summariseBlocks,
   type AngleTargetConfig,
+  type AnnotatedFrame,
   type ModuleConfiguration,
+  type MovementProfile,
   type MovementRefusal,
   type MovementResult,
+  type MovementSide,
   type SummaryBlock,
 } from '@apex/domain';
 import { Button } from '@apex/ui';
 
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_TARGET } from '@/components/common/touch';
 
-import { captureKeyframes, drawSkeleton, type Keyframe } from '../analysis/keyframes';
+import { drawSkeleton } from '../analysis/draw';
+import { captureKeyframes, type Keyframe } from '../analysis/keyframes';
 import {
   analyseClip,
   DEFAULT_SAMPLE_FPS,
@@ -33,6 +38,8 @@ import {
   type PoseModelName,
 } from '../analysis/pose-model';
 import { createVideoFrameReader, loadVideoFile, type LoadedVideo } from '../analysis/video-reader';
+import { summaryLines } from '../export/overlay';
+import { annotatedExportSupport, recordAnnotatedClip } from '../export/record';
 
 import { AnalysisResults } from './analysis-results';
 import { AnalysisSetup } from './analysis-setup';
@@ -97,6 +104,15 @@ type Phase =
       readonly progress: AnalysisProgress;
       readonly recordedAt: string;
       readonly keyframes: readonly Keyframe[];
+      /**
+       * Every frame the analysis read, with the pose and angles it measured.
+       *
+       * Held here for as long as the results are on screen so the annotated
+       * export can be drawn from the analysis's own numbers. Dropped with the
+       * rest of the phase when the coach starts over — like the video, it is
+       * never stored and never leaves the tab.
+       */
+      readonly annotations: readonly AnnotatedFrame[];
     }
   | { readonly kind: 'refused'; readonly refusal: MovementRefusal; readonly detail: string }
   | { readonly kind: 'error'; readonly message: string };
@@ -218,6 +234,10 @@ export function VideoAnalysis({ target }: { readonly target: AnalysisTarget }) {
       const run = await analyseClip(reader, profile, tracks, {
         sampleFps,
         signal: controller.signal,
+        // Kept so the annotated export can use the analysis's own landmarks and
+        // angles. Asking the model again would produce a video whose numbers
+        // disagree with the table beside it.
+        collectFrames: true,
         onProgress: (progress) => setPhase({ kind: 'running', progress, totalFrames }),
         onFrame: (landmarks) => {
           const canvas = overlayRef.current;
@@ -257,9 +277,9 @@ export function VideoAnalysis({ target }: { readonly target: AnalysisTarget }) {
         return;
       }
 
-      // Two extra inferences, after the numbers are settled: the stills exist to
-      // explain them, so they come from the same model on the same frames rather
-      // than from anything remembered.
+      // No further inference: the stills are drawn from the poses the analysis
+      // already measured, which is the only way picture and table can be talking
+      // about the same thing.
       setPhase({ kind: 'preparing', step: 'Standbilder werden erzeugt' });
 
       const keyframes = await captureKeyframes(
@@ -273,6 +293,7 @@ export function VideoAnalysis({ target }: { readonly target: AnalysisTarget }) {
       setPhase({
         kind: 'done',
         keyframes,
+        annotations: run.annotations,
         result: run.outcome.result,
         progress: run.progress,
         // The file's own timestamp where the browser exposes one; otherwise now.
@@ -406,6 +427,22 @@ export function VideoAnalysis({ target }: { readonly target: AnalysisTarget }) {
 
           {phase.kind === 'done' || phase.kind === 'refused' ? (
             <ReplayControls video={videoRef} overlay={overlayRef} />
+          ) : null}
+
+          {phase.kind === 'done' && profile ? (
+            <ExportControl
+              video={videoRef}
+              overlay={overlayRef}
+              annotations={phase.annotations}
+              profile={profile}
+              tracks={tracks}
+              targets={targets}
+              side={phase.result.clearerSide}
+              summary={summaryLines(
+                phase.result.repetitions,
+                checkTargets(values, profile, targets, edited),
+              )}
+            />
           ) : null}
         </section>
 
@@ -639,6 +676,169 @@ function SummaryBlocks({ blocks }: { readonly blocks: readonly SummaryBlock[] })
         ))}
       </dl>
     </section>
+  );
+}
+
+/**
+ * Making the annotated video the coach can hand over.
+ *
+ * ## Why it is offered here and not on the results
+ *
+ * It is a thing done *to the video*, so it sits with the other video controls.
+ * The results below are numbers; this is the recording with those numbers drawn
+ * on it.
+ *
+ * ## What it does not do
+ *
+ * It does not store anything. The file goes straight to the coach's disk
+ * through an object URL that is revoked the moment the download starts — there
+ * is no upload, no link, and nothing left in the tab afterwards.
+ *
+ * ## Why the button can be disabled with a sentence
+ *
+ * `MediaRecorder` and `captureStream` are not everywhere. A button that failed
+ * after a coach had waited through a whole recording would be worse than one
+ * that says up front which part this browser is missing.
+ */
+function ExportControl({
+  video,
+  overlay,
+  annotations,
+  profile,
+  tracks,
+  targets,
+  side,
+  summary,
+}: {
+  readonly video: React.RefObject<LoadedVideo | null>;
+  readonly overlay: React.RefObject<HTMLCanvasElement | null>;
+  readonly annotations: readonly AnnotatedFrame[];
+  readonly profile: MovementProfile;
+  readonly tracks: readonly string[];
+  readonly targets: readonly AngleTargetConfig[];
+  readonly side: MovementSide;
+  readonly summary: readonly string[];
+}) {
+  const [progress, setProgress] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  /**
+   * What this browser can do, asked once.
+   *
+   * A lazy initialiser rather than an effect: the answer cannot change while the
+   * screen is open, and an effect would set state on the first render for no
+   * reason. Safe from hydration trouble because this control only exists after
+   * an analysis has run, which cannot happen on a server.
+   */
+  const [support] = useState(annotatedExportSupport);
+
+  const running = progress !== null;
+
+  const start = async () => {
+    const loaded = video.current;
+    if (!loaded) return;
+
+    // The live overlay draws on a canvas laid over the element. The export
+    // paints its own, so the two would otherwise show the skeleton twice.
+    const canvas = overlay.current;
+    const context = canvas?.getContext('2d');
+    if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height);
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    setError(null);
+    setProgress(0);
+
+    try {
+      const produced = await recordAnnotatedClip({
+        video: loaded.element,
+        annotations,
+        profile,
+        tracks,
+        targets,
+        side,
+        summary,
+        signal: controller.signal,
+        onProgress: setProgress,
+      });
+
+      const url = URL.createObjectURL(produced.blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `bewegungsanalyse.${produced.extension}`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (caught) {
+      // A cancelled export is not a failure — the coach asked for it to stop.
+      if (controller.signal.aborted) setError(null);
+      else {
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : 'Das Analysevideo konnte nicht erzeugt werden.',
+        );
+      }
+    } finally {
+      abortRef.current = null;
+      setProgress(null);
+    }
+  };
+
+  if (!support.supported) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        Analysevideo hier nicht verfügbar: {support.reason}
+      </p>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          variant="outline"
+          className={TOUCH_BUTTON}
+          disabled={running || annotations.length === 0}
+          onClick={() => {
+            void start();
+          }}
+        >
+          <Download aria-hidden="true" className="size-4" />
+          {running
+            ? `Analysevideo wird erzeugt … ${String(Math.round((progress ?? 0) * 100))} %`
+            : 'Analysevideo herunterladen'}
+        </Button>
+
+        {running ? (
+          <Button
+            variant="ghost"
+            className={TOUCH_BUTTON}
+            onClick={() => {
+              abortRef.current?.abort();
+            }}
+          >
+            Abbrechen
+          </Button>
+        ) : null}
+      </div>
+
+      <p className="max-w-prose text-xs text-pretty text-muted-foreground">
+        {/* Said outright: the recording runs in real time because that is how a
+            canvas is captured, and a coach who expected it to be instant would
+            think it had hung. */}
+        Das Video läuft dabei einmal in Echtzeit ab. Es enthält das Originalbild, das Skelett, die
+        gewählten Winkel, die Wiederholungsnummer und zum Schluss das Ergebnis. Alles entsteht auf
+        diesem Gerät; nichts wird hochgeladen oder gespeichert.
+      </p>
+
+      {error === null ? null : (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 
