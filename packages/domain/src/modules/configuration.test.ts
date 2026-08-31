@@ -5,8 +5,10 @@ import {
   expectedMeasurementCount,
   measurementsWithRole,
   measurementTypeIdsOf,
+  meetsAngleTarget,
   moduleConfigurationSchema,
   readModuleConfiguration,
+  targetForReading,
   type ModuleConfiguration,
 } from './configuration';
 
@@ -305,5 +307,131 @@ describe('the test protocol', () => {
     });
 
     expect(refused.success).toBe(false);
+  });
+});
+
+/**
+ * Angle targets, and how a stored one finds the reading it judges.
+ *
+ * The rule under test is that the match goes through the movement profile: a
+ * target names `knee` / `flexed`, while the measurement beside it carries the
+ * track key and the position's *label*. Nothing records that mapping, so it is
+ * reconstructed — and where it cannot be, the honest answer is that the reading
+ * is simply not judged.
+ */
+describe('angle targets', () => {
+  const target = { track: 'knee', position: 'flexed', comparison: 'at_most' as const, degrees: 90 };
+
+  const configuration = {
+    movement: { profileKey: 'squat', targets: [target] },
+  } as unknown as ModuleConfiguration;
+
+  // The axes the automatically created video-analysis test fills in.
+  const reading = {
+    measurementTypeId: 'mt_angle',
+    side: 'LEFT',
+    context: { joint: 'knee', position: 'gebeugt' },
+  };
+
+  it('finds the target through the profile, label and all', () => {
+    expect(targetForReading(configuration, reading)).toEqual(target);
+  });
+
+  it('accepts the position key as well as its label', () => {
+    expect(
+      targetForReading(configuration, {
+        ...reading,
+        context: { joint: 'knee', position: 'flexed' },
+      }),
+    ).toEqual(target);
+  });
+
+  it('does not judge another joint', () => {
+    expect(
+      targetForReading(configuration, {
+        ...reading,
+        context: { joint: 'hip', position: 'gebeugt' },
+      }),
+    ).toBeNull();
+  });
+
+  it('does not judge another moment of the movement', () => {
+    // 78° at the bottom of a squat and 78° standing describe different people.
+    expect(
+      targetForReading(configuration, {
+        ...reading,
+        context: { joint: 'knee', position: 'gestreckt' },
+      }),
+    ).toBeNull();
+  });
+
+  it('refuses to guess where the joint axis is missing and the profile has several', () => {
+    expect(
+      targetForReading(configuration, { ...reading, context: { position: 'gebeugt' } }),
+    ).toBeNull();
+  });
+
+  it('answers nothing for a test a coach labelled their own way', () => {
+    // "unten" relates to no profile position, and inventing a match would put a
+    // verdict against a threshold that may have meant something else.
+    expect(
+      targetForReading(configuration, {
+        ...reading,
+        context: { joint: 'linkes Knie', position: 'unten' },
+      }),
+    ).toBeNull();
+  });
+
+  it('answers nothing where no analysis, no target or no profile is stored', () => {
+    expect(targetForReading(null, reading)).toBeNull();
+    expect(targetForReading({} as ModuleConfiguration, reading)).toBeNull();
+    expect(
+      targetForReading(
+        { movement: { profileKey: 'squat', targets: [] } } as unknown as ModuleConfiguration,
+        reading,
+      ),
+    ).toBeNull();
+    expect(
+      targetForReading(
+        { movement: { profileKey: 'nope', targets: [target] } } as unknown as ModuleConfiguration,
+        reading,
+      ),
+    ).toBeNull();
+  });
+
+  it('decides at most, at least and equals', () => {
+    expect(meetsAngleTarget(88, target)).toBe(true);
+    expect(meetsAngleTarget(90, target)).toBe(true);
+    expect(meetsAngleTarget(92, target)).toBe(false);
+
+    const atLeast = { ...target, comparison: 'at_least' as const };
+    expect(meetsAngleTarget(92, atLeast)).toBe(true);
+    expect(meetsAngleTarget(88, atLeast)).toBe(false);
+  });
+
+  it('allows a degree either way for equals, as the analysis screen does', () => {
+    const equals = { ...target, comparison: 'equals' as const };
+
+    expect(meetsAngleTarget(90, equals)).toBe(true);
+    expect(meetsAngleTarget(91, equals)).toBe(true);
+    expect(meetsAngleTarget(92, equals)).toBe(false);
+  });
+
+  it('keeps the stored analysis through a read, which it did not used to', () => {
+    // The key was written but never declared, so Zod stripped it and the
+    // targets were write-only. This is the test that holds the fix.
+    const read = readModuleConfiguration(
+      {
+        measurementTypes: [{ measurementTypeId: 'mt_angle', role: 'required' }],
+        dimensions: [
+          { key: 'joint', label: 'Gelenk' },
+          { key: 'position', label: 'Position' },
+        ],
+        movement: { profileKey: 'squat', targets: [target] },
+      },
+      2,
+    );
+
+    expect(read?.movement?.targets).toEqual([target]);
   });
 });

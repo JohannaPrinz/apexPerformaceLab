@@ -28,7 +28,7 @@
  *   not "Auswertung", which is the evaluation itself and does not exist yet.
  */
 
-import type { AssessmentModuleStatus, MeasurementRole, ModuleKey } from '@apex/domain';
+import type { MeasurementRole, ModuleKey } from '@apex/domain';
 
 /** What a test is called. */
 export const MODULE_LABELS_DE: Readonly<Record<ModuleKey, string>> = {
@@ -52,13 +52,7 @@ export const MODULE_LABELS_DE: Readonly<Record<ModuleKey, string>> = {
  * "Läuft" rather than "In Bearbeitung": it is shorter, which matters in a badge
  * beside a second badge on a 375px screen, and it is what a coach would say.
  */
-export const MODULE_STATUS_LABELS_DE: Readonly<Record<AssessmentModuleStatus, string>> = {
-  PLANNED: 'Geplant',
-  IN_PROGRESS: 'Läuft',
-  COMPLETED: 'Abgeschlossen',
-  SKIPPED: 'Übersprungen',
-  ABORTED: 'Abgebrochen',
-};
+export { MODULE_STATUS_LABELS_DE } from '@apex/domain';
 
 /** What a quantity is worth within a test. */
 export const MEASUREMENT_ROLE_LABELS_DE: Readonly<Record<MeasurementRole, string>> = {
@@ -86,12 +80,8 @@ export const ASSESSMENT_TYPE_LABELS_DE: Readonly<Record<string, string>> = {
   FOLLOW_UP: 'Verlaufskontrolle',
 };
 
-/** Which side a value was taken on. */
-export const SIDE_LABELS_DE: Readonly<Record<string, string>> = {
-  LEFT: 'Links',
-  RIGHT: 'Rechts',
-  BILATERAL: 'Beidseitig',
-};
+/** Which side a value was taken on. Owned by the domain — see `SIDE_LABELS_DE`. */
+export { SIDE_LABELS_DE } from '@apex/domain';
 
 /**
  * Where an examination stands.

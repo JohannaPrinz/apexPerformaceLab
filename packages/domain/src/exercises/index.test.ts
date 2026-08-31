@@ -331,7 +331,7 @@ describe('who may be linked as a variant', () => {
 
   it('explains each refusal without naming another workspace', () => {
     expect(describeVariantRefusal('ACROSS_WORKSPACES')).not.toContain('org_');
-    expect(describeVariantRefusal('SAME_EXERCISE')).toContain('itself');
-    expect(describeVariantRefusal('WOULD_EDIT_SYSTEM_CATALOGUE')).toContain('shared');
+    expect(describeVariantRefusal('SAME_EXERCISE')).toContain('sich selbst');
+    expect(describeVariantRefusal('WOULD_EDIT_SYSTEM_CATALOGUE')).toContain('gemeinsam');
   });
 });

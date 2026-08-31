@@ -39,7 +39,7 @@ export function absoluteUrl(path: string): string {
 export function toErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === 'string') return error;
-  return 'An unexpected error occurred.';
+  return 'Es ist ein unerwarteter Fehler aufgetreten.';
 }
 
 /** Type guard that removes `null` and `undefined`, e.g. in `.filter(isPresent)`. */

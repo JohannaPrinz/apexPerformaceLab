@@ -1,6 +1,12 @@
 import { z } from 'zod';
 
 import { bodyFatMethodSchema } from '../athletes/body-fat';
+import {
+  EQUALS_TOLERANCE_DEGREES,
+  movementAnalysisConfigSchema,
+  type AngleTargetConfig,
+} from '../movement/analysis-config';
+import { movementProfile, positionOf } from '../movement/profile';
 
 /**
  * What a Module is configured to record.
@@ -61,6 +67,19 @@ export const MEASUREMENT_ROLES = ['required', 'recommended', 'optional'] as cons
 
 export const measurementRoleSchema = z.enum(MEASUREMENT_ROLES);
 export type MeasurementRole = z.infer<typeof measurementRoleSchema>;
+
+/**
+ * Which side a value was taken on.
+ *
+ * Here rather than in one slice's label file because three of them name it now —
+ * the entry grid, the analysis and the shared document — and a vocabulary with
+ * three callers is a vocabulary, not a screen's private wording.
+ */
+export const SIDE_LABELS_DE: Readonly<Record<string, string>> = {
+  LEFT: 'Links',
+  RIGHT: 'Rechts',
+  BILATERAL: 'Beidseitig',
+};
 
 export const MEASUREMENT_ROLE_LABELS: Readonly<Record<MeasurementRole, string>> = {
   required: 'Required',
@@ -257,7 +276,7 @@ export const moduleConfigurationSchema = z
      */
     measurementTypes: z
       .array(configuredMeasurementSchema)
-      .min(1, 'Select at least one measurement.'),
+      .min(1, 'Bitte mindestens eine Messgröße wählen.'),
 
     /**
      * The exercises this test covers, referenced by catalogue id.
@@ -345,6 +364,19 @@ export const moduleConfigurationSchema = z
      * which is the truth about those tests, not a gap to fill in.
      */
     protocol: testProtocolSchema.optional(),
+
+    /**
+     * The movement analysis this test was judged under.
+     *
+     * Written by the automatically created video-analysis test since that
+     * screen existed — and, until now, **silently dropped on read**: the key was
+     * never declared here, and a Zod object strips what it does not know. So the
+     * comment promising that opening a test later shows what it was judged
+     * against was not true of the code. Declaring it is the fix.
+     *
+     * Absent on every test without a video behind it, which is most of them.
+     */
+    movement: movementAnalysisConfigSchema.optional(),
   })
   .superRefine((configuration, ctx) => {
     // A test cannot compute a quantity it does not record: the derived value is
@@ -380,6 +412,65 @@ export const moduleConfigurationSchema = z
   });
 
 export type ModuleConfiguration = z.infer<typeof moduleConfigurationSchema>;
+export type AngleTarget = AngleTargetConfig;
+
+/**
+ * The target that judges one reading, or `null` where none can be matched.
+ *
+ * ## Why this needs the profile
+ *
+ * A target names a track and a position by their **profile keys** — `knee`,
+ * `flexed`. The measurement beside it names them with whatever the test's axes
+ * were filled with, and the video-analysis test fills them with the track key
+ * for the joint and the position's *label* for the position. Nothing records
+ * that mapping, so it is reconstructed here from the profile the analysis
+ * declared.
+ *
+ * ## Why `null` is a normal answer
+ *
+ * A coach's own test may declare its own values for those axes — "linkes Knie",
+ * "unten" — and nothing relates those to a profile. Then no target can be
+ * matched, and the honest answer is that this reading is not judged, rather
+ * than a verdict against a threshold that may have meant something else.
+ */
+export function targetForReading(
+  configuration: ModuleConfiguration | null | undefined,
+  reading: {
+    readonly measurementTypeId: string;
+    readonly side: string;
+    readonly context: Record<string, string>;
+  },
+): AngleTarget | null {
+  const movement = configuration?.movement;
+  if (movement === undefined || movement.targets.length === 0) return null;
+
+  const profile = movementProfile(movement.profileKey);
+  if (profile === null) return null;
+
+  const joint = reading.context['joint'];
+  const position = reading.context['position'];
+  if (position === undefined) return null;
+
+  return (
+    movement.targets.find((target) => {
+      // One track needs no joint axis to be unambiguous; two do.
+      if (joint !== undefined && target.track !== joint) return false;
+      if (joint === undefined && profile.tracks.length > 1) return false;
+
+      const declared = positionOf(profile, target.position);
+
+      return declared !== null && (declared.label === position || declared.key === position);
+    }) ?? null
+  );
+}
+
+/** Whether a reading meets its target. The one arithmetic, in one place. */
+export function meetsAngleTarget(degrees: number, target: AngleTarget): boolean {
+  if (target.comparison === 'at_most') return degrees <= target.degrees;
+  if (target.comparison === 'at_least') return degrees >= target.degrees;
+
+  return Math.abs(degrees - target.degrees) <= EQUALS_TOLERANCE_DEGREES;
+}
 
 /** The `moduleVersion` this contract corresponds to. */
 export const MODULE_CONFIGURATION_VERSION = 2;

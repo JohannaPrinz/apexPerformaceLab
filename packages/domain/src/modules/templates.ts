@@ -129,7 +129,7 @@ export interface MeasurementTemplate {
 export const MEASUREMENT_TEMPLATES = [
   {
     key: 'lactate_step_test',
-    name: 'Lactate step test',
+    name: 'Laktat-Stufentest',
     moduleKey: 'lactate',
     // Every stage records these quantities together; that is what makes a
     // lactate curve, a heart-rate curve and a perceived-exertion curve
@@ -159,7 +159,7 @@ export const MEASUREMENT_TEMPLATES = [
   },
   {
     key: 'body_fat_measurement',
-    name: 'Body fat measurement',
+    name: 'Körperfettmessung',
     moduleKey: 'body_composition',
     measurements: [
       { key: 'body_fat', role: 'required' },
@@ -202,7 +202,7 @@ export const MEASUREMENT_TEMPLATES = [
    */
   {
     key: 'body_fat_jackson_pollock_3',
-    name: 'Body fat, Jackson & Pollock 3-site',
+    name: 'Körperfett, Jackson & Pollock 3 Falten',
     moduleKey: 'body_composition',
     measurements: [
       { key: 'skinfold_thigh', role: 'required' },
@@ -231,7 +231,7 @@ export const MEASUREMENT_TEMPLATES = [
    */
   {
     key: 'body_fat_jackson_pollock_7',
-    name: 'Body fat, Jackson & Pollock 7-site',
+    name: 'Körperfett, Jackson & Pollock 7 Falten',
     moduleKey: 'body_composition',
     measurements: [
       { key: 'skinfold_chest', role: 'required' },
@@ -252,7 +252,7 @@ export const MEASUREMENT_TEMPLATES = [
 
   {
     key: 'max_strength_test',
-    name: 'Maximal strength test',
+    name: 'Maximalkrafttest',
     moduleKey: 'strength',
     // A barbell or machine test: what was lifted, and how many times. Both
     // required — a load without a repetition count does not say whether it was
@@ -275,7 +275,7 @@ export const MEASUREMENT_TEMPLATES = [
   },
   {
     key: 'force_measurement',
-    name: 'Force measurement',
+    name: 'Kraftmessung',
     moduleKey: 'strength',
     // The instrument reading — dynamometer, force plate, isometric rig. A
     // different **test method** from the one above, not a different way of
@@ -297,14 +297,14 @@ export const MEASUREMENT_TEMPLATES = [
   },
   {
     key: 'muscle_activity_measurement',
-    name: 'Muscle activity measurement',
+    name: 'Muskelaktivitätsmessung',
     moduleKey: 'movement',
     measurements: [{ key: 'muscle_activity', role: 'required' }],
     passes: 1,
     recordsSide: true,
     // The site is an axis, but which sites exist is a professional decision.
     // Declared without values so the coach names them.
-    dimensions: [{ key: 'site', label: 'Measurement site' }],
+    dimensions: [{ key: 'site', label: 'Messstelle' }],
   },
   // ── Standardised time trials ───────────────────────────────────────────────
   //

@@ -92,6 +92,22 @@ export interface SystemMeasurementType {
   readonly unit: string;
   readonly valueType: MeasurementValueType;
   readonly category: MeasurementCategory;
+  /**
+   * Which end of this scale is *more of the quantity* — where the quantity
+   * itself answers that, and only there.
+   *
+   * This is **not** a verdict. It says that 140 kg lifted is more load than
+   * 120 kg, the way 8 N is more force than 6 N: a statement about the unit, not
+   * about the athlete. Whether more is wanted is a professional judgement, and
+   * it stays with the coach on the protocol (`betterDirection` there).
+   *
+   * It exists because a percentile has no meaning without an end to count from,
+   * and a coach who set up a maximal strength test without filling in a
+   * protocol direction still asked a question with an unambiguous answer. Left
+   * undefined on every quantity where the direction is genuinely a judgement —
+   * body fat, heart rate, lactate, RPE, range of motion, muscle activity.
+   */
+  readonly scaleDirection?: 'lower' | 'higher';
 }
 
 /**
@@ -104,7 +120,7 @@ export const SYSTEM_MEASUREMENT_TYPES = [
   // ── Body composition ──────────────────────────────────────────────────────
   {
     key: 'weight',
-    name: 'Weight',
+    name: 'Körpergewicht',
     // **The athlete's body weight**, and nothing else. The load moved during a
     // test is `external_load` under `strength` — a separate quantity in a
     // separate category, deliberately not this one. Reusing `weight` for both
@@ -116,7 +132,7 @@ export const SYSTEM_MEASUREMENT_TYPES = [
   },
   {
     key: 'body_fat',
-    name: 'Body Fat',
+    name: 'Körperfett',
     unit: '%',
     valueType: 'NUMERIC',
     category: 'body_composition',
@@ -134,49 +150,49 @@ export const SYSTEM_MEASUREMENT_TYPES = [
   // methods. Millimetres, because that is what a caliper reads.
   {
     key: 'skinfold_chest',
-    name: 'Skinfold Chest',
+    name: 'Hautfalte Brust',
     unit: 'mm',
     valueType: 'NUMERIC',
     category: 'body_composition',
   },
   {
     key: 'skinfold_triceps',
-    name: 'Skinfold Triceps',
+    name: 'Hautfalte Trizeps',
     unit: 'mm',
     valueType: 'NUMERIC',
     category: 'body_composition',
   },
   {
     key: 'skinfold_midaxillary',
-    name: 'Skinfold Midaxillary',
+    name: 'Hautfalte Mittelaxillar',
     unit: 'mm',
     valueType: 'NUMERIC',
     category: 'body_composition',
   },
   {
     key: 'skinfold_subscapular',
-    name: 'Skinfold Subscapular',
+    name: 'Hautfalte Subscapular',
     unit: 'mm',
     valueType: 'NUMERIC',
     category: 'body_composition',
   },
   {
     key: 'skinfold_suprailiac',
-    name: 'Skinfold Suprailiac',
+    name: 'Hautfalte Suprailiacal',
     unit: 'mm',
     valueType: 'NUMERIC',
     category: 'body_composition',
   },
   {
     key: 'skinfold_abdomen',
-    name: 'Skinfold Abdomen',
+    name: 'Hautfalte Bauch',
     unit: 'mm',
     valueType: 'NUMERIC',
     category: 'body_composition',
   },
   {
     key: 'skinfold_thigh',
-    name: 'Skinfold Thigh',
+    name: 'Hautfalte Oberschenkel',
     unit: 'mm',
     valueType: 'NUMERIC',
     category: 'body_composition',
@@ -185,12 +201,12 @@ export const SYSTEM_MEASUREMENT_TYPES = [
   // ── Cardiovascular / endurance ────────────────────────────────────────────
   {
     key: 'heart_rate',
-    name: 'Heart Rate',
+    name: 'Herzfrequenz',
     unit: 'bpm',
     valueType: 'NUMERIC',
     category: 'cardiovascular',
   },
-  { key: 'lactate', name: 'Lactate', unit: 'mmol/L', valueType: 'NUMERIC', category: 'endurance' },
+  { key: 'lactate', name: 'Laktat', unit: 'mmol/L', valueType: 'NUMERIC', category: 'endurance' },
   {
     key: 'rpe',
     name: 'RPE',
@@ -214,7 +230,7 @@ export const SYSTEM_MEASUREMENT_TYPES = [
   },
   {
     key: 'speed',
-    name: 'Speed',
+    name: 'Geschwindigkeit',
     // Kilometres per hour — how a treadmill is set. Deliberately **not** derived
     // from `pace`: the two are the same demand under a reciprocal, but a
     // measurement is what was recorded, and converting one into the other would
@@ -228,15 +244,23 @@ export const SYSTEM_MEASUREMENT_TYPES = [
   // ── Strength ──────────────────────────────────────────────────────────────
   {
     key: 'grip_strength',
-    name: 'Grip Strength',
+    name: 'Griffkraft',
     unit: 'kg',
     valueType: 'NUMERIC',
     category: 'strength',
+    scaleDirection: 'higher',
   },
-  { key: 'force', name: 'Force', unit: 'N', valueType: 'NUMERIC', category: 'strength' },
+  {
+    key: 'force',
+    name: 'Kraft',
+    unit: 'N',
+    valueType: 'NUMERIC',
+    category: 'strength',
+    scaleDirection: 'higher',
+  },
   {
     key: 'external_load',
-    name: 'External Load',
+    name: 'Externe Last',
     // The load moved in an attempt — the bar, the stack, the added weight.
     // **Never the athlete's body weight**, which is `weight` under
     // `body_composition`. Two quantities that happen to share a unit are still
@@ -248,14 +272,15 @@ export const SYSTEM_MEASUREMENT_TYPES = [
     unit: 'kg',
     valueType: 'NUMERIC',
     category: 'strength',
+    scaleDirection: 'higher',
   },
   {
     key: 'repetitions',
-    name: 'Repetitions',
+    name: 'Wiederholungen',
     // A count, so the unit names what is counted. Numeric rather than an
     // integer type because the model has three value columns and no fourth —
     // the column is `Decimal(12,4)` and a whole number stores exactly.
-    unit: 'repetitions',
+    unit: 'Wdh.',
     valueType: 'NUMERIC',
     category: 'strength',
   },
@@ -265,23 +290,28 @@ export const SYSTEM_MEASUREMENT_TYPES = [
   // Measurement — never in the type.
   {
     key: 'muscle_activity',
-    name: 'Muscle Activity',
+    name: 'Muskelaktivität',
     unit: '%',
     valueType: 'NUMERIC',
     category: 'muscle_activity',
+    // A percentage of activation: 40 % is more activation than 30 %, the way
+    // 8 N is more force than 6 N. That is what the unit says and all this
+    // claims — whether more is wanted at a given site is the coach's judgement,
+    // and it stays on the protocol.
+    scaleDirection: 'higher',
   },
 
   // ── Mobility ──────────────────────────────────────────────────────────────
   {
     key: 'range_of_motion',
-    name: 'Range of Motion',
+    name: 'Bewegungsumfang',
     unit: '°',
     valueType: 'NUMERIC',
     category: 'mobility',
   },
   {
     key: 'joint_angle',
-    name: 'Joint Angle',
+    name: 'Gelenkwinkel',
     // **A joint angle at a moment**, not the arc between two moments — that is
     // `range_of_motion` above, and the two are a difference apart. A squat is
     // read by the angle at the bottom; a range of 95° reached from 130° instead
@@ -300,14 +330,15 @@ export const SYSTEM_MEASUREMENT_TYPES = [
   // ── Performance ───────────────────────────────────────────────────────────
   {
     key: 'jump_height',
-    name: 'Jump Height',
+    name: 'Sprunghöhe',
     unit: 'cm',
     valueType: 'NUMERIC',
     category: 'performance',
+    scaleDirection: 'higher',
   },
   {
     key: 'duration',
-    name: 'Duration',
+    name: 'Dauer',
     // **The one time quantity.** A run, a station, a hold, a single repetition
     // and a whole race are all durations; what a given one *is* comes from the
     // exercise it names, the pass it belongs to and its context — never from a
@@ -329,8 +360,8 @@ export const SYSTEM_MEASUREMENT_TYPES = [
   },
   {
     key: 'running_cadence',
-    name: 'Running Cadence',
-    unit: 'steps/min',
+    name: 'Schrittfrequenz',
+    unit: 'Schritte/min',
     valueType: 'NUMERIC',
     category: 'performance',
   },
@@ -339,6 +370,16 @@ export const SYSTEM_MEASUREMENT_TYPES = [
 export type SystemMeasurementTypeKey = (typeof SYSTEM_MEASUREMENT_TYPES)[number]['key'];
 
 /** Catalogue lookup by key. */
+/**
+ * The direction the quantity itself names, or `null` where it names none.
+ *
+ * Read only where a protocol declares nothing — see `scaleDirection`. A coach's
+ * declared direction always wins, including where it contradicts this one.
+ */
+export function scaleDirectionOf(key: string): 'lower' | 'higher' | null {
+  return findSystemMeasurementType(key)?.scaleDirection ?? null;
+}
+
 export function findSystemMeasurementType(key: string): SystemMeasurementType | undefined {
   return SYSTEM_MEASUREMENT_TYPES.find((type) => type.key === key);
 }

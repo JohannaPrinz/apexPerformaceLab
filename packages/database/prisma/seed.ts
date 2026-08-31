@@ -91,13 +91,29 @@ async function main() {
    * (`WHERE "organizationId" IS NULL`), which Prisma's `upsert` cannot target.
    */
   let created = 0;
+  let updated = 0;
   for (const type of SYSTEM_MEASUREMENT_TYPES) {
     const existing = await db.measurementType.findFirst({
       where: { key: type.key, organizationId: null },
-      select: { id: true },
+      select: { id: true, name: true, unit: true },
     });
 
-    if (existing) continue;
+    // Matched on the key, then brought in line with the catalogue — the same
+    // arrangement as the exercises below, and for the same reason: the key is
+    // the identity and never changes, the name and the unit are the words a coach reads. When
+    // the catalogue was translated, an installation that had already seeded
+    // kept showing "External Load" beside a German protocol, because a seed
+    // that skips every row it finds can add a quantity but never correct one.
+    if (existing) {
+      if (existing.name !== type.name || existing.unit !== type.unit) {
+        await db.measurementType.update({
+          where: { id: existing.id },
+          data: { name: type.name, unit: type.unit },
+        });
+        updated++;
+      }
+      continue;
+    }
 
     await db.measurementType.create({
       data: {
@@ -168,7 +184,7 @@ async function main() {
   console.info(
     `Seeded organization "${organization.slug}" with owner ${owner.email} ` +
       `and coach profile ${coach.id}. ` +
-      `Measurement catalogue: ${created} added, ${SYSTEM_MEASUREMENT_TYPES.length} total. ` +
+      `Measurement catalogue: ${created} added, ${updated} updated, ${SYSTEM_MEASUREMENT_TYPES.length} total. ` +
       `Exercise catalogue: ${exercisesCreated} added, ${exercisesUpdated} updated, ${SYSTEM_EXERCISES.length} total.`,
   );
 

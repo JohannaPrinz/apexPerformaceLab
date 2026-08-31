@@ -4,6 +4,7 @@ import { MODULE_KEYS } from '../modules';
 
 import {
   findSystemMeasurementType,
+  scaleDirectionOf,
   MEASUREMENT_CATEGORIES,
   MEASUREMENT_CATEGORY_LABELS,
   measurementCategorySchema,
@@ -158,7 +159,7 @@ describe('system measurement type catalogue', () => {
    */
   it('supports a maximal strength attempt', () => {
     expect(findSystemMeasurementType('external_load')?.unit).toBe('kg');
-    expect(findSystemMeasurementType('repetitions')?.unit).toBe('repetitions');
+    expect(findSystemMeasurementType('repetitions')?.unit).toBe('Wdh.');
   });
 
   /**
@@ -222,5 +223,43 @@ describe('category is a filter, not a module binding (§12)', () => {
     );
 
     expect(shared).toEqual(['body_composition', 'strength', 'mobility']);
+  });
+});
+
+/**
+ * A scale direction is a statement about the unit, never about the athlete.
+ *
+ * It exists so a percentile has an end to count from where the coach declared
+ * none. Every quantity whose direction is genuinely a professional judgement
+ * must stay without one — that is the whole point of the distinction, and it is
+ * the half that would be quietly lost if somebody filled the field in
+ * everywhere.
+ */
+describe('the direction a quantity names by itself', () => {
+  it('answers for quantities where more is more of the quantity', () => {
+    expect(scaleDirectionOf('external_load')).toBe('higher');
+    expect(scaleDirectionOf('force')).toBe('higher');
+    expect(scaleDirectionOf('grip_strength')).toBe('higher');
+    expect(scaleDirectionOf('jump_height')).toBe('higher');
+    // A percentage of activation, read the same way as a force in newtons.
+    expect(scaleDirectionOf('muscle_activity')).toBe('higher');
+  });
+
+  it('stays silent wherever the direction is a judgement about a person', () => {
+    for (const key of [
+      'body_fat',
+      'weight',
+      'heart_rate',
+      'lactate',
+      'rpe',
+      'range_of_motion',
+      'joint_angle',
+    ]) {
+      expect(scaleDirectionOf(key)).toBeNull();
+    }
+  });
+
+  it('answers null for a key it does not know', () => {
+    expect(scaleDirectionOf('not_a_type')).toBeNull();
   });
 });

@@ -229,11 +229,11 @@ export function canLinkVariants(
 export function describeVariantRefusal(reason: VariantLinkRefusal): string {
   switch (reason) {
     case 'SAME_EXERCISE':
-      return 'An exercise cannot be a variant of itself.';
+      return 'Eine Übung kann keine Variante von sich selbst sein.';
     case 'ACROSS_WORKSPACES':
-      return 'That exercise is not available in this workspace.';
+      return 'Diese Übung steht in diesem Arbeitsbereich nicht zur Verfügung.';
     case 'WOULD_EDIT_SYSTEM_CATALOGUE':
-      return 'Both of those are system exercises, and the system catalogue is shared by every workspace. Link one of your own exercises instead.';
+      return 'Beides sind Übungen des Systemkatalogs, und der Systemkatalog gehört allen Arbeitsbereichen gemeinsam. Bitte eine eigene Übung verknüpfen.';
   }
 }
 
