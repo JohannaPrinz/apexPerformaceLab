@@ -1,7 +1,19 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { AthleteTile } from './athlete-tile';
+
+// The tile now carries the action menu, whose entries call server actions.
+// Mocked so a render does not reach for a database — the guarantees behind
+// those actions are tested in `server/access.test.ts`, against the service.
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+
+vi.mock('../server/actions', () => ({
+  setAthleteArchivedAction: () => Promise.resolve({}),
+  shareAthleteAction: () => Promise.resolve({}),
+  confirmAthleteShareAction: () => Promise.resolve({}),
+  revokeAthleteShareAction: () => Promise.resolve({}),
+}));
 
 /**
  * The tile is a shortcut into a record, so what matters is that it leads to the

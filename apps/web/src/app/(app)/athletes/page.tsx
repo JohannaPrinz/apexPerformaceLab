@@ -50,10 +50,17 @@ export default async function AthletesPage({
 
   const filters = { status, ...(search === '' ? {} : { search }) };
 
+  const coaches = await api.athletes.shareableCoaches();
+
   const [page, total] = await Promise.all([
     api.athletes.list({ ...filters, cursor: cursor === '' ? null : cursor, limit: PAGE_SIZE }),
     api.athletes.count(filters),
   ]);
+
+  // Who each of them is already released to — one read for the whole page.
+  const shares = await api.athletes.sharesForMany({
+    athleteIds: page.items.map((athlete) => athlete.id),
+  });
 
   const { items, nextCursor } = page;
 
@@ -177,7 +184,11 @@ export default async function AthletesPage({
           <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {items.map((athlete) => (
               <li key={athlete.id} className="min-w-0">
-                <AthleteTile athlete={athlete} />
+                <AthleteTile
+                  athlete={athlete}
+                  coaches={coaches}
+                  shares={shares[athlete.id] ?? []}
+                />
               </li>
             ))}
           </ul>

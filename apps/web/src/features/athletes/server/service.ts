@@ -113,7 +113,23 @@ const toRecord = (row: Record<string, unknown>): AthleteRecord =>
  */
 export function athleteWhere(
   tenant: Pick<TenantContext, 'organizationId'>,
-  { search, status = 'active' }: { search?: string | undefined; status?: AthleteStatusFilter },
+  {
+    search,
+    status = 'active',
+    visibility,
+  }: {
+    search?: string | undefined;
+    status?: AthleteStatusFilter;
+    /**
+     * Who is looking (§7).
+     *
+     * Merged into the query rather than checked afterwards: a filter that runs
+     * in the query cannot be forgotten by a caller and never returns a row it
+     * then has to hide. Omitted only where the caller has already narrowed by
+     * something stricter.
+     */
+    visibility?: Record<string, unknown>;
+  },
 ) {
   const words = (search ?? '')
     .split(/\s+/)
@@ -121,6 +137,7 @@ export function athleteWhere(
     .filter((word) => word !== '');
 
   return scoped(tenant, {
+    ...(visibility ?? {}),
     ...(status === 'active' ? { archivedAt: null } : {}),
     ...(status === 'archived' ? { archivedAt: { not: null } } : {}),
     ...(words.length === 0
@@ -146,9 +163,11 @@ export async function listAthletes(
   db: AthleteDb,
   tenant: Pick<TenantContext, 'organizationId'>,
   { cursor, limit, search, status }: ListAthletesInput,
+  /** Who is looking (§7). Omitted, the list is workspace-wide as it always was. */
+  visibility: Record<string, unknown> = {},
 ): Promise<Page<AthleteRecord>> {
   const rows = await db.athlete.findMany({
-    where: athleteWhere(tenant, { search, status }),
+    where: athleteWhere(tenant, { search, status, visibility }),
     select: athleteSelect,
     orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
     // One extra row answers "is there a next page" without a second query.
@@ -176,8 +195,16 @@ export async function countAthletesMatching(
   db: AthleteDb,
   tenant: Pick<TenantContext, 'organizationId'>,
   filter: { search?: string | undefined; status?: AthleteStatusFilter },
+  /**
+   * Who is looking (§7).
+   *
+   * The count is filtered exactly like the list it counts. Left out, the screen
+   * says "17 Athleten" over a list of three — and the difference is precisely
+   * the records this viewer may not see.
+   */
+  visibility: Record<string, unknown> = {},
 ): Promise<number> {
-  return db.athlete.count({ where: athleteWhere(tenant, filter) });
+  return db.athlete.count({ where: athleteWhere(tenant, { ...filter, visibility }) });
 }
 
 /**
@@ -193,9 +220,11 @@ export async function getAthlete(
   db: AthleteDb,
   tenant: Pick<TenantContext, 'organizationId'>,
   athleteId: string,
+  /** Who is looking (§7). Omitted, the read is workspace-wide as it always was. */
+  visibility: Record<string, unknown> = {},
 ): Promise<AthleteRecord | null> {
   const row = await db.athlete.findFirst({
-    where: scoped(tenant, { id: athleteId }),
+    where: scoped(tenant, { id: athleteId, ...visibility }),
     select: athleteSelect,
   });
 

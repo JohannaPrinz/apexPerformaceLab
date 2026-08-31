@@ -2,13 +2,13 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { TRPCError } from '@trpc/server';
-import { ArrowLeft, ChevronDown, Pencil, Video } from 'lucide-react';
+import { ArrowLeft, ChevronDown, Video } from 'lucide-react';
 
 import { ageAt } from '@apex/domain';
 import { Badge, Button } from '@apex/ui';
 
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_TARGET } from '@/components/common/touch';
-import { ArchiveButton } from '@/features/athletes';
+import { AthleteSettingsMenu } from '@/features/athletes/components/athlete-settings-menu';
 import { TrendCards } from '@/features/athletes/components/trend-cards';
 import { ATHLETE_SEX_LABELS_DE } from '@/features/athletes/labels';
 import { parseTrendCards, TREND_CARD_PARAM } from '@/features/athletes/trend-slots';
@@ -97,7 +97,7 @@ export default async function AthletePage({
   // is stored on the athlete.
   const linked = parseTrendCards(query[TREND_CARD_PARAM]);
 
-  const [cases, assessments, trends] = await Promise.all([
+  const [cases, assessments, trends, coaches, shares] = await Promise.all([
     // The status filter exists in the schema already; only the interface was
     // missing. `OPEN` alone is the working view.
     api.cases.listForAthlete({ athleteId, ...(showAll ? {} : { status: 'OPEN' as const }) }),
@@ -108,6 +108,8 @@ export default async function AthletePage({
       athleteId,
       slots: linked.map((card) => ({ key: card.key, exerciseIds: [...card.exerciseIds] })),
     }),
+    api.athletes.shareableCoaches(),
+    api.athletes.shares({ athleteId }),
   ]);
 
   /**
@@ -169,31 +171,28 @@ export default async function AthletePage({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* The athlete is carried into the analysis as a suggestion, not as
-                a commitment: the coach still confirms it when filing, because
-                arriving here and analysing somebody else's video is an ordinary
-                mistake and a silent assignment would hide it. */}
-            <Button asChild variant="outline" className={TOUCH_BUTTON}>
+            {/* Analysing a video is a thing a coach *does* with an athlete,
+                so it sits with the athlete rather than in the settings menu.
+                The athlete is carried in as a suggestion and confirmed when the
+                analysis is filed — arriving here and analysing somebody else's
+                video is an ordinary mistake, and a silent assignment would hide
+                it. The coach also picks the examination it belongs to there,
+                which is how the analysis reaches a report. */}
+            <Button asChild variant="accent" className={TOUCH_BUTTON}>
               <Link href={`/videoanalyse?athlete=${athlete.id}`}>
                 <Video aria-hidden="true" className="size-4" />
                 Videoanalyse
               </Link>
             </Button>
 
-            <Button asChild variant="outline" className={TOUCH_BUTTON}>
-              {/* The accessible name contains the visible label, so this is not
-                  the "label in name" failure. It is needed because the cases
-                  below carry a second "Bearbeiten" each. */}
-              <Link
-                href={`/athletes/${athlete.id}/edit`}
-                aria-label={`Bearbeiten: ${athlete.firstName} ${athlete.lastName}`}
-              >
-                <Pencil aria-hidden="true" className="size-4" />
-                Bearbeiten
-              </Link>
-            </Button>
-
-            <ArchiveButton athleteId={athlete.id} archived={athlete.archivedAt !== null} />
+            <AthleteSettingsMenu
+              athleteId={athlete.id}
+              firstName={athlete.firstName}
+              lastName={athlete.lastName}
+              archived={athlete.archivedAt !== null}
+              coaches={coaches}
+              shares={shares}
+            />
           </div>
         </header>
 
@@ -308,7 +307,7 @@ export default async function AthletePage({
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Link
               href={athleteHref(athlete.id, {
                 cases: showAll ? null : 'all',

@@ -240,3 +240,55 @@ export async function recordTrackingAction(
     return { message: toMessage(error) };
   }
 }
+
+/**
+ * Offering, confirming and withdrawing access to an athlete.
+ *
+ * Thin callers of the procedures, which is where every check lives: the athlete
+ * must be one the caller may see, and the colleague must be a coach of this
+ * workspace. Neither is decided here.
+ */
+export async function shareAthleteAction(
+  athleteId: string,
+  coachId: string,
+): Promise<{ message?: string }> {
+  try {
+    await api.athletes.share({ athleteId, coachId });
+    revalidatePath(`/athletes/${athleteId}`);
+    revalidatePath('/athletes');
+
+    return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
+export async function confirmAthleteShareAction(
+  athleteId: string,
+  coachId: string,
+): Promise<{ message?: string }> {
+  try {
+    await api.athletes.confirmShare({ athleteId, coachId });
+    revalidatePath(`/athletes/${athleteId}`);
+    revalidatePath('/athletes');
+
+    return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
+export async function revokeAthleteShareAction(
+  athleteId: string,
+  coachId: string,
+): Promise<{ message?: string }> {
+  try {
+    await api.athletes.revokeShare({ athleteId, coachId });
+    revalidatePath(`/athletes/${athleteId}`);
+    revalidatePath('/athletes');
+
+    return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}

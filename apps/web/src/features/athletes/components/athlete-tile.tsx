@@ -4,6 +4,8 @@ import { Badge } from '@apex/ui';
 
 import { FOCUS_RING } from '@/components/common/touch';
 
+import { AthleteSettingsMenu } from './athlete-settings-menu';
+
 /**
  * One athlete on the workspace overview.
  *
@@ -44,7 +46,16 @@ export interface AthleteTileData {
   readonly archivedAt?: Date | null;
 }
 
-export function AthleteTile({ athlete }: { readonly athlete: AthleteTileData }) {
+export function AthleteTile({
+  athlete,
+  coaches = [],
+  shares = [],
+}: {
+  readonly athlete: AthleteTileData;
+  /** Coaches of this workspace, the caller excluded. Empty, sharing offers none. */
+  readonly coaches?: readonly { id: string; name: string }[];
+  readonly shares?: readonly { coachId: string; coachName: string; confirmedAt: Date | null }[];
+}) {
   const initials = `${athlete.firstName.slice(0, 1)}${athlete.lastName.slice(0, 1)}`.toUpperCase();
 
   const facts = [
@@ -54,15 +65,18 @@ export function AthleteTile({ athlete }: { readonly athlete: AthleteTileData }) 
   ].filter((fact): fact is string => fact !== null);
 
   return (
-    // The whole tile is the link, so the target is the card rather than the
-    // name — on a phone that is the difference between a comfortable tap and a
-    // careful one.
-    <Link
-      href={`/athletes/${athlete.id}`}
-      // `h-full`: grid items are stretched by the row, but the link inside was
-      // not — a three-line name left its neighbours short and the row ragged.
-      className={`${FOCUS_RING} flex h-full min-h-11 items-start gap-3 rounded-lg border border-border bg-card p-4 transition-colors hover:border-border-strong`}
-    >
+    /* The card is the frame; the link fills it and the menu sits above it.
+       A nested button inside an anchor is invalid and unreachable by keyboard,
+       so the link is a sibling stretched across the card rather than its
+       parent — the whole tile stays one tap target, and the menu keeps its
+       own. */
+    <div className="relative flex h-full min-h-11 items-start gap-3 rounded-lg border border-border bg-card p-4 transition-colors hover:border-border-strong">
+      <Link
+        href={`/athletes/${athlete.id}`}
+        aria-label={`${athlete.firstName} ${athlete.lastName}`}
+        className={`${FOCUS_RING} absolute inset-0 rounded-lg`}
+      />
+
       <span
         aria-hidden="true"
         className="grid size-11 shrink-0 place-items-center rounded-full bg-muted text-sm font-medium text-muted-foreground"
@@ -99,6 +113,19 @@ export function AthleteTile({ athlete }: { readonly athlete: AthleteTileData }) 
           ) : null}
         </span>
       </span>
-    </Link>
+
+      {/* Above the link, so it is clickable, and in the head of the card as
+          everywhere else. */}
+      <div className="relative z-10 ml-auto">
+        <AthleteSettingsMenu
+          athleteId={athlete.id}
+          firstName={athlete.firstName}
+          lastName={athlete.lastName}
+          archived={athlete.archivedAt !== null}
+          coaches={coaches}
+          shares={shares}
+        />
+      </div>
+    </div>
   );
 }
