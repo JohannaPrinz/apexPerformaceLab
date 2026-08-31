@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "//": "Clears the working files of analyses nobody came back to. Daily, because the rule it applies is measured in days — see ANALYSIS_TEMP_DAYS.",
+      "path": "/api/cron/sweep-analysis",
+      "schedule": "0 3 * * *"
+    }
+  ]
+}
