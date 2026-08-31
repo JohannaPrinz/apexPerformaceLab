@@ -8,6 +8,7 @@ import type { AssessmentModuleStatus } from '@apex/domain';
 
 import { FOCUS_RING, TOUCH_TARGET } from '@/components/common/touch';
 import { moduleLabel, TestOverview } from '@/features/assessments';
+import { MovementAnalysisDetail } from '@/features/athletes';
 import { api } from '@/trpc/server';
 
 import type { Metadata } from 'next';
@@ -39,13 +40,26 @@ export default async function TestOverviewPage({
 
   // A second read rather than a wider `workspace`: the entry screen needs what
   // this test holds, only the overview needs what came before it.
-  const [charts, derived, comparison] = await Promise.all([
+  const [charts, derived, analysis] = await Promise.all([
     api.assessments.measurements.chart({ moduleId }),
     api.assessments.measurements.derived({ moduleId }),
-    // The same test earlier. A third read for the same reason as the other two:
-    // the entry screen never shows it.
-    api.assessments.measurements.comparison({ moduleId }),
+    // `null` for every test without a recording behind it, which is most of
+    // them — see `movementProfilesFor`.
+    api.athletes.movementProfile({ moduleId }),
   ]);
+
+  /**
+   * This test's own curve, and nothing earlier.
+   *
+   * Comparing runs is the analysis's job, not the test's: a test screen answers
+   * "what did this run measure", and an assessment answers "what changed". The
+   * earlier curves are still drawn — in the analysis, where the comparison is
+   * the point.
+   */
+  const ownCharts = charts?.map((group) => ({
+    ...group,
+    series: group.series.filter((entry) => entry.isCurrentModule),
+  }));
 
   /**
    * The next test still awaiting work.
@@ -71,30 +85,41 @@ export default async function TestOverviewPage({
         <span className="min-w-0 truncate">{workspace.assessment.question}</span>
       </Link>
 
-      <TestOverview
-        moduleId={workspace.moduleId}
-        assessmentId={assessmentId}
-        moduleKey={workspace.moduleKey}
-        moduleName={workspace.moduleName}
-        moduleDescription={workspace.moduleDescription}
-        status={workspace.status as AssessmentModuleStatus}
-        configuration={workspace.configuration}
-        types={workspace.types}
-        exercises={Object.fromEntries(
-          Object.entries(workspace.exercises).map(([id, exercise]) => [id, exercise.name]),
-        )}
-        measurements={workspace.measurements}
-        notes={workspace.notes}
-        readiness={workspace.readiness}
-        createdAt={workspace.createdAt}
-        completedAt={workspace.completedAt}
-        reopenedAt={workspace.reopenedAt}
-        archivedAt={workspace.archivedAt}
-        charts={charts}
-        derived={derived}
-        comparison={comparison}
-        nextModule={found === undefined ? null : { id: found.id, label: moduleLabel(found) }}
-      />
+      {/*
+        A test with a recording behind it *is* the analysis.
+        Its readings are the angle grid, its curve is the recording, and its
+        pictures are the frames the values were taken from — the generic
+        overview restated all three as a list of forty rows headed "Erfasste
+        Werte" and showed none of them. So that test gets its own screen, and
+        every other test keeps the overview unchanged.
+      */}
+      {analysis === null ? (
+        <TestOverview
+          moduleId={workspace.moduleId}
+          assessmentId={assessmentId}
+          moduleKey={workspace.moduleKey}
+          moduleName={workspace.moduleName}
+          moduleDescription={workspace.moduleDescription}
+          status={workspace.status as AssessmentModuleStatus}
+          configuration={workspace.configuration}
+          types={workspace.types}
+          exercises={Object.fromEntries(
+            Object.entries(workspace.exercises).map(([id, exercise]) => [id, exercise.name]),
+          )}
+          measurements={workspace.measurements}
+          notes={workspace.notes}
+          readiness={workspace.readiness}
+          createdAt={workspace.createdAt}
+          completedAt={workspace.completedAt}
+          reopenedAt={workspace.reopenedAt}
+          archivedAt={workspace.archivedAt}
+          charts={ownCharts}
+          derived={derived}
+          nextModule={found === undefined ? null : { id: found.id, label: moduleLabel(found) }}
+        />
+      ) : (
+        <MovementAnalysisDetail card={analysis} />
+      )}
     </main>
   );
 }

@@ -7,6 +7,7 @@ import { ArrowRight, Check, History, Video } from 'lucide-react';
 import type { AssessmentModuleStatus, ModuleConfiguration, Readiness } from '@apex/domain';
 import { Badge, Button } from '@apex/ui';
 
+import { MeasurementChart, type ChartGroupView } from '@/components/common/measurement-chart';
 import { TOUCH_BUTTON } from '@/components/common/touch';
 
 import { EditModuleDialog } from '../../components/edit-module-dialog';
@@ -23,12 +24,10 @@ import {
 
 import { AnalysisList } from './analysis-list';
 import { ArchiveModuleButton } from './archive-module-button';
-import { MeasurementChart, type ChartGroupView } from './measurement-chart';
 import { RunTestButton } from './run-test-button';
-import { SelfComparison, type SelfComparisonView } from './self-comparison';
 import {
   findRecorded,
-  formatValue,
+  readableValue,
   passesOf,
   passProgress,
   slotsForPass,
@@ -77,7 +76,6 @@ export function TestOverview({
   archivedAt,
   charts,
   derived,
-  comparison,
   nextModule,
 }: {
   readonly moduleId: string;
@@ -101,7 +99,6 @@ export function TestOverview({
   /** What this test computed for itself, or why it could not. */
   readonly derived: readonly DerivedView[];
   /** The same test earlier, where earlier ones exist under the same conditions. */
-  readonly comparison: SelfComparisonView | null;
   readonly nextModule: { id: string; label: string } | null;
 }) {
   const typeLabel = MODULE_LABELS_DE[moduleKey as keyof typeof MODULE_LABELS_DE] ?? moduleKey;
@@ -357,7 +354,7 @@ export function TestOverview({
                                 className={`font-medium ${corrected ? 'rounded bg-accent-soft px-1.5 text-accent-soft-foreground' : ''}`}
                                 data-numeric
                               >
-                                {formatValue(recorded)}
+                                {readableValue(recorded)}
                                 {type === undefined ? '' : ` ${type.unit}`}
                               </span>
                               {corrected ? (
@@ -391,7 +388,6 @@ export function TestOverview({
       {/* After the values and before the curves: the question "and how does
           that compare" is the one a coach asks once they have read the numbers,
           and the diagram is the same question drawn. */}
-      {comparison === null ? null : <SelfComparison comparison={comparison} />}
 
       <MeasurementChart groups={charts} />
 

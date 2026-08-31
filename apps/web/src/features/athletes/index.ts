@@ -9,6 +9,9 @@
  * authorization.
  */
 export { ArchiveButton } from './components/archive-button';
+// The analysis a test carries, in full. The test screen shows it and the
+// profile lists the tiles that lead there — one reading, drawn once.
+export { MovementAnalysisDetail } from './components/movement-analysis-detail';
 export { AthleteForm, type AthleteFormValues } from './components/athlete-form';
 export { DuplicateWarning } from './components/duplicate-warning';
 export { AthleteTile, type AthleteTileData } from './components/athlete-tile';

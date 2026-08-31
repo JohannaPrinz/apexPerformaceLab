@@ -17,6 +17,17 @@ import {
 } from '../schemas';
 
 import {
+  confirmAthleteShare,
+  revokeAthleteShare,
+  shareableCoaches,
+  shareAthlete,
+  sharesForAthletes,
+  sharesOfAthlete,
+  viewerOf,
+  visibleToViewer,
+} from './access';
+import { movementProfilesFor } from './movement-profiles';
+import {
   countAthletes,
   countAthletesMatching,
   createAthlete,
@@ -40,7 +51,7 @@ import { athleteTrend, athleteTrendOptions } from './trends';
 const notFound = () =>
   new TRPCError({
     code: 'NOT_FOUND',
-    message: 'Athlete not found.',
+    message: 'Athlet nicht gefunden.',
     cause: AppError.notFound('Athlete'),
   });
 
@@ -54,7 +65,9 @@ const notFound = () =>
 export const athletesRouter = createTRPCRouter({
   list: withPermission('athlete:read')
     .input(listAthletesSchema)
-    .query(({ ctx, input }) => listAthletes(ctx.db, ctx.tenant, input)),
+    .query(async ({ ctx, input }) =>
+      listAthletes(ctx.db, ctx.tenant, input, visibleToViewer(await viewerOf(ctx.db, ctx.tenant))),
+    ),
 
   /**
    * How many athletes the same filters match.
@@ -66,7 +79,14 @@ export const athletesRouter = createTRPCRouter({
    */
   count: withPermission('athlete:read')
     .input(listAthletesSchema.pick({ search: true, status: true }))
-    .query(({ ctx, input }) => countAthletesMatching(ctx.db, ctx.tenant, input)),
+    .query(async ({ ctx, input }) =>
+      countAthletesMatching(
+        ctx.db,
+        ctx.tenant,
+        input,
+        visibleToViewer(await viewerOf(ctx.db, ctx.tenant)),
+      ),
+    ),
 
   /**
    * The workspace overview's two figures and its shortcut list.
@@ -89,7 +109,12 @@ export const athletesRouter = createTRPCRouter({
   byId: withPermission('athlete:read')
     .input(athleteIdSchema)
     .query(async ({ ctx, input }) => {
-      const athlete = await getAthlete(ctx.db, ctx.tenant, input.athleteId);
+      const athlete = await getAthlete(
+        ctx.db,
+        ctx.tenant,
+        input.athleteId,
+        visibleToViewer(await viewerOf(ctx.db, ctx.tenant)),
+      );
       if (!athlete) throw notFound();
 
       return athlete;
@@ -106,10 +131,103 @@ export const athletesRouter = createTRPCRouter({
    * catalogue holds no reference range and the model records no direction for
    * any quantity.
    */
+  /** The colleagues this athlete could be released to — coaches of this workspace. */
+  shareableCoaches: withPermission('athlete:read').query(({ ctx }) =>
+    shareableCoaches(ctx.db, ctx.tenant),
+  ),
+
+  /** Who this athlete has been released to, and whether it has taken effect. */
+  shares: withPermission('athlete:read')
+    .input(z.object({ athleteId: z.string().min(1).max(64) }))
+    .query(({ ctx, input }) => sharesOfAthlete(ctx.db, ctx.tenant, input.athleteId)),
+
+  /**
+   * The same, for a whole list.
+   *
+   * One read rather than one per tile: a roster of thirty athletes would
+   * otherwise open thirty connections to answer one question.
+   */
+  sharesForMany: withPermission('athlete:read')
+    .input(z.object({ athleteIds: z.array(z.string().min(1).max(64)).max(200) }))
+    .query(({ ctx, input }) => sharesForAthletes(ctx.db, ctx.tenant, input.athleteIds)),
+
+  /**
+   * Offers a colleague access to this athlete.
+   *
+   * Both ends are checked against this workspace inside the service — the
+   * athlete must be one the caller may see, and the colleague must be a coach
+   * here. Nothing about either is taken on trust from the request.
+   */
+  share: withCoachPermission('athlete:write')
+    .input(z.object({ athleteId: z.string().min(1).max(64), coachId: z.string().min(1).max(64) }))
+    .mutation(async ({ ctx, input }) => {
+      const result = await shareAthlete(ctx.db, ctx.tenant, input.athleteId, input.coachId);
+
+      if (!result.ok) {
+        throw new TRPCError({
+          code: result.refusal === 'ATHLETE_NOT_FOUND' ? 'NOT_FOUND' : 'BAD_REQUEST',
+          message:
+            result.refusal === 'ATHLETE_NOT_FOUND'
+              ? 'Athlet nicht gefunden.'
+              : result.refusal === 'ALREADY_OWNER'
+                ? 'Dieser Coach betreut den Athleten bereits.'
+                : 'Dieser Coach gehört nicht zu diesem Arbeitsbereich.',
+        });
+      }
+
+      return { ok: true };
+    }),
+
+  /** Records that the athlete agreed. Only then does the release take effect. */
+  confirmShare: withCoachPermission('athlete:write')
+    .input(z.object({ athleteId: z.string().min(1).max(64), coachId: z.string().min(1).max(64) }))
+    .mutation(async ({ ctx, input }) => {
+      const done = await confirmAthleteShare(ctx.db, ctx.tenant, input.athleteId, input.coachId);
+      if (!done) throw new TRPCError({ code: 'NOT_FOUND', message: 'Freigabe nicht gefunden.' });
+
+      return { ok: true };
+    }),
+
+  /** Withdraws a release. */
+  revokeShare: withCoachPermission('athlete:write')
+    .input(z.object({ athleteId: z.string().min(1).max(64), coachId: z.string().min(1).max(64) }))
+    .mutation(async ({ ctx, input }) => {
+      const done = await revokeAthleteShare(ctx.db, ctx.tenant, input.athleteId, input.coachId);
+      if (!done) throw new TRPCError({ code: 'NOT_FOUND', message: 'Freigabe nicht gefunden.' });
+
+      return { ok: true };
+    }),
+
+  /** Which movements this athlete has had analysed. A headline and a way in. */
+  movementProfiles: withPermission('athlete:read')
+    .input(z.object({ athleteId: z.string().min(1).max(64) }))
+    .query(({ ctx, input }) => movementProfilesFor(ctx.db, ctx.tenant, input)),
+
+  /**
+   * The analysis one test carries, or `null`.
+   *
+   * The test screen's own reading. Same assembly as the profile's list, so the
+   * two cannot disagree about the same recording — and tenant-scoped inside it,
+   * so a module id from another workspace answers `null` rather than 404ing
+   * differently from one that never existed.
+   */
+  movementProfile: withPermission('athlete:read')
+    .input(z.object({ moduleId: z.string().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      const found = await movementProfilesFor(ctx.db, ctx.tenant, input);
+
+      return found[0] ?? null;
+    }),
+
   trends: withPermission('athlete:read')
     .input(athleteTrendsSchema)
     .query(async ({ ctx, input }) => {
-      const athlete = await getAthlete(ctx.db, ctx.tenant, input.athleteId);
+      const athlete = await getAthlete(
+        ctx.db,
+        ctx.tenant,
+        input.athleteId,
+        visibleToViewer(await viewerOf(ctx.db, ctx.tenant)),
+      );
       if (!athlete) throw notFound();
 
       // The sex decides whether a cycle card is offered at all, so it travels

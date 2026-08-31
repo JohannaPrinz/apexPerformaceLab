@@ -115,10 +115,12 @@ describe('reading the joint off the context', () => {
     expect(groups[0]?.readings[0]?.joint).toBe('Knie');
   });
 
-  it('copes with a reading that names no joint', () => {
-    const groups = groupAnalyses([at('2026-08-26T10:00:00.000Z', { context: null })], units);
-
-    expect(groups[0]?.readings[0]?.joint).toBeNull();
+  it('is not an analysis at all when no joint is named', () => {
+    // Every reading a movement analysis writes carries a joint axis — `plan.ts`
+    // refuses the value where the test declares none. A computed row without
+    // one came from somewhere else, and the body fat percentage that used to
+    // land here is why this is checked rather than tolerated.
+    expect(groupAnalyses([at('2026-08-26T10:00:00.000Z', { context: null })], units)).toEqual([]);
   });
 
   it('carries the unit from the workspace rather than assuming degrees', () => {
@@ -138,5 +140,45 @@ describe('reading the joint off the context', () => {
     const groups = groupAnalyses([at('2026-08-26T10:00:00.000Z', { numericValue: null })], units);
 
     expect(groups[0]?.readings[0]?.value).toBeNull();
+  });
+});
+
+/**
+ * `DERIVED` alone does not make a reading a video analysis.
+ *
+ * A body fat percentage worked out from three skinfolds is computed too, and it
+ * arrives in the same test as the skinfolds it came from. Read by source alone,
+ * it appeared on the test screen under the heading "Videoanalysen", labelled
+ * "Bewegungsumfang beidseitig 20,8 %".
+ */
+describe('what counts as an analysis', () => {
+  it('leaves a derived body fat percentage out of the analyses', () => {
+    const bodyFat: AnalysisMeasurement = {
+      id: 'm_bf',
+      measurementTypeId: 'type_body_fat',
+      side: 'BILATERAL',
+      numericValue: 20.8,
+      context: { method: 'jackson_pollock_3' },
+      capturedAt: new Date('2026-08-30T10:00:00.000Z'),
+      source: 'DERIVED',
+      note: 'Berechnet · Jackson & Pollock, 3 Punkte',
+    };
+
+    expect(groupAnalyses([bodyFat], () => '%')).toEqual([]);
+  });
+
+  it('keeps a reading that names the joint it belongs to', () => {
+    const angle: AnalysisMeasurement = {
+      id: 'm_knee',
+      measurementTypeId: 'type_rom',
+      side: 'LEFT',
+      numericValue: 118,
+      context: { joint: 'knee' },
+      capturedAt: new Date('2026-08-30T10:00:00.000Z'),
+      source: 'DERIVED',
+      note: 'Kniebeugentiefe',
+    };
+
+    expect(groupAnalyses([angle], () => '°')).toHaveLength(1);
   });
 });

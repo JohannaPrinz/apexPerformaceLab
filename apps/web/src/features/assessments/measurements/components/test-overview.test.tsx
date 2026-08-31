@@ -90,7 +90,6 @@ const renderOverview = (over: Partial<Parameters<typeof TestOverview>[0]> = {}) 
       archivedAt={null}
       charts={[]}
       derived={[]}
-      comparison={null}
       nextModule={null}
       {...over}
     />,

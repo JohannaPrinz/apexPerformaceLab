@@ -1,4 +1,4 @@
-import { contextOf } from '@apex/domain';
+import { contextOf, isJointDimension } from '@apex/domain';
 
 /**
  * The analyses a test holds, newest first.
@@ -88,6 +88,13 @@ export function groupAnalyses(
     // Only computed rows. A value a coach typed into this test by hand is a
     // measurement, but it is not an analysis and must not appear as one.
     if (row.source !== 'DERIVED' || row.capturedAt === undefined) continue;
+
+    // And only rows that name a **joint**. `DERIVED` says "worked out rather
+    // than measured", which a body fat percentage from three skinfolds is just
+    // as much as a knee angle from a video — and reading the source alone put
+    // "Körperfett 20,8 %" on this screen under the heading "Bewegungsumfang".
+    // A joint axis is what makes a computed value a reading of a movement.
+    if (!Object.keys(contextOf(row.context)).some((axis) => isJointDimension(axis))) continue;
 
     const key = row.capturedAt.toISOString();
     const found = byInstant.get(key);
