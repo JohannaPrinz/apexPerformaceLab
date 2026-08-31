@@ -195,3 +195,44 @@ export function shareMessage(input: ShareMessageInput): ShareMessage {
     html: htmlOf(input),
   };
 }
+
+/**
+ * The password, on its own.
+ *
+ * ## Why it is a second message
+ *
+ * A link and the password that opens it in one mail is one intercepted mailbox
+ * away from being no protection at all. Two messages mean two channels: the
+ * coach sends the link by mail and the password by whatever they and the athlete
+ * already use — a phone call, a text, in person.
+ *
+ * It therefore says as little as possible: no link, no date, no mention of what
+ * it opens. On its own it is a string with no target.
+ */
+export function passwordMessage({
+  athleteFirstName,
+  coachName,
+  password,
+}: {
+  readonly athleteFirstName: string;
+  readonly coachName: string;
+  readonly password: string;
+}): { subject: string; text: string } {
+  const greeting = athleteFirstName.trim() === '' ? 'Hallo,' : `Hallo ${athleteFirstName.trim()},`;
+
+  return {
+    subject: 'Dein Zugangswort',
+    text: [
+      greeting,
+      '',
+      'hier das Wort, mit dem du deine Auswertung öffnest:',
+      '',
+      password,
+      '',
+      'Den Link dazu hast du separat bekommen.',
+      '',
+      'Viele Grüße',
+      coachName,
+    ].join('\n'),
+  };
+}

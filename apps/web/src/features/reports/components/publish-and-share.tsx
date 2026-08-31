@@ -9,6 +9,7 @@ import { Badge, Button } from '@apex/ui';
 
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_FIELD, TOUCH_TARGET } from '@/components/common/touch';
 
+import { MIN_SHARE_PASSWORD_LENGTH } from '../schemas';
 import {
   createShareAction,
   publishReportAction,
@@ -76,6 +77,7 @@ export function PublishAndShare({
   const [created, setCreated] = useState<NonNullable<ShareCreated['share']> | null>(null);
   const [days, setDays] = useState(DEFAULT_SHARE_DAYS);
   const [withOffer, setWithOffer] = useState(true);
+  const [password, setPassword] = useState('');
   const [copied, setCopied] = useState<string | null>(null);
 
   const copy = (what: string, value: string) => {
@@ -100,7 +102,7 @@ export function PublishAndShare({
   const share = () => {
     setError(null);
     startTransition(async () => {
-      const result = await createShareAction(assessmentId, reportId, days, withOffer);
+      const result = await createShareAction(assessmentId, reportId, days, withOffer, password);
       if (result.message) setError(result.message);
       else {
         setCreated(result.share ?? null);
@@ -183,11 +185,26 @@ export function PublishAndShare({
                 <span>Angebot für eine Betreuung anhängen</span>
               </label>
 
+              <label className="flex min-w-56 flex-1 flex-col gap-1.5 text-sm">
+                <span>Passwort</span>
+                <input
+                  type="text"
+                  value={password}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="mindestens 12 Zeichen"
+                  onChange={(event) => {
+                    setPassword(event.target.value);
+                  }}
+                  className={`${TOUCH_FIELD} ${FOCUS_RING} rounded-md border border-input bg-background px-3 text-base lg:text-sm`}
+                />
+              </label>
+
               <Button
                 type="button"
                 variant="accent"
                 className={TOUCH_BUTTON}
-                disabled={pending}
+                disabled={pending || password.trim().length < MIN_SHARE_PASSWORD_LENGTH}
                 onClick={share}
               >
                 Link erstellen
@@ -195,8 +212,9 @@ export function PublishAndShare({
             </div>
 
             <p className="max-w-prose text-xs text-pretty text-muted-foreground">
-              Der Link wird mit einem Passwort geschützt. Sie sehen es genau einmal — gespeichert
-              wird nur seine Prüfsumme, damit es auch aus der Datenbank nicht auslesbar ist.
+              Sie legen das Passwort selbst fest — mindestens {MIN_SHARE_PASSWORD_LENGTH} Zeichen.
+              Gespeichert wird nur seine Prüfsumme, es ist also auch aus der Datenbank nicht
+              auslesbar und lässt sich später nicht wieder anzeigen.
             </p>
           </div>
 
@@ -208,16 +226,6 @@ export function PublishAndShare({
                   Gültig bis <span data-numeric>{DATE.format(new Date(created.expiresAt))}</span>.
                 </p>
               </div>
-
-              <Field
-                label="Passwort — jetzt notieren, es wird nicht wieder angezeigt"
-                value={created.password}
-                onCopy={() => {
-                  copy('password', created.password);
-                }}
-                copied={copied === 'password'}
-                emphasis
-              />
 
               <Field
                 label="Link"
@@ -253,8 +261,38 @@ export function PublishAndShare({
                   </Button>
                 </div>
                 <p className="text-xs">
-                  Das Passwort steht bewusst nicht in der Nachricht — schicken Sie es auf einem
-                  anderen Weg.
+                  Das Passwort steht bewusst nicht in dieser Nachricht — ein Link und sein Passwort
+                  im selben Postfach schützen nichts mehr.
+                </p>
+              </div>
+
+              {/* The password, in its own message and on its own way. */}
+              <div className="flex flex-col gap-2 border-t border-accent/40 pt-4">
+                <span className="text-xs font-medium">Zweite Nachricht: das Passwort</span>
+                <textarea
+                  readOnly
+                  rows={7}
+                  value={created.passwordMessage.text}
+                  aria-label="Nachricht mit dem Passwort"
+                  className={`${FOCUS_RING} w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground`}
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={TOUCH_BUTTON}
+                    onClick={() => {
+                      copy('secret', created.passwordMessage.text);
+                    }}
+                  >
+                    {copied === 'secret' ? 'Kopiert' : 'Passwort-Nachricht kopieren'}
+                  </Button>
+                  <Button variant="outline" className={TOUCH_BUTTON} asChild>
+                    <a href={created.passwordMessage.mailto}>Im Mailprogramm öffnen</a>
+                  </Button>
+                </div>
+                <p className="text-xs">
+                  Am besten auf einem anderen Weg als den Link — Telefon, Nachricht, persönlich.
                 </p>
               </div>
             </div>

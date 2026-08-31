@@ -99,7 +99,35 @@ export const publishReportSchema = reportIdSchema;
  * The password is **not** an input: it is generated, shown once and only its
  * hash is kept. A coach-chosen one would end up the same for every athlete.
  */
-export const createShareSchema = reportIdSchema.extend({ days: shareDaysSchema });
+/**
+ * How long a chosen password must be.
+ *
+ * Twelve characters, because this one is passed on by hand and typed once: long
+ * enough that guessing is hopeless, short enough that a coach will actually
+ * dictate it rather than working around the field.
+ */
+export const MIN_SHARE_PASSWORD_LENGTH = 12;
+
+export const createShareSchema = reportIdSchema.extend({
+  days: shareDaysSchema,
+  /** Chosen by the coach; only its hash is ever stored. */
+  password: z.string().min(MIN_SHARE_PASSWORD_LENGTH).max(200),
+});
 export type CreateShareInput = z.infer<typeof createShareSchema>;
 
 export const revokeShareSchema = z.object({ shareId: z.string().min(1).max(64) });
+
+/**
+ * Choosing a still for the document.
+ *
+ * The key is validated as a string here and as a *key* where it is used: the
+ * grammar that decides whether it is one of ours lives in the domain, and
+ * duplicating it in a schema would be a second place for it to drift.
+ */
+export const setStillSchema = reportIdSchema.extend({
+  moduleId: z.string().min(1).max(64),
+  key: z.string().min(1).max(300),
+  chosen: z.boolean(),
+});
+
+export type SetStillInput = z.infer<typeof setStillSchema>;

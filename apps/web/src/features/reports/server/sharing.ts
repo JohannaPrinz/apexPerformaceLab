@@ -51,27 +51,6 @@ export function newShareToken(): string {
   return randomBytes(32).toString('base64url');
 }
 
-/**
- * A password a person can actually read out over the phone.
- *
- * Four short groups of unambiguous characters. No `l`, `1`, `O` or `0`: this
- * gets dictated, and a coach reading "l" while the athlete types "1" is a
- * support call, not a security event.
- */
-const ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
-
-export function newSharePassword(): string {
-  const bytes = randomBytes(16);
-  const characters = [...bytes].map((byte) => ALPHABET[byte % ALPHABET.length]).join('');
-
-  return [
-    characters.slice(0, 4),
-    characters.slice(4, 8),
-    characters.slice(8, 12),
-    characters.slice(12, 16),
-  ].join('-');
-}
-
 /** `salt:hash`, both hex. One column, no second field to keep in step. */
 export async function hashSharePassword(password: string): Promise<string> {
   const salt = randomBytes(16);
@@ -126,6 +105,15 @@ export async function createReportShare(
   createdByCoachId: string,
   reportId: string,
   days: number,
+  /**
+   * The password the coach chose.
+   *
+   * Chosen rather than generated: the coach is the one who has to pass it on,
+   * by whatever channel they and the athlete already use, and a string they
+   * picked is one they can say out loud. Only its hash is stored either way —
+   * see below — so nothing about that changes.
+   */
+  password: string,
 ): Promise<CreatedShare | null> {
   const report = await db.report.findFirst({
     where: scoped(tenant, { id: reportId, status: 'PUBLISHED' as const }),
@@ -135,7 +123,6 @@ export async function createReportShare(
   if (!report) return null;
 
   const token = newShareToken();
-  const password = newSharePassword();
   const expiresAt = shareExpiryFrom(days);
 
   const share = await db.share.create({
