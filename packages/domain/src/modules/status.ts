@@ -146,3 +146,19 @@ export function canRemoveModule(
 
   return { ok: false, reason: 'ASSESSMENT_CLOSED' };
 }
+
+/**
+ * How far a test got, in words.
+ *
+ * Here rather than in one slice's label file for the same reason the side
+ * labels are: three screens name it now — the test tile, the test itself and
+ * the curve the analysis shares with it — and a vocabulary with three callers
+ * is a vocabulary, not a screen's private wording.
+ */
+export const MODULE_STATUS_LABELS_DE: Readonly<Record<AssessmentModuleStatus, string>> = {
+  PLANNED: 'Geplant',
+  IN_PROGRESS: 'Läuft',
+  COMPLETED: 'Abgeschlossen',
+  SKIPPED: 'Übersprungen',
+  ABORTED: 'Abgebrochen',
+};

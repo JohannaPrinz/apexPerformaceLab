@@ -8,6 +8,7 @@
  */
 export * from './analysis-config';
 export * from './angles';
+export * from './dynamics';
 export * from './engine';
 export * from './profile';
 export * from './plan';

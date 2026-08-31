@@ -6,8 +6,11 @@ import {
   hasWrittenText,
   readReportDraft,
   REPORT_DRAFT_VERSION,
+  chosenStills,
+  withDraftStill,
   withDraftText,
 } from './report-draft';
+import { MAX_STILLS_PER_MODULE } from './report-media';
 
 /**
  * The coach's own words.
@@ -97,6 +100,7 @@ describe('writing', () => {
       moduleId: 'mod_unknown',
       interpretation: '',
       recommendation: '',
+      stills: [],
     });
   });
 
@@ -121,12 +125,23 @@ describe('writing', () => {
 describe('reading what is already stored', () => {
   it('reads the current shape', () => {
     const stored = {
+      version: 3,
+      overall: { interpretation: 'A', recommendation: 'B' },
+      sections: [{ moduleId: 'mod_1', interpretation: 'C', recommendation: 'D', stills: ['k1'] }],
+    };
+
+    expect(readReportDraft(stored)?.sections[0]?.stills).toEqual(['k1']);
+  });
+
+  it('upgrades a version 2 draft by adding no pictures, which is the truth', () => {
+    const stored = {
       version: 2,
       overall: { interpretation: 'A', recommendation: 'B' },
       sections: [{ moduleId: 'mod_1', interpretation: 'C', recommendation: 'D' }],
     };
 
     expect(readReportDraft(stored)?.overall.recommendation).toBe('B');
+    expect(readReportDraft(stored)?.sections[0]?.stills).toEqual([]);
   });
 
   it('upgrades a version 1 draft without losing a word', () => {
@@ -162,5 +177,83 @@ describe('reading what is already stored', () => {
     expect(readReportDraft({ version: 99, overall: {}, sections: [] })).toBeNull();
     expect(readReportDraft(null)).toBeNull();
     expect(readReportDraft('a draft')).toBeNull();
+  });
+});
+
+/**
+ * Which stills a document uses.
+ *
+ * The rule under test is that choosing a picture is an editorial decision about
+ * *this* analysis: a still nobody picked leaves no trace, so publication has
+ * nothing to copy and cleanup has nothing to spare.
+ */
+describe('choosing stills', () => {
+  const withStill = (moduleId: string, key: string) =>
+    withDraftStill(emptyReportDraft(), moduleId, key, true);
+
+  it('records a picked still against its test', () => {
+    expect(withStill('mod_1', 'analysis/o/m/flexed__a.jpg').sections[0]).toMatchObject({
+      moduleId: 'mod_1',
+      stills: ['analysis/o/m/flexed__a.jpg'],
+    });
+  });
+
+  it('creates no section for a still that was only ever unpicked', () => {
+    // Otherwise an empty section would look like a considered blank.
+    expect(withDraftStill(emptyReportDraft(), 'mod_1', 'k1', false).sections).toEqual([]);
+  });
+
+  it('appends, so an arranged order is not rearranged', () => {
+    const draft = withDraftStill(withStill('mod_1', 'k1'), 'mod_1', 'k2', true);
+
+    expect(draft.sections[0]?.stills).toEqual(['k1', 'k2']);
+  });
+
+  it('picks the same still only once', () => {
+    const draft = withDraftStill(withStill('mod_1', 'k1'), 'mod_1', 'k1', true);
+
+    expect(draft.sections[0]?.stills).toEqual(['k1']);
+  });
+
+  it('removes one and keeps the rest', () => {
+    const two = withDraftStill(withStill('mod_1', 'k1'), 'mod_1', 'k2', true);
+
+    expect(withDraftStill(two, 'mod_1', 'k1', false).sections[0]?.stills).toEqual(['k2']);
+  });
+
+  it('stops at the limit rather than growing without bound', () => {
+    let draft = emptyReportDraft();
+    for (let index = 0; index < MAX_STILLS_PER_MODULE + 4; index += 1) {
+      draft = withDraftStill(draft, 'mod_1', `k${String(index)}`, true);
+    }
+
+    expect(draft.sections[0]?.stills).toHaveLength(MAX_STILLS_PER_MODULE);
+  });
+
+  it('leaves the texts of a test alone', () => {
+    const written = withDraftText(
+      emptyReportDraft(),
+      { kind: 'section', moduleId: 'mod_1' },
+      'interpretation',
+      'Knie links flacher.',
+    );
+
+    const draft = withDraftStill(written, 'mod_1', 'k1', true);
+
+    expect(draft.sections[0]?.interpretation).toBe('Knie links flacher.');
+    expect(draft.sections[0]?.stills).toEqual(['k1']);
+  });
+
+  it('lists every picked still with the test it belongs to', () => {
+    const draft = withDraftStill(withStill('mod_1', 'k1'), 'mod_2', 'k2', true);
+
+    expect(chosenStills(draft)).toEqual([
+      { moduleId: 'mod_1', key: 'k1' },
+      { moduleId: 'mod_2', key: 'k2' },
+    ]);
+  });
+
+  it('lists nothing where nobody picked anything', () => {
+    expect(chosenStills(emptyReportDraft())).toEqual([]);
   });
 });

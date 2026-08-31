@@ -39,6 +39,17 @@ const SIDE_WORDS: Readonly<Record<string, string>> = {
   BILATERAL: 'beidseitig',
 };
 
+/**
+ * The heading of the range-of-motion block.
+ *
+ * Named because one caller drops it: the analysis screen shows the range beside
+ * the angles it is the difference of, which is useful while reading a recording.
+ * The remark that travels into a report and an athlete's profile does not — 95°
+ * reached from 130° and from 175° are different movements, and only the angles
+ * say which happened, so restating the difference there is the same fact twice.
+ */
+export const RANGE_HEADING = 'Bewegungsumfang';
+
 export interface SummaryBlock {
   readonly heading: string;
   readonly lines: readonly string[];
@@ -211,7 +222,7 @@ export function summariseBlocks(
   }
 
   if (angles.length > 0) blocks.push({ heading: 'Winkel', lines: angles });
-  if (ranges.length > 0) blocks.push({ heading: 'Bewegungsumfang', lines: ranges });
+  if (ranges.length > 0) blocks.push({ heading: RANGE_HEADING, lines: ranges });
 
   blocks.push({
     heading: 'Aufnahme',
@@ -256,3 +267,17 @@ export const MOVEMENT_REFUSAL_MESSAGES: Readonly<Record<MovementRefusal, string>
   NO_REPETITIONS:
     'Es wurde keine vollständige Wiederholung erkannt. Für die Zählung muss die Bewegung aus dem Stand nach unten und wieder zurück führen.',
 } as const;
+
+/**
+ * The summary as a coach's remark — what a report and a profile will show.
+ *
+ * The range-of-motion block is left out for the reason given at `RANGE_HEADING`.
+ * Everything else is the analysis's own wording, unchanged, so the remark a
+ * coach edits starts from what they just read.
+ */
+export function remarkFrom(blocks: readonly SummaryBlock[]): string {
+  return blocks
+    .filter((block) => block.heading !== RANGE_HEADING)
+    .map((block) => `${block.heading}: ${block.lines.join(' ')}`)
+    .join('\n\n');
+}

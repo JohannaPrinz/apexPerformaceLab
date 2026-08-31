@@ -66,6 +66,43 @@ export const angleTargetSchema = z.object({
 
 export type AngleTargetConfig = z.infer<typeof angleTargetSchema>;
 
+/**
+ * What the analysis actually measured, kept so the report can draw it.
+ *
+ * ## Why the curve is stored and the numbers are not recomputed
+ *
+ * The angles already become Measurements. What never survived the screen was the
+ * *shape* of the movement — the driving angle over time and where each
+ * repetition began and ended — and without it a report can only list aggregates.
+ * Everything a movement profile needs beyond the aggregates (the course, the
+ * tempo per repetition, whether the athlete slowed down over the set) is derived
+ * from these two arrays, so storing them adds no second truth: they are the raw
+ * material the aggregates already came from.
+ *
+ * ## Why it is bounded
+ *
+ * A minute at 30 fps is 1800 samples. The cap is generous enough for the clips
+ * this is for and low enough that a module payload stays a payload.
+ */
+export const movementResultSchema = z.object({
+  durationMs: z.number().int().min(0).max(3_600_000),
+  repetitions: z.number().int().min(0).max(500),
+  reps: z
+    .array(
+      z.object({
+        index: z.number().int().min(0),
+        startedAtMs: z.number().min(0),
+        endedAtMs: z.number().min(0),
+        durationMs: z.number().min(0),
+      }),
+    )
+    .max(500),
+  /** The driving angle over time. `v` is null where the model saw nobody. */
+  signal: z.array(z.object({ t: z.number().min(0), v: z.number().nullable() })).max(4000),
+});
+
+export type MovementResultPayload = z.infer<typeof movementResultSchema>;
+
 export const movementAnalysisConfigSchema = z.object({
   /** Which profile the values were measured under. */
   profileKey: z.string().min(1).max(40),
@@ -78,6 +115,14 @@ export const movementAnalysisConfigSchema = z.object({
   tracks: z.array(z.string().min(1).max(40)).optional(),
   /** Targets the coach set. Never populated from the profile without a choice. */
   targets: z.array(angleTargetSchema).default([]),
+  /**
+   * What the run measured.
+   *
+   * Optional: written the first time an analysis is saved from a screen that
+   * knows how, and absent on every analysis stored before that — which is the
+   * truth about them, not a gap to fill in.
+   */
+  result: movementResultSchema.optional(),
 });
 
 export type MovementAnalysisConfig = z.infer<typeof movementAnalysisConfigSchema>;
