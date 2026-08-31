@@ -3,6 +3,14 @@ import type { MovementRep, SignalPoint } from '@apex/domain';
 /**
  * The angle repetitions are counted from, over the length of the recording.
  *
+ * ## Why it is shared rather than owned by the movement slice
+ *
+ * Two screens draw this picture: the analysis, and the assessment report the
+ * analysis ends up in. A second implementation would be a second reading of one
+ * recording, and the two would eventually disagree about the same set. It takes
+ * nothing but domain types and renders SVG, which is exactly the bar this
+ * directory sets.
+ *
  * ## The picture is not the record
  *
  * The numbers are in the table beside it, which is what a screen reader reads.

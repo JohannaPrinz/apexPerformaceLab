@@ -2,10 +2,17 @@
 
 import { useState } from 'react';
 
-import { MODULE_STATUS_LABELS_DE, SIDE_LABELS_DE } from '../../components/labels';
+import { MODULE_STATUS_LABELS_DE, SIDE_LABELS_DE } from '@apex/domain';
 
 /**
  * The stages of a test as a curve, with earlier tests of the type beside it.
+ *
+ * ## Why it is shared rather than owned by the measurements slice
+ *
+ * Two screens draw it: the test, showing its own run, and the analysis, showing
+ * that run against the ones before it. A second implementation would be a second
+ * reading of the same measurements. It takes serialisable data and renders SVG,
+ * which is exactly the bar this directory sets.
  *
  * ## The x axis is a choice, not an assumption
  *
@@ -34,8 +41,36 @@ import { MODULE_STATUS_LABELS_DE, SIDE_LABELS_DE } from '../../components/labels
  * this carries `role="img"` and one summarising label. A diagram that were the
  * only way to the values would put them out of reach.
  */
-export function MeasurementChart({ groups }: { readonly groups: readonly ChartGroupView[] }) {
+export function MeasurementChart({
+  groups,
+  dense = false,
+}: {
+  readonly groups: readonly ChartGroupView[];
+  /**
+   * Side by side, without the explanation above them.
+   *
+   * How an analysis shows them: a staged test records several quantities at
+   * each stage, and reading them one under the other loses the very thing they
+   * have in common. The sentence about what a curve is belongs on the test
+   * screen, where a coach meets it first — repeated over every diagram of a
+   * report it is three paragraphs saying one thing.
+   */
+  readonly dense?: boolean;
+}) {
   if (groups.length === 0) return null;
+
+  if (dense) {
+    return (
+      <section
+        aria-label="Belastungsdiagramme"
+        className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3"
+      >
+        {groups.map((group) => (
+          <ChartCard key={group.key} group={group} />
+        ))}
+      </section>
+    );
+  }
 
   return (
     <section aria-label="Belastungsdiagramme" className="flex flex-col gap-6">
@@ -259,9 +294,13 @@ function Plot({
         </svg>
 
         {series.map((entry, index) =>
-          entry.points.map((point) => (
+          entry.points.map((point, at) => (
             <span
-              key={`${entry.moduleId}-${String(point.passIndex)}-${String(point.y)}`}
+              // The position in the series, not its coordinates: a video
+              // analysis records several readings of one angle with no stage
+              // number, so two of them at the same value collided on a key that
+              // was built from what they *are* rather than from where they sit.
+              key={`${entry.moduleId}-${String(at)}`}
               style={{ left: `${String(atX(xOf(point)))}%`, top: `${String(atY(point.y))}%` }}
               className={`absolute -translate-x-1/2 -translate-y-1/2 ${markerClass(index)}`}
             />
