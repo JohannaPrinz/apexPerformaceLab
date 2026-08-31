@@ -19,14 +19,23 @@ import {
   type PlanDecisions,
   type PlanRefusal,
   type SummaryBlock,
+  type MovementAnalysisConfig,
+  remarkFrom,
 } from '@apex/domain';
 import { Button, Input } from '@apex/ui';
 
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_FIELD } from '@/components/common/touch';
 
-import { saveVideoAnalysisAction } from '../server/actions';
+import { encodeStill } from '../analysis/still';
+import {
+  recordMovementAnalysisAction,
+  saveVideoAnalysisAction,
+  uploadAnalysisStillAction,
+} from '../server/actions';
 
 import { AngleTable } from './angle-table';
+
+import type { Keyframe } from '../analysis/keyframes';
 
 /**
  * Filing an analysis into the test it was started from.
@@ -78,11 +87,29 @@ export function AnalysisResults({
   types,
   exerciseId,
   recordedAt,
+  keyframes,
+  movement,
   onRestart,
 }: {
   readonly profile: MovementProfile;
   readonly tracks: readonly string[];
   readonly targets: readonly AngleTargetConfig[];
+  /**
+   * The stills of the representative repetition.
+   *
+   * Uploaded with the values so the analysis a coach writes later can point at
+   * them. They are **temporary**: publishing copies only the ones the coach
+   * actually used and clears the rest, and an analysis that is never published
+   * leaves them to expire under the bucket's lifecycle rule.
+   */
+  readonly keyframes: readonly Keyframe[];
+  /**
+   * The shape of the movement, as the run measured it.
+   *
+   * Filed with the test so a report can draw the course and the tempo rather
+   * than listing aggregates whose origin nobody can see.
+   */
+  readonly movement: MovementAnalysisConfig;
   readonly values: readonly MovementValue[];
   readonly drafts: Readonly<Record<string, string>>;
   readonly onDraft: (id: string, raw: string) => void;
@@ -106,7 +133,8 @@ export function AnalysisResults({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<number | null>(null);
 
-  const flat = summary.map((block) => `${block.heading}: ${block.lines.join(' ')}`).join('\n\n');
+  // Without the range-of-motion block — see `remarkFrom`.
+  const flat = remarkFrom(summary);
   const note = noteDraft ?? flat;
 
   const otherDimensions = configuration.dimensions.filter(
@@ -149,6 +177,30 @@ export function AnalysisResults({
         setError(state.message);
 
         return;
+      }
+
+      // The shape of the movement, beside the values it produced.
+      const filed = await recordMovementAnalysisAction(moduleId, movement);
+      if (filed.message !== undefined) setError(filed.message);
+
+      /**
+       * The values are saved; the pictures are a bonus.
+       *
+       * Uploaded one at a time — a single re-encoded frame fits comfortably in a
+       * server action's body, several at once do not — and a failure is
+       * swallowed: an analysis whose numbers are stored must not report itself
+       * as failed because a workspace has no bucket configured.
+       */
+      for (const frame of keyframes) {
+        try {
+          await uploadAnalysisStillAction(
+            moduleId,
+            frame.position,
+            await encodeStill(frame.dataUrl),
+          );
+        } catch {
+          break;
+        }
       }
 
       setSaved(state.savedCount ?? 0);

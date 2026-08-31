@@ -29,10 +29,19 @@ const CONFIGURATION = {
 };
 
 function fakeDb(
-  options: { existingModule?: boolean; athleteOwner?: string; noType?: boolean } = {},
+  options: {
+    existingModule?: boolean;
+    athleteOwner?: string;
+    noType?: boolean;
+    /** Whether the named examination is this workspace's and this athlete's. */
+    namedAssessment?: boolean;
+  } = {},
 ) {
   const assessment = {
     create: vi.fn<(args: QueryArgs) => Promise<unknown>>().mockResolvedValue({ id: 'as_new' }),
+    findFirst: vi
+      .fn<(args: QueryArgs) => Promise<unknown>>()
+      .mockResolvedValue(options.namedAssessment === true ? { id: 'as_chosen' } : null),
   };
 
   const assessmentModule = {
@@ -288,5 +297,77 @@ describe('when the catalogue cannot support it', () => {
 
     expect(result.reason).toBe('CATALOGUE_INCOMPLETE');
     expect(assessmentModule.create).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Filing into an examination the coach picked.
+ *
+ * The point of the option: an analysis that sits beside the other tests of one
+ * examination is reported with them. What is asserted is that it lands in *that*
+ * examination, that it is a test of its own rather than a reuse, and that a
+ * named examination is checked against the athlete as well as the workspace —
+ * an analysis filed under somebody else's examination would put one athlete's
+ * angles under another's name.
+ */
+describe('filing into a chosen assessment', () => {
+  it('creates the test inside it and opens no examination', async () => {
+    const fake = fakeDb({ namedAssessment: true });
+
+    const result = await openAnalysisTarget(fake.db, TENANT, 'coach_1', {
+      ...input,
+      assessmentId: 'as_chosen',
+    });
+
+    expect(result).toMatchObject({ ok: true, assessmentId: 'as_chosen', moduleId: 'mod_new' });
+    expect(fake.assessment.create).not.toHaveBeenCalled();
+    expect(fake.performanceCase.create).not.toHaveBeenCalled();
+    expect(fake.assessmentModule.create.mock.calls[0]?.[0].data).toMatchObject({
+      assessmentId: 'as_chosen',
+    });
+  });
+
+  it("names the test after the coach's own words", async () => {
+    const fake = fakeDb({ namedAssessment: true });
+
+    await openAnalysisTarget(fake.db, TENANT, 'coach_1', { ...input, assessmentId: 'as_chosen' });
+
+    expect(fake.assessmentModule.create.mock.calls[0]?.[0].data).toMatchObject({
+      name: 'Kniebeugentiefe vor Saisonstart',
+    });
+  });
+
+  it('asks for the examination by athlete as well as by workspace', async () => {
+    const fake = fakeDb({ namedAssessment: true });
+
+    await openAnalysisTarget(fake.db, TENANT, 'coach_1', { ...input, assessmentId: 'as_chosen' });
+
+    expect(fake.assessment.findFirst.mock.calls[0]?.[0].where).toMatchObject({
+      id: 'as_chosen',
+      organizationId: 'org_a',
+      case: { athleteId: 'ath_1' },
+    });
+  });
+
+  it('refuses an examination that is not theirs, and writes nothing', async () => {
+    const fake = fakeDb({ namedAssessment: false });
+
+    const result = await openAnalysisTarget(fake.db, TENANT, 'coach_1', {
+      ...input,
+      assessmentId: 'as_somebody_elses',
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'ASSESSMENT_NOT_FOUND' });
+    expect(fake.assessmentModule.create).not.toHaveBeenCalled();
+    expect(fake.assessment.create).not.toHaveBeenCalled();
+  });
+
+  it("reuses the athlete's own test when no examination was named", async () => {
+    const fake = fakeDb({ existingModule: true });
+
+    const result = await openAnalysisTarget(fake.db, TENANT, 'coach_1', input);
+
+    expect(result).toMatchObject({ ok: true, moduleId: 'mod_existing' });
+    expect(fake.assessmentModule.create).not.toHaveBeenCalled();
   });
 });

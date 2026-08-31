@@ -12,6 +12,7 @@ import {
   profileForExercise,
   summariseBlocks,
   type AngleTargetConfig,
+  type MovementAnalysisConfig,
   type AnnotatedFrame,
   type ModuleConfiguration,
   type MovementProfile,
@@ -22,6 +23,7 @@ import {
 } from '@apex/domain';
 import { Button } from '@apex/ui';
 
+import { SignalChart } from '@/components/common/signal-chart';
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_TARGET } from '@/components/common/touch';
 
 import { drawSkeleton } from '../analysis/draw';
@@ -43,9 +45,8 @@ import { annotatedExportSupport, recordAnnotatedClip } from '../export/record';
 
 import { AnalysisResults } from './analysis-results';
 import { AnalysisSetup } from './analysis-setup';
-import { AssignAnalysis, type AthleteChoice } from './assign-analysis';
+import { AssignAnalysis, type AssessmentChoice, type AthleteChoice } from './assign-analysis';
 import { KeyframeStrip } from './keyframe-strip';
-import { SignalChart } from './signal-chart';
 
 import type { PoseLandmarker } from '@mediapipe/tasks-vision';
 
@@ -89,6 +90,8 @@ export type AnalysisTarget =
   | {
       readonly kind: 'standalone';
       readonly athletes: readonly AthleteChoice[];
+      /** The workspace's open examinations, so the analysis can join one. */
+      readonly assessments: readonly AssessmentChoice[];
       readonly suggestedAthleteId?: string | undefined;
       readonly exercises: readonly AnalysableExercise[];
     };
@@ -119,7 +122,14 @@ type Phase =
 
 const SECONDS = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 });
 
-export function VideoAnalysis({ target }: { readonly target: AnalysisTarget }) {
+export function VideoAnalysis({
+  target,
+  stillsKept = false,
+}: {
+  readonly target: AnalysisTarget;
+  /** Whether an object store is configured, so saving also keeps the stills. */
+  readonly stillsKept?: boolean;
+}) {
   const [phase, setPhase] = useState<Phase>({ kind: 'empty' });
   const [model, setModel] = useState<PoseModelName>('lite');
   const [sampleFps, setSampleFps] = useState(DEFAULT_SAMPLE_FPS);
@@ -455,7 +465,7 @@ export function VideoAnalysis({ target }: { readonly target: AnalysisTarget }) {
         <>
           <RunSummary progress={phase.progress} sampleFps={sampleFps} />
 
-          <KeyframeStrip keyframes={phase.keyframes} />
+          <KeyframeStrip keyframes={phase.keyframes} kept={stillsKept} />
 
           <section aria-label="Bewegungsverlauf" className="flex flex-col gap-2">
             <h2 className="text-sm font-medium">Bewegungsverlauf</h2>
@@ -468,6 +478,8 @@ export function VideoAnalysis({ target }: { readonly target: AnalysisTarget }) {
 
           {target.kind === 'standalone' ? (
             <AssignAnalysis
+              keyframes={phase.keyframes}
+              movement={measuredMovement(profile, tracks, targets, phase.result)}
               profile={profile}
               tracks={tracks}
               targets={targets}
@@ -478,6 +490,7 @@ export function VideoAnalysis({ target }: { readonly target: AnalysisTarget }) {
               onToggle={onToggle}
               summary={summariseBlocks(phase.result, profile, values, targets, edited)}
               athletes={target.athletes}
+              assessments={target.assessments}
               suggestedAthleteId={target.suggestedAthleteId}
               exerciseId={exerciseId}
               recordedAt={phase.recordedAt}
@@ -500,6 +513,8 @@ export function VideoAnalysis({ target }: { readonly target: AnalysisTarget }) {
               types={target.types}
               exerciseId={exerciseId}
               recordedAt={phase.recordedAt}
+              keyframes={phase.keyframes}
+              movement={measuredMovement(profile, tracks, targets, phase.result)}
               onRestart={reset}
             />
           )}
@@ -1022,4 +1037,33 @@ function RunSummary({
       </dl>
     </details>
   );
+}
+
+/**
+ * What the run measured, in the shape a test stores.
+ *
+ * Built in one place because two screens file it — the assessment-bound one and
+ * the one that assigns an analysis to an athlete. They differed once, and the
+ * consequence was an athlete profile that said no movement had been analysed.
+ */
+function measuredMovement(
+  profile: MovementProfile,
+  tracks: readonly string[],
+  targets: readonly AngleTargetConfig[],
+  result: MovementResult,
+): MovementAnalysisConfig {
+  return {
+    profileKey: profile.key,
+    tracks: [...tracks],
+    targets: [...targets],
+    result: {
+      durationMs: Math.round(result.signal.at(-1)?.timestampMs ?? 0),
+      repetitions: result.repetitions,
+      reps: result.reps.map((entry) => ({ ...entry })),
+      signal: result.signal.map((point) => ({
+        t: Math.round(point.timestampMs),
+        v: point.primary === null ? null : Math.round(point.primary * 10) / 10,
+      })),
+    },
+  };
 }

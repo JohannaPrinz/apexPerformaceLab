@@ -24,7 +24,21 @@ import type { Keyframe } from '../analysis/keyframes';
 
 const NUMBER = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 });
 
-export function KeyframeStrip({ keyframes }: { readonly keyframes: readonly Keyframe[] }) {
+export function KeyframeStrip({
+  keyframes,
+  kept,
+}: {
+  readonly keyframes: readonly Keyframe[];
+  /**
+   * Whether saving this analysis also keeps the stills.
+   *
+   * The sentence below used to say they are never stored, and that stopped being
+   * true once an analysis could hand one to a report. A caption that describes
+   * the old behaviour is worse than none — a coach decides what to send on the
+   * strength of it.
+   */
+  readonly kept: boolean;
+}) {
   if (keyframes.length === 0) return null;
 
   return (
@@ -66,8 +80,10 @@ export function KeyframeStrip({ keyframes }: { readonly keyframes: readonly Keyf
 
       <p className="flex max-w-prose items-start gap-1.5 text-xs text-muted-foreground">
         <Info aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-        Die Standbilder werden nur hier angezeigt und nicht gespeichert. Eingezeichnet ist die
-        Seite, die das Modell sicherer erkannt hat (
+        {kept
+          ? 'Beim Speichern werden diese Standbilder zur Auswertung abgelegt. Nur die, die Sie dort auswählen, gehen an den Athleten — die übrigen werden wieder gelöscht.'
+          : 'Die Standbilder werden nur hier angezeigt und nicht gespeichert.'}{' '}
+        Eingezeichnet ist die Seite, die das Modell sicherer erkannt hat (
         {keyframes[0]?.side === 'left' ? 'links' : 'rechts'}).
       </p>
     </section>

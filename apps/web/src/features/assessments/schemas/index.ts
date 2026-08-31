@@ -6,6 +6,7 @@ import {
   measurementTemplateKeySchema,
   moduleConfigurationSchema,
   moduleKeySchema,
+  movementAnalysisConfigSchema,
 } from '@apex/domain';
 
 /**
@@ -233,8 +234,9 @@ export type AssessmentView = (typeof ASSESSMENT_VIEWS)[number];
  * Where a standalone video analysis should be filed.
  *
  * No `moduleId`: the point of a standalone analysis is that the coach has not
- * chosen a test — the server finds the athlete's video-analysis test or opens
- * one (§8). `purpose` is the coach's own words and becomes the Assessment's
+ * chosen a *test*. They may well choose the **assessment** it belongs to, and
+ * then the analysis becomes a test of that examination; without one the server
+ * finds the athlete's video-analysis test or opens one (§8). `purpose` is the coach's own words and becomes the Assessment's
  * question when one has to be created; it is never generated.
  */
 export const analysisTargetSchema = z.object({
@@ -245,6 +247,27 @@ export const analysisTargetSchema = z.object({
   /** The angles the coach kept for this test, and the targets they set. */
   tracks: z.array(z.string().min(1).max(40)).max(20),
   targets: z.array(angleTargetSchema).max(20),
+  /**
+   * Which examination this analysis belongs to, where the coach named one.
+   *
+   * Optional, and empty means "open one for this analysis" — the arrangement
+   * that existed before a coach could choose. Checked against the athlete on
+   * the server; nothing here is trusted.
+   */
+  assessmentId: z.string().min(1).max(64).optional(),
 });
 
 export type AnalysisTargetInputShape = z.infer<typeof analysisTargetSchema>;
+
+/**
+ * Filing what a video analysis measured.
+ *
+ * The payload is validated by the domain's own schema rather than restated
+ * here — a second description of the same shape is a second thing to drift.
+ */
+export const recordMovementAnalysisSchema = z.object({
+  moduleId: z.string().min(1).max(64),
+  movement: movementAnalysisConfigSchema,
+});
+
+export type RecordMovementAnalysisInput = z.infer<typeof recordMovementAnalysisSchema>;

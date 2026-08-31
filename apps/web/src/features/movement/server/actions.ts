@@ -1,18 +1,25 @@
 'use server';
 
+import { randomBytes } from 'node:crypto';
+
 import { revalidatePath } from 'next/cache';
 
 import { TRPCError } from '@trpc/server';
 
 import {
+  analysisStillKey,
   planMeasurements,
   storableOf,
+  STILL_CONTENT_TYPE,
   type AngleTargetConfig,
+  type MovementAnalysisConfig,
   type MovementValue,
   type PlanDecisions,
   type PlannedMeasurement,
 } from '@apex/domain';
 
+import { putObject } from '@/integrations/object-store';
+import { routeTenant } from '@/server/tenant';
 import { api } from '@/trpc/server';
 
 /**
@@ -146,6 +153,8 @@ export async function saveVideoAnalysisAction(
 export interface StandaloneSaveInput {
   readonly athleteId: string;
   readonly purpose: string;
+  /** Which examination to file into. Empty opens one for this analysis alone. */
+  readonly assessmentId?: string | undefined;
   readonly profileKey: string;
   readonly tracks: readonly string[];
   readonly targets: readonly AngleTargetConfig[];
@@ -154,11 +163,20 @@ export interface StandaloneSaveInput {
   readonly decisions: PlanDecisions;
   readonly note: string;
   readonly capturedAt: string;
+  /**
+   * The shape of the movement, as the run measured it.
+   *
+   * Filed with the test so the athlete's profile and the assessment's analysis
+   * can draw the course and the tempo — without it there are angles and no
+   * analysis.
+   */
+  readonly movement: MovementAnalysisConfig;
 }
 
 export async function saveStandaloneAnalysisAction({
   athleteId,
   purpose,
+  assessmentId,
   profileKey,
   tracks,
   targets,
@@ -166,15 +184,28 @@ export async function saveStandaloneAnalysisAction({
   decisions,
   note,
   capturedAt,
+  movement,
 }: StandaloneSaveInput): Promise<StandaloneSaveState> {
   try {
     const target = await api.assessments.openAnalysisTarget({
       athleteId,
+      ...(assessmentId === undefined || assessmentId === '' ? {} : { assessmentId }),
       purpose,
       profileKey,
       tracks: [...tracks],
       targets: [...targets],
     });
+
+    /**
+     * What the run measured, filed against the test that was just opened.
+     *
+     * The assessment-bound screen has always done this; this path did not, and
+     * the consequence was invisible in the only place it mattered: an analysis
+     * assigned to an athlete produced angles and no analysis, so the athlete's
+     * profile said no movement had been analysed. Without the result there is a
+     * curve nobody can draw.
+     */
+    await api.assessments.recordMovementAnalysis({ moduleId: target.moduleId, movement });
 
     const entries = planMeasurements(
       values,
@@ -223,6 +254,78 @@ export async function saveStandaloneAnalysisAction({
       // implying everything was.
       refused: entries.filter((entry) => entry.kind === 'refused').length,
     };
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
+/**
+ * Puts one still of a movement analysis into the object store.
+ *
+ * ## Why the workspace is looked up rather than sent
+ *
+ * The key carries the organisation, and the key is what the serving route uses
+ * to refuse another workspace. If the browser supplied it, that boundary would
+ * be a value the browser chose. So the module is resolved through the ordinary
+ * tenant-scoped procedure first, and the organisation comes from the session —
+ * a module belonging to somebody else resolves to nothing and nothing is written.
+ *
+ * ## Why these stills are temporary
+ *
+ * They belong to the analysis screen, not to the athlete. Publishing copies the
+ * ones a coach actually used into the report's own folder and deletes these; an
+ * analysis that is never published leaves them to expire under the bucket's
+ * lifecycle rule. Nothing here is an `Asset`, and nothing appears in an
+ * athlete's media.
+ */
+export async function uploadAnalysisStillAction(
+  moduleId: string,
+  position: string,
+  base64: string,
+): Promise<{ key?: string; message?: string }> {
+  // A generous ceiling on one re-encoded frame. Enough for a bounded JPEG,
+  // far below anything that would be worth sending here.
+  if (base64.length > 3_000_000) return { message: 'Das Standbild ist zu groß.' };
+
+  try {
+    const tenant = await routeTenant();
+    if (tenant === null) return { message: 'Keine aktive Organisation.' };
+
+    // Proves the module is this workspace's before a key is built from its id:
+    // the procedure is tenant-scoped and refuses a module it cannot find.
+    await api.assessments.measurements.readiness({ moduleId });
+
+    const key = analysisStillKey({
+      organizationId: tenant.organizationId,
+      moduleId,
+      position,
+      stillId: randomBytes(9).toString('base64url'),
+    });
+
+    const written = await putObject(key, Buffer.from(base64, 'base64'), STILL_CONTENT_TYPE);
+
+    return written ? { key } : { message: 'Für Standbilder ist kein Speicher eingerichtet.' };
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
+/**
+ * Files what the analysis measured against the test it ran on.
+ *
+ * Separate from `saveVideoAnalysisAction` and called after it: the values are
+ * the record, this is the shape of the movement behind them. A failure here
+ * leaves the measurements stored — a report without a curve is a smaller loss
+ * than a run whose numbers were thrown away.
+ */
+export async function recordMovementAnalysisAction(
+  moduleId: string,
+  movement: MovementAnalysisConfig,
+): Promise<{ message?: string }> {
+  try {
+    await api.assessments.recordMovementAnalysis({ moduleId, movement });
+
+    return {};
   } catch (error) {
     return { message: toMessage(error) };
   }

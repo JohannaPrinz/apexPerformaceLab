@@ -26,6 +26,7 @@ import {
   setAssessmentStatusSchema,
   setModuleArchivedSchema,
   updateAssessmentSchema,
+  recordMovementAnalysisSchema,
   updateModuleConfigurationSchema,
   updateModuleSchema,
 } from '../schemas';
@@ -40,6 +41,7 @@ import {
   exerciseNames,
   getAssessment,
   listAssessmentsForAthlete,
+  selectableAssessments,
   measurementTypeNames,
   removeModule,
   setAssessmentStatus,
@@ -47,6 +49,7 @@ import {
   setModuleStatus,
   updateAssessment,
   updateModule,
+  attachMovementAnalysis,
   updateModuleConfiguration,
   type UnavailableReferences,
 } from './service';
@@ -80,6 +83,11 @@ export const assessmentsRouter = createTRPCRouter({
     .query(({ ctx, input }) =>
       listAssessmentsForAthlete(ctx.db, ctx.tenant, input.athleteId, input.includeArchived),
     ),
+
+  /** The examinations a standalone analysis can be filed into. */
+  selectable: withPermission('assessment:read').query(({ ctx }) =>
+    selectableAssessments(ctx.db, ctx.tenant),
+  ),
 
   byId: withPermission('assessment:read')
     .input(assessmentIdSchema)
@@ -192,6 +200,9 @@ export const assessmentsRouter = createTRPCRouter({
 
       if (!result.ok) {
         if (result.reason === 'ATHLETE_NOT_FOUND') throw notFound('Athlete');
+        // Indistinguishable from an id that never existed: an assessment of
+        // another athlete must not answer differently from a made-up one.
+        if (result.reason === 'ASSESSMENT_NOT_FOUND') throw notFound('Assessment');
 
         throw new TRPCError({
           code: 'PRECONDITION_FAILED',
@@ -214,7 +225,7 @@ export const assessmentsRouter = createTRPCRouter({
         if (result.reason === 'NO_CONFIGURATION') {
           throw new TRPCError({
             code: 'BAD_REQUEST',
-            message: 'Choose a template or configure the test.',
+            message: 'Bitte eine Vorlage wählen oder den Test konfigurieren.',
           });
         }
 
@@ -287,6 +298,27 @@ export const assessmentsRouter = createTRPCRouter({
    * Moves a test through PLANNED → IN_PROGRESS → COMPLETED, or to SKIPPED /
    * ABORTED. Never creates or removes a Measurement.
    */
+  /**
+   * Files what a video analysis measured against the test it ran on.
+   *
+   * Touches one key of the payload and nothing else — see
+   * `attachMovementAnalysis` for why this is not a configuration edit.
+   */
+  recordMovementAnalysis: withCoachPermission('assessment:write')
+    .input(recordMovementAnalysisSchema)
+    .mutation(async ({ ctx, input }) => {
+      const stored = await attachMovementAnalysis(
+        ctx.db,
+        ctx.tenant,
+        input.moduleId,
+        input.movement,
+      );
+
+      if (!stored) throw notFound('Test');
+
+      return { ok: true };
+    }),
+
   setModuleStatus: withPermission('assessment:write')
     .input(moduleIdSchema.extend({ status: assessmentModuleStatusSchema }))
     .mutation(async ({ ctx, input }) => {

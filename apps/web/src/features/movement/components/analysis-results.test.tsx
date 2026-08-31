@@ -57,6 +57,11 @@ vi.mock('../server/actions', () => ({
       mocks.failure === null ? { savedCount: planned.length } : { message: mocks.failure },
     );
   },
+  // Stills are uploaded after a successful save. Nothing here exercises them —
+  // the fixtures carry none — but the module must still resolve.
+  uploadAnalysisStillAction: () => Promise.resolve({ key: 'analysis/o/m/flexed__x.jpg' }),
+  // Filed after the values. The fixtures carry no curve; the module must resolve.
+  recordMovementAnalysisAction: () => Promise.resolve({}),
 }));
 
 const DEG = Math.PI / 180;
@@ -157,6 +162,8 @@ function show(
       tracks={tracks}
       targets={targets}
       values={values}
+      keyframes={[]}
+      movement={{ profileKey: SQUAT_PROFILE.key, tracks: [...tracks], targets: [] }}
       drafts={{}}
       onDraft={vi.fn()}
       excluded={[]}
@@ -346,6 +353,8 @@ describe('an older test that records ranges', () => {
         tracks={ALL}
         targets={[]}
         values={values}
+        keyframes={[]}
+        movement={{ profileKey: SQUAT_PROFILE.key, tracks: [...ALL], targets: [] }}
         drafts={{}}
         onDraft={vi.fn()}
         excluded={[]}

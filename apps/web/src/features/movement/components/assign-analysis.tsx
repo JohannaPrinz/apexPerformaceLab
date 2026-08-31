@@ -12,14 +12,19 @@ import {
   type MovementProfile,
   type MovementValue,
   type SummaryBlock,
+  remarkFrom,
+  type MovementAnalysisConfig,
 } from '@apex/domain';
 import { Button, Input } from '@apex/ui';
 
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_FIELD } from '@/components/common/touch';
 
-import { saveStandaloneAnalysisAction } from '../server/actions';
+import { encodeStill } from '../analysis/still';
+import { saveStandaloneAnalysisAction, uploadAnalysisStillAction } from '../server/actions';
 
 import { AngleTable } from './angle-table';
+
+import type { Keyframe } from '../analysis/keyframes';
 
 /**
  * Filing a standalone analysis under an athlete.
@@ -38,9 +43,23 @@ import { AngleTable } from './angle-table';
  * as the remark on every value.
  */
 
+const DATE = new Intl.DateTimeFormat('de-DE', {
+  day: '2-digit',
+  month: '2-digit',
+  year: '2-digit',
+});
+
 export interface AthleteChoice {
   readonly id: string;
   readonly name: string;
+}
+
+/** One examination this analysis could be filed into. */
+export interface AssessmentChoice {
+  readonly id: string;
+  readonly athleteId: string;
+  readonly question: string;
+  readonly performedAt: Date;
 }
 
 export function AssignAnalysis({
@@ -54,9 +73,12 @@ export function AssignAnalysis({
   onToggle,
   summary,
   athletes,
+  assessments,
   suggestedAthleteId,
   exerciseId,
   recordedAt,
+  keyframes,
+  movement,
   onRestart,
 }: {
   readonly profile: MovementProfile;
@@ -68,7 +90,13 @@ export function AssignAnalysis({
   readonly excluded: readonly string[];
   readonly onToggle: (ids: readonly string[], include: boolean) => void;
   readonly summary: readonly SummaryBlock[];
+  /** The stills of the representative repetition — temporary, see `keyframes`. */
+  readonly keyframes: readonly Keyframe[];
+  /** What the run measured. Filed with the test, so a profile can draw it. */
+  readonly movement: MovementAnalysisConfig;
   readonly athletes: readonly AthleteChoice[];
+  /** The workspace's open examinations; narrowed to the chosen athlete here. */
+  readonly assessments: readonly AssessmentChoice[];
   readonly suggestedAthleteId?: string | undefined;
   readonly exerciseId: string;
   readonly recordedAt: string;
@@ -77,6 +105,8 @@ export function AssignAnalysis({
   const [pending, startTransition] = useTransition();
 
   const [athleteId, setAthleteId] = useState(suggestedAthleteId ?? '');
+  /** Empty means "open an examination for this analysis" — see `openAnalysisTarget`. */
+  const [assessmentId, setAssessmentId] = useState('');
   const [purpose, setPurpose] = useState('');
   const [noteDraft, setNoteDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -93,8 +123,12 @@ export function AssignAnalysis({
    * draft is theirs and nothing overwrites it — the rule the report drafts
    * already follow.
    */
-  const flat = summary.map((block) => `${block.heading}: ${block.lines.join(' ')}`).join('\n\n');
+  // Without the range-of-motion block — see `remarkFrom`.
+  const flat = remarkFrom(summary);
   const note = noteDraft ?? flat;
+
+  /** This athlete's examinations, newest first — the list arrives that way. */
+  const open = assessments.filter((entry) => entry.athleteId === athleteId);
 
   const save = () => {
     setError(null);
@@ -103,6 +137,7 @@ export function AssignAnalysis({
       const state = await saveStandaloneAnalysisAction({
         athleteId,
         purpose: purpose.trim(),
+        assessmentId: assessmentId === '' ? undefined : assessmentId,
         profileKey: profile.key,
         tracks,
         targets,
@@ -119,12 +154,33 @@ export function AssignAnalysis({
         },
         note,
         capturedAt: recordedAt,
+        movement,
       });
 
       if (state.message !== undefined || state.assessmentId === undefined) {
         setError(state.message ?? 'Die Analyse konnte nicht zugeordnet werden.');
 
         return;
+      }
+
+      /**
+       * The stills, now that the test exists.
+       *
+       * This path could not upload them before: the test is opened on the
+       * server, so the browser did not know its id until this answer came back.
+       * Swallowed on failure — an analysis whose numbers are stored must not
+       * report itself as failed because a workspace has no bucket.
+       */
+      for (const frame of keyframes) {
+        try {
+          await uploadAnalysisStillAction(
+            state.moduleId ?? '',
+            frame.position,
+            await encodeStill(frame.dataUrl),
+          );
+        } catch {
+          break;
+        }
       }
 
       setSaved({
@@ -184,8 +240,8 @@ export function AssignAnalysis({
         <div className="flex flex-col gap-1">
           <h2 className="text-sm font-medium">Athlet zuordnen</h2>
           <p className="max-w-prose text-sm text-pretty text-muted-foreground">
-            Die Analyse wird im Test „Videoanalyse“ dieses Athleten abgelegt. Ist noch keiner
-            vorhanden, wird er angelegt.
+            Die Analyse wird als Test abgelegt — in einem bestehenden Assessment oder in einem, das
+            dafür angelegt wird.
           </p>
         </div>
 
@@ -195,7 +251,13 @@ export function AssignAnalysis({
             <select
               className={`${TOUCH_FIELD} ${FOCUS_RING} w-full rounded-md border border-input bg-background px-3`}
               value={athleteId}
-              onChange={(event) => setAthleteId(event.target.value)}
+              onChange={(event) => {
+                setAthleteId(event.target.value);
+                // The examinations belong to the athlete that was chosen; a
+                // leftover id would file this analysis under the wrong one, and
+                // the server would refuse it anyway.
+                setAssessmentId('');
+              }}
             >
               <option value="">Bitte wählen</option>
               {athletes.map((athlete) => (
@@ -207,6 +269,27 @@ export function AssignAnalysis({
           </label>
 
           <label className="flex flex-col gap-1.5 text-sm">
+            <span className="font-medium">Assessment</span>
+            <select
+              className={`${TOUCH_FIELD} ${FOCUS_RING} w-full rounded-md border border-input bg-background px-3`}
+              value={assessmentId}
+              disabled={athleteId === ''}
+              onChange={(event) => setAssessmentId(event.target.value)}
+            >
+              <option value="">Neues Assessment für diese Analyse</option>
+              {open.map((assessment) => (
+                <option key={assessment.id} value={assessment.id}>
+                  {DATE.format(assessment.performedAt)} · {assessment.question}
+                </option>
+              ))}
+            </select>
+            <span className="text-xs text-pretty text-muted-foreground">
+              In einem bestehenden Assessment steht die Analyse neben den übrigen Tests und geht mit
+              deren Auswertung an den Athleten.
+            </span>
+          </label>
+
+          <label className="flex flex-col gap-1.5 text-sm">
             <span className="font-medium">Wofür wurde diese Analyse gemacht?</span>
             <Input
               className={TOUCH_FIELD}
@@ -215,7 +298,7 @@ export function AssignAnalysis({
               onChange={(event) => setPurpose(event.target.value)}
             />
             <span className="text-xs text-pretty text-muted-foreground">
-              Steht als Frage über dem Assessment und als Vermerk an jedem Wert.
+              Benennt die Analyse und steht als Vermerk an jedem Wert.
             </span>
           </label>
         </div>

@@ -1,4 +1,5 @@
 import { VideoAnalysis } from '@/features/movement';
+import { objectStoreReady } from '@/integrations/object-store';
 import { api } from '@/trpc/server';
 
 import type { Metadata } from 'next';
@@ -39,12 +40,16 @@ export default async function StandaloneVideoAnalysisPage({
   // maximum rather than a number chosen here. A workspace with more athletes
   // than this needs a search field in the picker, not a longer list — the
   // select would already be unusable well before that point.
-  const [athletes, exercises] = await Promise.all([
+  const [athletes, exercises, assessments] = await Promise.all([
     api.athletes.list({ limit: 100 }),
     // Asked for by key rather than filtered out of a page of the catalogue:
     // the list is ordered by name and runs to hundreds of entries, so any page
     // of it would miss the handful that have a profile.
     api.exercises.analysable(),
+    // The examinations the analysis can join. Asked once here for the same
+    // reason the athletes are: the picker needs them before the coach has
+    // chosen whose examinations it will show.
+    api.assessments.selectable(),
   ]);
 
   return (
@@ -60,12 +65,19 @@ export default async function StandaloneVideoAnalysisPage({
       </header>
 
       <VideoAnalysis
+        stillsKept={objectStoreReady()}
         target={{
           kind: 'standalone',
           suggestedAthleteId: athlete,
           athletes: athletes.items.map((entry) => ({
             id: entry.id,
             name: `${entry.lastName}, ${entry.firstName}`,
+          })),
+          assessments: assessments.map((entry) => ({
+            id: entry.id,
+            athleteId: entry.athleteId,
+            question: entry.question,
+            performedAt: entry.performedAt,
           })),
           exercises: exercises.map((entry) => ({
             id: entry.id,

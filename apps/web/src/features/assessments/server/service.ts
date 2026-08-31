@@ -22,6 +22,7 @@ import {
   type ModuleConfiguration,
   type ModuleKey,
   type RecordedFacts,
+  type MovementAnalysisConfig,
 } from '@apex/domain';
 import type { TenantContext } from '@apex/types';
 
@@ -215,6 +216,52 @@ export async function listAssessmentsForAthlete(
   });
 
   return rows.map(toRecord);
+}
+
+/**
+ * The examinations an analysis can be filed into, across the workspace.
+ *
+ * ## Why the whole workspace and not one athlete
+ *
+ * The video screen lets the coach pick the athlete *after* the analysis has
+ * run, so the picker beside it cannot know in advance whose examinations it
+ * will have to offer. One scoped read of a few small rows beats a round trip
+ * every time the athlete changes.
+ *
+ * Archived examinations are left out for the same reason they are left out of
+ * every other list: archiving is the act of putting something out of the
+ * working view (§8), and filing new work into it would undo that.
+ */
+export async function selectableAssessments(
+  db: AssessmentDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  limit = 200,
+): Promise<
+  readonly {
+    readonly id: string;
+    readonly athleteId: string;
+    readonly question: string;
+    readonly performedAt: Date;
+  }[]
+> {
+  const rows = await db.assessment.findMany({
+    where: scoped(tenant, { status: { not: 'ARCHIVED' as const } }),
+    select: {
+      id: true,
+      question: true,
+      performedAt: true,
+      case: { select: { athleteId: true } },
+    },
+    orderBy: [{ performedAt: 'desc' }, { id: 'desc' }],
+    take: limit,
+  });
+
+  return rows.map((row) => ({
+    id: row.id,
+    athleteId: row.case.athleteId,
+    question: row.question,
+    performedAt: row.performedAt,
+  }));
 }
 
 export async function getAssessment(
@@ -1216,4 +1263,51 @@ export async function setAssessmentStatus(
   const updated = await getAssessment(db, tenant, assessmentId);
 
   return updated === null ? { ok: false, reason: 'NOT_FOUND' } : { ok: true, assessment: updated };
+}
+
+/**
+ * Attaches what a video analysis measured to the test it ran against.
+ *
+ * ## Why this is not `updateModuleConfiguration`
+ *
+ * That one is the coach editing the test: it re-validates every reference,
+ * checks nothing recorded would be orphaned, and takes the whole configuration
+ * from the browser. None of that applies here. The analysis screen is not
+ * changing what the test records — it is filing what it saw, and the only key it
+ * touches is `movement`.
+ *
+ * Narrow on purpose: everything else in the payload is read and written back
+ * unchanged, so a run of the analysis can never alter a measurement type, an
+ * exercise or a protocol.
+ *
+ * ## Why the result is stored at all
+ *
+ * The angles already become Measurements. The *course* of the movement never
+ * survived the screen, and without it a report can only list aggregates — a
+ * range of motion with no idea how it was reached. Everything a movement profile
+ * shows beyond the aggregates is derived from this, so it is the raw material
+ * they already came from rather than a second truth beside them.
+ */
+export async function attachMovementAnalysis(
+  db: AssessmentDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  moduleId: string,
+  movement: MovementAnalysisConfig,
+): Promise<boolean> {
+  const current = await db.assessmentModule.findFirst({
+    where: scoped(tenant, { id: moduleId }),
+    select: { payload: true, moduleVersion: true },
+  });
+
+  if (!current) return false;
+
+  const existing = readConfiguration(current.payload, current.moduleVersion);
+  if (!existing) return false;
+
+  const { count } = await db.assessmentModule.updateMany({
+    where: scoped(tenant, { id: moduleId }),
+    data: { payload: { ...existing, movement } },
+  });
+
+  return count > 0;
 }

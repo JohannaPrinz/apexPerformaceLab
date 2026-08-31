@@ -9,6 +9,7 @@ import { hasMovementProfile } from '@apex/domain';
 import { FOCUS_RING, TOUCH_TARGET } from '@/components/common/touch';
 import { moduleLabel } from '@/features/assessments';
 import { VideoAnalysis } from '@/features/movement';
+import { objectStoreReady } from '@/integrations/object-store';
 import { api } from '@/trpc/server';
 
 import type { Metadata } from 'next';
@@ -68,6 +69,7 @@ export default async function VideoAnalysisPage({
       </header>
 
       <VideoAnalysis
+        stillsKept={objectStoreReady()}
         target={{
           kind: 'module',
           moduleId: workspace.moduleId,

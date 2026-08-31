@@ -75,6 +75,16 @@ export interface AnalysisTargetInput {
    * later analysis.
    */
   readonly purpose: string;
+  /**
+   * The assessment this analysis belongs in, where the coach named one.
+   *
+   * Then the analysis is a test of *that* examination, and its report covers
+   * every test the assessment holds — the analysis among them. Without one the
+   * old arrangement stands: an assessment is opened for the analysis alone,
+   * because a Measurement cannot live outside a module and a module cannot live
+   * outside an assessment.
+   */
+  readonly assessmentId?: string | undefined;
 }
 
 export type AnalysisTargetResult =
@@ -90,7 +100,8 @@ export type AnalysisTargetResult =
     }
   | {
       readonly ok: false;
-      readonly reason: 'ATHLETE_NOT_FOUND' | 'CATALOGUE_INCOMPLETE' | 'UNKNOWN_PROFILE';
+      readonly reason:
+        'ATHLETE_NOT_FOUND' | 'ASSESSMENT_NOT_FOUND' | 'CATALOGUE_INCOMPLETE' | 'UNKNOWN_PROFILE';
     };
 
 /**
@@ -142,7 +153,7 @@ export async function openAnalysisTarget(
   db: TargetDb,
   tenant: Pick<TenantContext, 'organizationId'>,
   createdByCoachId: string,
-  { athleteId, purpose, profileKey, tracks, targets }: AnalysisTargetInput,
+  { athleteId, purpose, profileKey, tracks, targets, assessmentId }: AnalysisTargetInput,
 ): Promise<AnalysisTargetResult> {
   // The parent is checked, never trusted: without this a caller could file an
   // analysis against another workspace's athlete. The rows would each be
@@ -174,6 +185,58 @@ export async function openAnalysisTarget(
 
   const typeKeys = Object.fromEntries(types.map((type) => [type.id, type.key]));
 
+  const configurationFor = () =>
+    analysisConfiguration(jointAngle.id, {
+      profileKey,
+      tracks: [...tracks],
+      targets: [...targets],
+    });
+
+  /**
+   * The assessment the coach picked.
+   *
+   * Checked against the athlete as well as the workspace: filing an analysis
+   * into somebody else's examination would put one athlete's angles under
+   * another's name, and both rows would be correctly scoped while the
+   * *relationship* was the leak.
+   *
+   * A new test every time, unlike the reuse below. The coach chose where this
+   * analysis goes, so it is its own entry in that assessment — which is what
+   * lets one examination hold two analyses of two movements and report both.
+   */
+  if (assessmentId !== undefined && assessmentId !== '') {
+    const assessment = await db.assessment.findFirst({
+      where: scoped(tenant, { id: assessmentId, case: { athleteId } }),
+      select: { id: true },
+    });
+
+    if (!assessment) return { ok: false, reason: 'ASSESSMENT_NOT_FOUND' };
+
+    const configuration = configurationFor();
+    const module_ = await db.assessmentModule.create({
+      data: withTenant(tenant, {
+        assessmentId: assessment.id,
+        // The coach's own words name the test, so two analyses in one
+        // assessment are told apart by what they were performed for.
+        name: purpose.trim() === '' ? ANALYSIS_MODULE_NAME : purpose.trim(),
+        moduleKey: ANALYSIS_MODULE_KEY,
+        moduleVersion: MODULE_CONFIGURATION_VERSION,
+        payload: configuration,
+        createdByCoachId,
+      }),
+      select: { id: true },
+    });
+
+    return {
+      ok: true,
+      moduleId: module_.id,
+      assessmentId: assessment.id,
+      typeKeys,
+      configuration,
+      created: true,
+    };
+  }
+
   const existing = await db.assessmentModule.findFirst({
     where: scoped(tenant, {
       moduleKey: ANALYSIS_MODULE_KEY,
@@ -199,11 +262,7 @@ export async function openAnalysisTarget(
   const openCase = await ensureOpenCase(db, tenant, createdByCoachId, athleteId, purpose);
   if (!openCase) return { ok: false, reason: 'ATHLETE_NOT_FOUND' };
 
-  const configuration = analysisConfiguration(jointAngle.id, {
-    profileKey,
-    tracks: [...tracks],
-    targets: [...targets],
-  });
+  const configuration = configurationFor();
 
   const assessment = await db.assessment.create({
     data: withTenant(tenant, {
