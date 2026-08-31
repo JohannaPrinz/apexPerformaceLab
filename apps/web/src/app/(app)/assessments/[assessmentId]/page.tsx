@@ -7,6 +7,7 @@ import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { assessmentProgress, isAssessmentLive } from '@apex/domain';
 import { Badge, Button } from '@apex/ui';
 
+import { ActionMenu } from '@/components/common/action-menu';
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_TARGET } from '@/components/common/touch';
 import {
   AssessmentStatusActions,
@@ -49,7 +50,7 @@ export default async function AssessmentPage({
 
   // A configured test is copied into this assessment — a second run of it — or
   // into another assessment of the same athlete.
-  const [siblings, exerciseCatalogue, analysis, athlete] = await Promise.all([
+  const [siblings, exerciseCatalogue, analysis, athlete, reports] = await Promise.all([
     api.assessments.listForAthlete({ athleteId: assessment.athleteId }),
     // The ordinary catalogue procedure — this workspace plus system-wide, and
     // never another tenant's. The dialog picks from what it is given; it does
@@ -62,6 +63,9 @@ export default async function AssessmentPage({
     // the assessment payload — this is presentation, not part of what an
     // assessment is.
     api.athletes.byId({ athleteId: assessment.athleteId }),
+    // Whether one was already published: a finished analysis must not read as
+    // an invitation to start a second one.
+    api.reports.listForAssessment({ assessmentId }),
   ]);
 
   const exerciseOptions = exerciseCatalogue.map((exercise) => ({
@@ -116,6 +120,9 @@ export default async function AssessmentPage({
 
   /** Adding and configuring tests belongs to a live examination, not a closed one. */
   const live = assessment.status === 'PLANNED' || assessment.status === 'IN_PROGRESS';
+
+  // §16: a published analysis is the finished document, not a draft in progress.
+  const published = reports.find((entry) => entry.status === 'PUBLISHED');
 
   return (
     <main className="mx-auto flex w-full max-w-content flex-col gap-8 px-6 py-12">
@@ -179,23 +186,12 @@ export default async function AssessmentPage({
         {/* One wrapping row, not a stacked column. Stacked, the three groups
             rendered as three ragged lines of buttons — measured at 1280, where
             there was room for all of them side by side. */}
-        <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
-          <EditAssessmentDialog
-            assessment={{
-              id: assessment.id,
-              question: assessment.question,
-              description: assessment.description,
-              type: assessment.type,
-              performedAt: assessment.performedAt,
-              status: assessment.status,
-            }}
-          />
-
-          <CopyAssessmentButton assessmentId={assessment.id} />
-
-          {/* Last, because it carries the primary action for whatever state the
-              examination is in. */}
+        {/* The one action that moves the examination forward, and a menu for
+            the rest. Three groups of buttons in a row read as a toolbar; what a
+            coach opens this screen to do is start, continue or finish it. */}
+        <div className="flex items-center justify-end gap-2">
           <AssessmentStatusActions
+            part="primary"
             assessmentId={assessment.id}
             status={assessment.status}
             progress={progress}
@@ -205,16 +201,57 @@ export default async function AssessmentPage({
                 : `/assessments/${assessment.id}/tests/${nextModule.id}/run`
             }
           />
+
+          <ActionMenu label={`Aktionen: ${assessment.question}`}>
+            <EditAssessmentDialog
+              assessment={{
+                id: assessment.id,
+                question: assessment.question,
+                description: assessment.description,
+                type: assessment.type,
+                performedAt: assessment.performedAt,
+                status: assessment.status,
+              }}
+            />
+
+            <CopyAssessmentButton assessmentId={assessment.id} />
+
+            <AssessmentStatusActions
+              part="menu"
+              assessmentId={assessment.id}
+              status={assessment.status}
+              progress={progress}
+              nextModuleHref={null}
+            />
+          </ActionMenu>
         </div>
       </header>
 
       <section className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1">
-          <h2 className="text-xl font-semibold">Tests</h2>
-          <p className="text-sm text-pretty text-muted-foreground">
-            Jeder Test erfasst die Messgrößen, mit denen er konfiguriert ist. Ein Test mit mehreren
-            Stufen — etwa ein Laktatstufentest — erfasst den gesamten Satz einmal je Stufe.
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <h2 className="text-xl font-semibold">Tests</h2>
+            <p className="text-sm text-pretty text-muted-foreground">
+              Jeder Test erfasst die Messgrößen, mit denen er konfiguriert ist. Ein Test mit
+              mehreren Stufen — etwa ein Laktatstufentest — erfasst den gesamten Satz einmal je
+              Stufe.
+            </p>
+          </div>
+
+          {/* Above the list and on the right: adding a test is what a coach
+              does *to* this section, so it belongs at its head rather than
+              after everything it produces. */}
+          {live ? (
+            <div className="flex shrink-0 items-center gap-2">
+              <CreateTestDialog assessmentId={assessment.id} exercises={exerciseOptions} />
+
+              <Button variant="outline" className={TOUCH_BUTTON} asChild>
+                <Link href={`/assessments/${assessment.id}/tests/new`}>
+                  Ausführlich konfigurieren
+                </Link>
+              </Button>
+            </div>
+          ) : null}
         </div>
 
         {activeModules.length === 0 ? (
@@ -273,17 +310,7 @@ export default async function AssessmentPage({
 
         {/* The dialog is the ordinary way in; the builder route stays for a
             configuration the dialog deliberately does not carry. */}
-        {live ? (
-          <div className="flex flex-wrap items-center gap-3">
-            <CreateTestDialog assessmentId={assessment.id} exercises={exerciseOptions} />
-
-            <Button variant="ghost" className={TOUCH_BUTTON} asChild>
-              <Link href={`/assessments/${assessment.id}/tests/new`}>
-                Ausführlich konfigurieren
-              </Link>
-            </Button>
-          </div>
-        ) : (
+        {live ? null : (
           <p className="text-sm text-pretty text-muted-foreground">
             Dieses Assessment ist {ASSESSMENT_STATUS_LABELS_DE[assessment.status]?.toLowerCase()}.
             Die erfassten Werte bleiben sichtbar; zum Weiterarbeiten öffnen Sie es wieder.
@@ -306,12 +333,16 @@ export default async function AssessmentPage({
         >
           <span className="flex min-w-0 flex-col gap-0.5">
             <span className="text-sm font-medium">
-              {analysis.draft === null ? 'Auswertung anlegen' : 'Auswertung öffnen'}
+              {published === undefined && analysis.draft === null
+                ? 'Auswertung anlegen'
+                : 'Auswertung öffnen'}
             </span>
             <span className="text-xs text-muted-foreground" data-numeric>
-              {analysis.draft === null
-                ? `${String(analysis.modules.filter((entry) => entry.selectable).length)} auswertbare Tests`
-                : `Entwurf · Version ${String(analysis.draft.version)} · ${String(analysis.includedCount)} Tests einbezogen`}
+              {published === undefined
+                ? analysis.draft === null
+                  ? `${String(analysis.modules.filter((entry) => entry.selectable).length)} auswertbare Tests`
+                  : `Entwurf · Version ${String(analysis.draft.version)} · ${String(analysis.includedCount)} Tests einbezogen`
+                : `Abgeschlossen · Version ${String(published.version)}`}
             </span>
           </span>
 

@@ -6,7 +6,12 @@ import { FOCUS_RING, TOUCH_FIELD } from '@/components/common/touch';
 
 import { SIDE_LABELS_DE } from '../../components/labels';
 
-import { findRecorded, formatValue, type MeasurementSlot, type RecordedMeasurement } from './slots';
+import {
+  findRecorded,
+  readableValue,
+  type MeasurementSlot,
+  type RecordedMeasurement,
+} from './slots';
 
 /**
  * Everything one cell can hold before the stage is saved.
@@ -136,7 +141,7 @@ export function MeasurementCell({
             className={`font-medium ${corrected ? 'rounded bg-accent-soft px-1.5 py-0.5 text-accent-soft-foreground' : ''}`}
             data-numeric
           >
-            {formatValue(existing)}
+            {readableValue(existing)}
           </span>
           {corrected ? (
             <span className="text-xs text-accent-soft-foreground">korrigiert</span>

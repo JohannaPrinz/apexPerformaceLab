@@ -177,7 +177,7 @@ export function TestBuilder({
                   );
 
             // A template proposes a name only while the coach has not given
-            // one. Overwriting "Laufband Mai" with "Lactate step test" is the
+            // one. Overwriting "Laufband Mai" with "Laktat-Stufentest" is the
             // same silent loss the type buttons used to cause, one step later.
             setDraft(draft.name.trim() === '' ? next : { ...next, name: draft.name });
           }}

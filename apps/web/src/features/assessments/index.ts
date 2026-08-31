@@ -18,12 +18,28 @@ export { EditModuleDialog } from './components/edit-module-dialog';
 export { ExercisePicker, type PickableExercise } from './components/exercise-picker';
 export { CopyModuleButton, type CopyTarget } from './components/copy-module-button';
 export { ModuleCard, type ModuleCardData } from './components/module-card';
+/**
+ * The curve's data. The analysis draws exactly this picture — a lactate test
+ * over the speed it was performed at — so it reads it through the same query
+ * rather than assembling a second one.
+ */
+export { measurementChart, type ChartGroup } from './measurements/server/service';
+// The name every test an analysis opens for itself carries. The athlete's
+// profile needs it to tell "the coach named this" from "we named it".
+export { ANALYSIS_MODULE_NAME } from './server/analysis-target';
 export {
   moduleLabel,
   // The one vocabulary for test types. Exported through the barrel because the
   // analysis section names the tests it draws on, and a second mapping beside
   // this one would drift the moment a key is added.
   MODULE_LABELS_DE,
+  // Named coordinates travel with every value out of this slice: an analysis
+  // and a shared document both label the side a reading was taken on, and a
+  // second mapping beside this one would drift the moment a value is added.
+  SIDE_LABELS_DE,
+  // Named the same way and for the same reason: the shared curve labels the
+  // runs it draws, and a second status vocabulary would drift from this one.
+  MODULE_STATUS_LABELS_DE,
 } from './components/labels';
 export { TestBuilder } from './components/builder/test-builder';
 export {
@@ -44,6 +60,7 @@ export { RunTestButton } from './measurements/components/run-test-button';
 export {
   findRecorded,
   formatValue,
+  readableValue,
   isPassEmpty,
   passesOf,
   passProgress,

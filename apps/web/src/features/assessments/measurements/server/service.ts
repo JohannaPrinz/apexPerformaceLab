@@ -7,10 +7,13 @@ import {
   contextOf,
   evaluateReadiness,
   measurementTypeIdsOf,
+  movementProfile,
+  positionOf,
   protocolKey,
   readModuleConfiguration,
   selfComparisons,
   seriesKey,
+  trackOf,
   validateMeasurementContext,
   validatePassIndex,
   type BetterDirection,
@@ -1324,13 +1327,45 @@ export async function measurementChart(
       unit: seed.measurementType.unit,
       side: seed.side,
       exerciseName: seed.exerciseId === null ? null : (exerciseNames.get(seed.exerciseId) ?? null),
-      context: contextOf(seed.context),
+      /**
+       * The axis values in the coach's words.
+       *
+       * A video-analysis test stores the profile's own keys — `hip`, `flexed` —
+       * because those are stable and translatable. Drawn straight onto a chart
+       * they read as "Gelenkwinkel · Rechts · hip · gebeugt", half German and
+       * half implementation. The same translation the readings already get.
+       */
+      context: readableAxes(
+        contextOf(seed.context),
+        readModuleConfiguration(seed.assessmentModule.payload, seed.assessmentModule.moduleVersion),
+      ),
       loadCandidates: usable,
       series,
     });
   }
 
   return charts;
+}
+
+/**
+ * Axis values translated back through the movement profile that wrote them.
+ *
+ * Anything the profile does not recognise is left exactly as it stands: a
+ * coach's own axis value is already their language.
+ */
+function readableAxes(
+  context: Record<string, string>,
+  configuration: ModuleConfiguration | null,
+): Record<string, string> {
+  const profile = movementProfile(configuration?.movement?.profileKey);
+  if (profile === null) return context;
+
+  return Object.fromEntries(
+    Object.entries(context).map(([axis, value]) => [
+      axis,
+      trackOf(profile, value)?.label ?? positionOf(profile, value)?.label ?? value,
+    ]),
+  );
 }
 
 /** One stage of one test, so the quantities recorded together are reachable. */

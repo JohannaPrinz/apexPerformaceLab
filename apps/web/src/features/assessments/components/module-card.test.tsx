@@ -83,7 +83,18 @@ const renderCard = (over: Partial<ModuleCardData> = {}, assessmentClosed = false
   );
 };
 
-const removeButton = () => screen.getByRole('button', { name: 'Löschen' });
+const removeButton = () => screen.getByRole('menuitem', { name: 'Löschen' });
+
+/**
+ * Opens the tile's action menu.
+ *
+ * Everything but performing the test lives behind it now: four buttons in a row
+ * made every card read like a form, so the card carries the information and one
+ * primary action, and the rest is one click away.
+ */
+const openMenu = async (user: ReturnType<typeof userEvent.setup>) => {
+  await user.click(screen.getByRole('button', { name: /^Aktionen:/ }));
+};
 
 /**
  * Which actions a tile offers depends on whether the test has been carried out:
@@ -91,39 +102,55 @@ const removeButton = () => screen.getByRole('button', { name: 'Löschen' });
  * A performed test is never deletable — its measurements are the record (§13).
  */
 describe('the actions a tile offers', () => {
-  it('offers configuring, copying and deleting while the test is only planned', () => {
+  it('keeps performing the test in the card and the rest behind the menu', async () => {
+    const user = userEvent.setup();
     renderCard({ status: 'PLANNED' });
 
+    // Nothing is shown until the menu is opened.
+    expect(screen.queryByRole('menuitem', { name: 'Konfigurieren' })).toBeNull();
+
+    await openMenu(user);
+
     expect(screen.getByRole('link', { name: 'Durchführen' })).toBeVisible();
-    expect(screen.getByRole('link', { name: 'Konfigurieren' })).toBeVisible();
+    expect(screen.getByRole('menuitem', { name: 'Konfigurieren' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Kopieren' })).toBeVisible();
     expect(removeButton()).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Test archivieren' })).toBeNull();
   });
 
-  it('offers repeating, copying and archiving once it has been performed', () => {
+  it('offers repeating, copying and archiving once it has been performed', async () => {
+    const user = userEvent.setup();
     renderCard({ status: 'COMPLETED', measurementCount: 4 });
+
+    await openMenu(user);
 
     // A button, not a link: opening a finished test again records that it was
     // reopened, and a link cannot make that write.
     expect(screen.getByRole('button', { name: 'Erneut durchführen' })).toBeVisible();
+
     expect(screen.getByRole('button', { name: 'Kopieren' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Test archivieren' })).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Löschen' })).toBeNull();
-    expect(screen.queryByRole('link', { name: 'Konfigurieren' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Löschen' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Konfigurieren' })).toBeNull();
   });
 
-  it('counts a test holding values as performed, whatever its status says', () => {
+  it('counts a test holding values as performed, whatever its status says', async () => {
     // Someone entered readings into it. Offering "delete" there would offer
     // something the server refuses anyway.
+    const user = userEvent.setup();
     renderCard({ status: 'IN_PROGRESS', measurementCount: 1 });
 
-    expect(screen.queryByRole('button', { name: 'Löschen' })).toBeNull();
+    await openMenu(user);
+
+    expect(screen.queryByRole('menuitem', { name: 'Löschen' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Test archivieren' })).toBeVisible();
   });
 
-  it('offers to take an archived test back into the working view', () => {
+  it('offers to take an archived test back into the working view', async () => {
+    const user = userEvent.setup();
     renderCard({ status: 'COMPLETED', measurementCount: 4, archivedAt: new Date() });
+
+    await openMenu(user);
 
     expect(screen.getByRole('button', { name: 'Test wieder aufnehmen' })).toBeVisible();
   });
@@ -143,8 +170,10 @@ describe('the actions a tile offers', () => {
     );
   });
 
-  it('leads to the entry screen, not the overview, from "Durchführen"', () => {
+  it('leads to the entry screen, not the overview, from "Durchführen"', async () => {
+    const user = userEvent.setup();
     renderCard({ status: 'PLANNED' });
+    await openMenu(user);
 
     expect(screen.getByRole('link', { name: 'Durchführen' })).toHaveAttribute(
       'href',
@@ -152,46 +181,55 @@ describe('the actions a tile offers', () => {
     );
   });
 
-  it('puts the primary action last, so it sits on the right', () => {
+  it('keeps every action behind the menu, so the card is only information', async () => {
+    const user = userEvent.setup();
     renderCard({ status: 'PLANNED' });
 
-    // Last in the DOM is rightmost in a left-to-right row, and last in the
-    // stack when it wraps — which on a phone is closest to the thumb.
-    const run = screen.getByRole('link', { name: 'Durchführen' });
-    const row = run.closest('div.flex.flex-wrap');
-    const labels = [...(row?.children ?? [])].map((child) => child.textContent?.trim());
+    // Nothing to aim at between the facts: not even performing the test.
+    expect(screen.queryByRole('link', { name: 'Durchführen' })).toBeNull();
 
-    expect(labels.at(-1)).toBe('Durchführen');
+    await openMenu(user);
+
+    expect(screen.getByRole('link', { name: 'Durchführen' })).toBeVisible();
   });
 });
 
 describe('while the assessment is being assembled', () => {
-  it('offers to remove a planned test', () => {
+  it('offers to remove a planned test', async () => {
+    const user = userEvent.setup();
     renderCard({ status: 'PLANNED' }, false);
+    await openMenu(user);
 
     expect(removeButton()).toBeEnabled();
   });
 
-  it('offers to remove a skipped test too', () => {
+  it('offers to remove a skipped test too', async () => {
     // Nothing has happened yet, so this is a plan being edited.
+    const user = userEvent.setup();
     renderCard({ status: 'SKIPPED' }, false);
+    await openMenu(user);
 
     expect(removeButton()).toBeEnabled();
   });
 });
 
 describe('once the examination is closed', () => {
-  it('offers to remove only a skipped test', () => {
+  it('offers to remove only a skipped test', async () => {
+    const user = userEvent.setup();
     renderCard({ status: 'SKIPPED' }, true);
+    await openMenu(user);
 
     expect(removeButton()).toBeEnabled();
   });
 
-  it('refuses a test that took place, and says why', () => {
+  it('refuses a test that took place, and says why', async () => {
     // Only the states that still count as "not performed" reach the delete
-    // button at all; the others offer archiving instead.
+    // entry at all; the others offer archiving instead.
+    const user = userEvent.setup();
+
     for (const status of ['PLANNED', 'IN_PROGRESS'] as const) {
       const { unmount } = renderCard({ status }, true);
+      await openMenu(user);
 
       expect(removeButton()).toBeDisabled();
       expect(removeButton()).toHaveAttribute('title', expect.stringContaining('abgeschlossen'));
@@ -205,6 +243,7 @@ describe('the confirmation', () => {
     const user = userEvent.setup();
     renderCard();
 
+    await openMenu(user);
     await user.click(removeButton());
 
     expect(mocks.removed).toEqual([]);
@@ -216,6 +255,7 @@ describe('the confirmation', () => {
     const user = userEvent.setup();
     renderCard({ moduleKey: 'lactate' });
 
+    await openMenu(user);
     await user.click(removeButton());
 
     expect(screen.getByRole('alert')).toHaveTextContent('Laktat');
@@ -225,6 +265,7 @@ describe('the confirmation', () => {
     const user = userEvent.setup();
     renderCard();
 
+    await openMenu(user);
     await user.click(removeButton());
     await user.click(screen.getByRole('button', { name: 'Ja, entfernen' }));
 
@@ -235,6 +276,7 @@ describe('the confirmation', () => {
     const user = userEvent.setup();
     renderCard();
 
+    await openMenu(user);
     await user.click(removeButton());
     await user.click(screen.getByRole('button', { name: 'Abbrechen' }));
 
@@ -287,15 +329,18 @@ describe('re-running from the tile', () => {
     const user = userEvent.setup();
     renderCard({ status: 'COMPLETED', measurementCount: 4 });
 
+    await openMenu(user);
     await user.click(screen.getByRole('button', { name: /Erneut durchführen/ }));
 
     expect(mocks.statusChanges).toEqual([['mod_1', 'IN_PROGRESS']]);
     expect(mocks.pushed).toEqual(['/assessments/ass_1/tests/mod_1/run']);
   });
 
-  it('writes nothing for a test that was never finished', () => {
+  it('writes nothing for a test that was never finished', async () => {
     // Nothing to reopen: a plain link is the honest control.
     renderCard({ status: 'IN_PROGRESS', measurementCount: 2 });
+
+    await openMenu(userEvent.setup());
 
     expect(screen.getByRole('link', { name: /Erneut durchführen/ })).toHaveAttribute(
       'href',

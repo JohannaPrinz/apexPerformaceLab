@@ -4,7 +4,7 @@ import { useState, useTransition } from 'react';
 
 import { useRouter } from 'next/navigation';
 
-import { Check, Play, X } from 'lucide-react';
+import { Archive, Check, Play, X, XCircle } from 'lucide-react';
 
 import {
   allowedAssessmentTransitions,
@@ -13,6 +13,7 @@ import {
 } from '@apex/domain';
 import { Button, Dialog, DialogContent, DialogFooter } from '@apex/ui';
 
+import { ActionMenuItem } from '@/components/common/action-menu';
 import { TOUCH_BUTTON } from '@/components/common/touch';
 import { createAnalysisAction } from '@/features/reports';
 
@@ -45,6 +46,7 @@ export function AssessmentStatusActions({
   status,
   progress,
   nextModuleHref,
+  part = 'all',
 }: {
   readonly assessmentId: string;
   readonly status: AssessmentStatus;
@@ -56,6 +58,8 @@ export function AssessmentStatusActions({
    * starts it, and the coach lands on the assessment with its tests listed.
    */
   readonly nextModuleHref: string | null;
+  /** Which half to render — see `showPrimary` below. */
+  readonly part?: 'all' | 'primary' | 'menu';
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -99,21 +103,36 @@ export function AssessmentStatusActions({
     });
   }
 
+  /**
+   * Which half of the actions this instance renders.
+   *
+   * The examination's state decides *what* may be done; where it belongs on the
+   * screen is a different question. The one action that moves the session
+   * forward sits in the header; putting away and calling off do not, and they
+   * go in the menu beside it. Two instances rather than one that returns two
+   * fragments, so each owns the state its own actions need — the abort
+   * confirmation belongs to the menu, not to the primary button.
+   */
+  const showPrimary = part !== 'menu';
+  const showSecondary = part !== 'primary';
+
   return (
-    <div className="flex flex-col items-end gap-2">
-      {/* Secondary actions first, the primary one last: it then sits on the
-          right wherever the row fits, and at the end of the stack where it
-          wraps. On a phone that also puts it closest to the thumb. */}
-      <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
-        {allowed.includes('ARCHIVED') ? (
-          <Button
-            variant="ghost"
-            className={TOUCH_BUTTON}
+    <div className={part === 'menu' ? 'contents' : 'flex flex-col items-end gap-2'}>
+      <div
+        className={
+          part === 'menu'
+            ? 'contents'
+            : 'flex flex-wrap items-center justify-start gap-2 sm:justify-end'
+        }
+      >
+        {showSecondary && allowed.includes('ARCHIVED') ? (
+          <ActionMenuItem
             disabled={pending}
             onClick={() => {
               move('ARCHIVED');
             }}
           >
+            <Archive aria-hidden="true" />
             {/* Named, because a test tile on the same page carries a button
                 labelled "Archivieren" too. Unqualified, the two are one word
                 apart from putting away a single test and putting away the whole
@@ -121,23 +140,24 @@ export function AssessmentStatusActions({
                 Its neighbours already say "Assessment starten" and "Assessment
                 abschließen"; this now matches them. */}
             Assessment archivieren
-          </Button>
+          </ActionMenuItem>
         ) : null}
 
-        {status === 'IN_PROGRESS' ? (
-          <Button
-            variant="ghost"
-            className={TOUCH_BUTTON}
+        {showSecondary && status === 'IN_PROGRESS' ? (
+          <ActionMenuItem
             disabled={pending}
             onClick={() => {
               setConfirmingAbort(true);
             }}
           >
+            <XCircle aria-hidden="true" />
             Abbrechen
-          </Button>
+          </ActionMenuItem>
         ) : null}
 
-        {(status === 'COMPLETED' || status === 'ABORTED') && allowed.includes('IN_PROGRESS') ? (
+        {showPrimary &&
+        (status === 'COMPLETED' || status === 'ABORTED') &&
+        allowed.includes('IN_PROGRESS') ? (
           <Button
             variant="outline"
             className={TOUCH_BUTTON}
@@ -150,7 +170,7 @@ export function AssessmentStatusActions({
           </Button>
         ) : null}
 
-        {status === 'IN_PROGRESS' ? (
+        {showPrimary && status === 'IN_PROGRESS' ? (
           <Button
             variant={nextModuleHref === null ? 'accent' : 'outline'}
             className={TOUCH_BUTTON}
@@ -174,7 +194,7 @@ export function AssessmentStatusActions({
           </Button>
         ) : null}
 
-        {status === 'IN_PROGRESS' && nextModuleHref !== null ? (
+        {showPrimary && status === 'IN_PROGRESS' && nextModuleHref !== null ? (
           <Button variant="accent" className={TOUCH_BUTTON} asChild>
             <a href={nextModuleHref}>
               <Play aria-hidden="true" className="size-4" />
@@ -183,7 +203,7 @@ export function AssessmentStatusActions({
           </Button>
         ) : null}
 
-        {status === 'PLANNED' && allowed.includes('IN_PROGRESS') ? (
+        {showPrimary && status === 'PLANNED' && allowed.includes('IN_PROGRESS') ? (
           <Button
             variant="accent"
             className={TOUCH_BUTTON}

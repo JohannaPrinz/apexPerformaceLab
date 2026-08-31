@@ -176,20 +176,47 @@ export function passProgress(
 }
 
 /**
- * Renders a stored numeric value.
+ * A stored value in the form arithmetic reads it — a decimal **point**.
  *
  * `numericValue` arrives as Prisma's `Decimal`, not a `number` — the column is
  * `Decimal(12,4)` precisely so a lactate reading keeps its precision. Passing it
  * to `String()` unnarrowed would stringify an object, which is what the
  * `no-base-to-string` rule is warning about; this narrows first.
+ *
+ * **Not for a screen.** The comparison that decides whether a stage changed runs
+ * `Number()` over this, so it has to stay machine-readable. What a coach reads
+ * is `readableValue` below.
  */
 export function formatValue(measurement: RecordedMeasurement): string {
   if (measurement.textValue !== null) return measurement.textValue;
-  if (measurement.booleanValue !== null) return measurement.booleanValue ? 'Yes' : 'No';
+  if (measurement.booleanValue !== null) return measurement.booleanValue ? 'true' : 'false';
 
   const numeric: unknown = measurement.numericValue;
   if (numeric === null || numeric === undefined) return '';
   if (typeof numeric === 'number' || typeof numeric === 'string') return String(numeric);
 
   return (numeric as { toString: () => string }).toString();
+}
+
+const READABLE = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 4 });
+
+/**
+ * The same value as a German-speaking coach reads it.
+ *
+ * A body weight shown as "68.4 kg" on a screen that says "Erfasste Werte" reads
+ * as a foreign number, and "Yes" beside "Nicht erfasst" reads as an untranslated
+ * string — which is what both were. Trailing zeros are dropped: the column keeps
+ * four decimal places so a lactate reading survives, not so a screen prints
+ * "68,4000".
+ */
+export function readableValue(measurement: RecordedMeasurement): string {
+  if (measurement.textValue !== null) return measurement.textValue;
+  if (measurement.booleanValue !== null) return measurement.booleanValue ? 'Ja' : 'Nein';
+
+  const raw = formatValue(measurement);
+  if (raw === '') return '';
+
+  const numeric = Number(raw);
+
+  return Number.isFinite(numeric) ? READABLE.format(numeric) : raw;
 }

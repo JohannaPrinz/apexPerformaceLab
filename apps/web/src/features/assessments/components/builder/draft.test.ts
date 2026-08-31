@@ -114,7 +114,7 @@ describe('a template is a starting point, not a link', () => {
     const draft = draftFromTemplateKey('muscle_activity_measurement', 'movement', idForTypeKey);
 
     expect(draft.recordsSide).toBe(true);
-    expect(draft.dimensions).toEqual([{ key: 'site', label: 'Measurement site' }]);
+    expect(draft.dimensions).toEqual([{ key: 'site', label: 'Messstelle' }]);
     expect(draft.dimensions[0]?.values).toBeUndefined();
   });
 
@@ -418,7 +418,7 @@ describe('the summary', () => {
     // Two lines now: what the coach called it, and what kind of test it is.
     // A template proposes the name, which is why it reads as the template does.
     expect(line('Testtyp')?.value).toBe('Laktat');
-    expect(line('Name')?.value).toBe('Lactate step test');
+    expect(line('Name')?.value).toBe('Laktat-Stufentest');
   });
 
   it('lists every quantity with its role', () => {
@@ -466,7 +466,7 @@ describe('the summary', () => {
     const movement = draftFromTemplateKey('muscle_activity_measurement', 'movement', idForTypeKey);
 
     expect(summarise(movement, names).find((entry) => entry.label === 'Merkmale')?.value).toBe(
-      'Measurement site (frei)',
+      'Messstelle (frei)',
     );
   });
 

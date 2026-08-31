@@ -5,7 +5,7 @@ import { useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
-import { Check, History } from 'lucide-react';
+import { Check, History, Settings2, Trash2 } from 'lucide-react';
 
 import {
   canRemoveModule,
@@ -15,6 +15,7 @@ import {
 } from '@apex/domain';
 import { Badge, Button } from '@apex/ui';
 
+import { ActionMenu, ActionMenuItem } from '@/components/common/action-menu';
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_TARGET } from '@/components/common/touch';
 
 import { ArchiveModuleButton } from '../measurements/components/archive-module-button';
@@ -149,8 +150,18 @@ export function ModuleCard({
 
   return (
     <div className="flex flex-col gap-3 rounded-md border border-border bg-card p-4">
+      {/* The name shrinks before the actions do, so on any width that can hold
+          both they stay on the header line — a card whose buttons sit between
+          the header and the details reads as a form with a control loose in the
+          middle of it.
+
+          Below `sm` they take a line of their own instead: at 375 px a German
+          label and a name do not share one, and squeezing them together clipped
+          the name behind the button. A line under the header is still the
+          header — the same pattern this codebase uses wherever a label and a
+          control stop fitting side by side. */}
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           {/* The name identifies the test, the type says what kind it is —
               both, because three tests may share a type and only the name tells
               them apart. Older rows have no name and fall back to the type. */}
@@ -222,73 +233,71 @@ export function ModuleCard({
             a plan is configured and removed, a performed test is repeated and
             put away. A performed test is never removed — its measurements are
             the record (§13). */}
-        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-          {performed ? (
-            <>
-              <CopyModuleButton
-                moduleId={module.id}
-                assessmentId={assessmentId}
-                targets={copyTargets}
-              />
+        {/* One primary action, everything else behind the menu. Performing the
+            test is what a coach opens this card to do; configuring, copying,
+            archiving and removing it are occasional, and four buttons in a row
+            made every card read like a form.
+
+            Which entries appear still depends on whether the test has been
+            performed: a plan is configured and removed, a performed test is
+            repeated and put away. A performed test is never removed — its
+            measurements are the record (§13). */}
+        <div className="flex basis-full items-center gap-2 sm:ml-auto sm:shrink-0 sm:basis-auto">
+          {/* Every action of a test, in one place. The card carries the
+              information — name, type, status, how far the values got — and
+              nothing a coach has to aim at between the facts. */}
+          <ActionMenu label={`Aktionen: ${module.name ?? 'Test'}`}>
+            <RunTestButton
+              moduleId={module.id}
+              href={runHref}
+              status={module.status}
+              performed={performed}
+            />
+
+            {performed ? null : (
+              <ActionMenuItem asChild>
+                <Link href={`/assessments/${assessmentId}/tests/${module.id}/configure`}>
+                  <Settings2 aria-hidden="true" />
+                  Konfigurieren
+                </Link>
+              </ActionMenuItem>
+            )}
+
+            <CopyModuleButton
+              moduleId={module.id}
+              assessmentId={assessmentId}
+              targets={copyTargets}
+            />
+
+            {performed ? (
               <ArchiveModuleButton
                 moduleId={module.id}
                 assessmentId={assessmentId}
                 archived={module.archivedAt !== null}
               />
-              {/* The same button as on the overview, so a finished test opened
-                  from either place records that it was reopened. */}
-              <RunTestButton moduleId={module.id} href={runHref} status={module.status} performed />
-            </>
-          ) : (
-            <>
-              <Button variant="ghost" className={TOUCH_BUTTON} asChild>
-                <Link href={`/assessments/${assessmentId}/tests/${module.id}/configure`}>
-                  Konfigurieren
-                </Link>
-              </Button>
-              <CopyModuleButton
-                moduleId={module.id}
-                assessmentId={assessmentId}
-                targets={copyTargets}
-              />
-              {removal.ok ? (
-                <Button
-                  variant="ghost"
-                  className={TOUCH_BUTTON}
-                  disabled={pending}
-                  // Two steps, not `window.confirm`: the browser dialog cannot
-                  // be styled, reads in the wrong language on some systems, and
-                  // says nothing about *what* is being removed. This one names
-                  // the test.
-                  onClick={() => {
-                    setError(null);
-                    setConfirming(true);
-                  }}
-                >
-                  Löschen
-                </Button>
-              ) : (
-                <Button
-                  variant="ghost"
-                  className={TOUCH_BUTTON}
-                  disabled
-                  title={
-                    removal.reason === 'HAS_MEASUREMENTS'
+            ) : (
+              <ActionMenuItem
+                disabled={pending || !removal.ok}
+                title={
+                  removal.ok
+                    ? undefined
+                    : removal.reason === 'HAS_MEASUREMENTS'
                       ? 'Dieser Test enthält Messwerte. Messwerte werden nie gelöscht — archivieren Sie ihn stattdessen.'
                       : 'Dieses Assessment ist abgeschlossen. Nur übersprungene Tests lassen sich noch löschen.'
-                  }
-                >
-                  Löschen
-                </Button>
-              )}
-              <RunTestButton
-                moduleId={module.id}
-                href={runHref}
-                status={module.status}
-                performed={false}
-              />
-            </>
-          )}
+                }
+                // Two steps, not `window.confirm`: the browser dialog cannot be
+                // styled, reads in the wrong language on some systems, and says
+                // nothing about *what* is being removed. This one names the test.
+                onClick={() => {
+                  setError(null);
+                  setConfirming(true);
+                }}
+              >
+                <Trash2 aria-hidden="true" />
+                Löschen
+              </ActionMenuItem>
+            )}
+          </ActionMenu>
         </div>
       </div>
 
