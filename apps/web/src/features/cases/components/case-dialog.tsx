@@ -117,7 +117,10 @@ export function CaseDialog({
             Bearbeiten
           </Button>
         ) : (
-          <Button variant="outline" className={TOUCH_BUTTON}>
+          /* The primary action of the engagements section: everything below it
+             lives inside a case, so a workspace with none has exactly one thing
+             to do here. */
+          <Button variant="accent" className={TOUCH_BUTTON}>
             <Plus aria-hidden="true" className="size-4" />
             Betreuungsfall anlegen
           </Button>

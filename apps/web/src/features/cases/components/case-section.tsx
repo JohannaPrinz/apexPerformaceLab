@@ -4,6 +4,7 @@ import { ArrowRight, Share2 } from 'lucide-react';
 
 import { Badge } from '@apex/ui';
 
+import { ActionMenu } from '@/components/common/action-menu';
 import { FOCUS_RING } from '@/components/common/touch';
 import { CreateAssessmentDialog } from '@/features/assessments';
 import { ASSESSMENT_TYPE_LABELS_DE } from '@/features/assessments/components/labels';
@@ -89,7 +90,9 @@ export function CaseSection({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-1">
+        {/* One place for everything a coach can do to this case, so the body
+            below stays what it is: the facts and the assessments. */}
+        <ActionMenu label={`Aktionen: ${performanceCase.title}`}>
           <CaseDialog
             athleteId={athleteId}
             performanceCase={{
@@ -104,8 +107,9 @@ export function CaseSection({
             caseId={performanceCase.id}
             athleteId={athleteId}
             status={performanceCase.status}
+            as="menuitem"
           />
-        </div>
+        </ActionMenu>
       </header>
 
       <div className="flex flex-col gap-3 border-t border-border pt-4">

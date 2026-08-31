@@ -1,4 +1,5 @@
 import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import { CaseSection, NoCases } from './case-section';
@@ -73,13 +74,20 @@ describe('the engagement', () => {
     expect(screen.getByText('Abgeschlossen')).toBeVisible();
   });
 
-  it('offers editing and the status change side by side', () => {
+  it('keeps both acts apart inside the action menu', async () => {
     // Correcting a title and closing an engagement are different acts; an
-    // ordinary edit must not be able to close one by accident.
+    // ordinary edit must not be able to close one by accident. They now sit in
+    // the header menu rather than loose in the card, so the body stays the
+    // facts and the assessments.
+    const user = userEvent.setup();
     renderSection();
 
+    expect(screen.queryByRole('button', { name: /Bearbeiten/ })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: /^Aktionen:/ }));
+
     expect(screen.getByRole('button', { name: /Bearbeiten/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Abschließen' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Abschließen' })).toBeInTheDocument();
   });
 });
 
