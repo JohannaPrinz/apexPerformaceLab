@@ -95,7 +95,7 @@ export default async function SharedReportPage({ params }: { params: Promise<{ t
 
   return (
     <Frame>
-      <SharedReport snapshot={share.snapshot} />
+      <SharedReport snapshot={share.snapshot} token={token} />
 
       {daysLeft === null ? null : (
         <p className="border-t border-border pt-4 text-xs text-muted-foreground">

@@ -8,7 +8,12 @@ import { Badge } from '@apex/ui';
 
 import { FOCUS_RING, TOUCH_TARGET } from '@/components/common/touch';
 import { ASSESSMENT_STATUS_LABELS_DE } from '@/features/assessments/components/labels';
-import { AssessmentEvaluation, PublishAndShare, StartEvaluation } from '@/features/reports';
+import {
+  AssessmentEvaluation,
+  PublishAndShare,
+  SharedReport,
+  StartEvaluation,
+} from '@/features/reports';
 import { api } from '@/trpc/server';
 
 import type { Metadata } from 'next';
@@ -59,6 +64,9 @@ export default async function AssessmentEvaluationPage({
   // Which analyses exist for this assessment, so a published one is shown as a
   // document rather than as a draft that cannot be edited.
   const reports = await api.reports.listForAssessment({ assessmentId });
+  // What was published, so a finished analysis is still readable here — the
+  // coach must be able to see what they sent, not just that they sent it.
+  const snapshot = await api.reports.publishedSnapshot({ assessmentId });
   const latest = reports[0] ?? null;
   const reportId = evaluation?.reportId ?? latest?.id ?? null;
   const shares = reportId === null ? [] : await api.reports.shares({ reportId });
@@ -78,23 +86,33 @@ export default async function AssessmentEvaluationPage({
         <span className="min-w-0 truncate">{assessment.question}</span>
       </Link>
 
-      <header className="flex flex-col gap-2">
-        <span className="eyebrow">Auswertung</span>
+      {/* The document carries the athlete, the date and the author. What only
+          the workspace needs — the state of the examination and which version
+          of the analysis this is — sits here, once. */}
+      {/* Only where no document follows: the analysis renders its own title,
+          and two of them on one screen was part of what made it long. */}
+      {evaluation === null ? (
         <h1 className="text-2xl font-semibold text-pretty">
           {athlete.firstName} {athlete.lastName}
         </h1>
-        <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-          <Badge variant={assessment.status === 'COMPLETED' ? 'accent' : 'secondary'}>
-            {ASSESSMENT_STATUS_LABELS_DE[assessment.status] ?? assessment.status}
-          </Badge>
+      ) : null}
+
+      <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+        <Badge variant={assessment.status === 'COMPLETED' ? 'accent' : 'secondary'}>
+          {ASSESSMENT_STATUS_LABELS_DE[assessment.status] ?? assessment.status}
+        </Badge>
+        {evaluation === null ? (
           <span data-numeric>{DATE.format(assessment.performedAt)}</span>
-          {evaluation === null ? null : <span data-numeric>· Version {evaluation.version}</span>}
-        </div>
-      </header>
+        ) : (
+          <span data-numeric>Version {evaluation.version}</span>
+        )}
+      </div>
 
       {evaluation !== null ? (
         <>
-          <AssessmentEvaluation evaluation={evaluation} />
+          {/* Already handed to an athlete: the link they hold points at what
+              they were given, so it stops being editable here. */}
+          <AssessmentEvaluation evaluation={evaluation} locked={shares.length > 0} />
 
           <PublishAndShare
             assessmentId={assessmentId}
@@ -112,6 +130,11 @@ export default async function AssessmentEvaluationPage({
             Diese Auswertung ist abgeschlossen und lässt sich nicht mehr bearbeiten. Eine spätere
             Änderung wäre eine neue Version.
           </p>
+
+          {/* The document itself, exactly as the athlete reads it. Rendering
+              only the sharing controls left a coach unable to see what they had
+              sent — the one asymmetry this screen must not have. */}
+          {snapshot === null ? null : <SharedReport snapshot={snapshot} />}
 
           <PublishAndShare
             assessmentId={assessmentId}

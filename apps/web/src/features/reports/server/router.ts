@@ -3,9 +3,15 @@ import 'server-only';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 
+import {
+  MODULE_STATUS_LABELS_DE,
+  movementProfile,
+  parseAnalysisStillKey,
+  positionOf,
+} from '@apex/domain';
 import { AppError } from '@apex/types';
 
-import { MODULE_LABELS_DE } from '@/features/assessments';
+import { measurementChart, MODULE_LABELS_DE } from '@/features/assessments';
 import { createTRPCRouter, withCoachPermission, withPermission } from '@/server/api/trpc';
 
 import {
@@ -15,11 +21,18 @@ import {
   reportIdSchema,
   createShareSchema,
   publishReportSchema,
+  setStillSchema,
   revokeShareSchema,
   setReportModuleSchema,
   updateDraftTextSchema,
 } from '../schemas';
 
+import {
+  discardAnalysisStills,
+  freezeReportMedia,
+  listAnalysisStills,
+  sweepAnalysisStills,
+} from './media';
 import {
   assessmentAnalysisOverview,
   assessmentEvaluation,
@@ -29,11 +42,15 @@ import {
   reportReadiness,
   setReportModuleInclusion,
   updateDraftText,
+  evaluationForReport,
+  publishedSnapshot,
+  setDraftStill,
 } from './service';
 import { createReportShare, revokeShare, sharedAssessmentIds, sharesForReport } from './sharing';
 
 /** The one vocabulary for test types, handed to a service that holds none. */
 const moduleLabels = {
+  moduleStatus: (status: string) => MODULE_STATUS_LABELS_DE[status as never] ?? status,
   module: (moduleKey: string) =>
     MODULE_LABELS_DE[moduleKey as keyof typeof MODULE_LABELS_DE] ?? moduleKey,
 };
@@ -86,9 +103,129 @@ export const reportsRouter = createTRPCRouter({
    */
   evaluation: withPermission('report:read')
     .input(assessmentAnalysisSchema)
-    .query(({ ctx, input }) =>
-      assessmentEvaluation(ctx.db, ctx.tenant, input.assessmentId, moduleLabels),
-    ),
+    .query(async ({ ctx, input }) => {
+      const evaluation = await assessmentEvaluation(
+        ctx.db,
+        ctx.tenant,
+        input.assessmentId,
+        moduleLabels,
+      );
+
+      if (evaluation === null) return null;
+
+      /**
+       * Which stills a coach may still choose from.
+       *
+       * Asked here rather than in the service: listing them is the object
+       * store's business, and the service must stay answerable in a workspace
+       * that has no bucket — where this simply comes back empty and the analysis
+       * opens exactly as before.
+       */
+      const offered = await Promise.all(
+        evaluation.modules.map(async (entry) => ({
+          moduleId: entry.moduleId,
+          keys: await listAnalysisStills(ctx.tenant, entry.moduleId),
+        })),
+      );
+
+      /**
+       * Each offered still with the word for the position it shows.
+       *
+       * Translated through the movement profile that wrote the key, exactly as
+       * the chosen ones are. A position the profile no longer defines keeps its
+       * raw key rather than losing its caption.
+       */
+      const profileOf = new Map(
+        evaluation.modules.map((entry) => [entry.moduleId, entry.movement?.profileKey ?? null]),
+      );
+
+      const byModule = new Map(
+        offered.map((entry) => {
+          const profile = movementProfile(profileOf.get(entry.moduleId) ?? undefined);
+
+          return [
+            entry.moduleId,
+            entry.keys.map((key) => {
+              const position = parseAnalysisStillKey(key)?.position ?? '';
+
+              return {
+                key,
+                label:
+                  (profile === null ? null : positionOf(profile, position)?.label) ??
+                  (position === '' ? 'Standbild' : position),
+              };
+            }),
+          ] as const;
+        }),
+      );
+
+      /**
+       * The curves, for the tests that have one.
+       *
+       * Only the included ones: an analysis draws the tests it draws on, and a
+       * query per excluded test would be work for a picture nobody sees.
+       */
+      const curves = await Promise.all(
+        evaluation.modules.map(async (entry) =>
+          entry.included
+            ? {
+                moduleId: entry.moduleId,
+                groups: await measurementChart(ctx.db, ctx.tenant, entry.moduleId),
+              }
+            : { moduleId: entry.moduleId, groups: null },
+        ),
+      );
+      const chartsOf = new Map(curves.map((entry) => [entry.moduleId, entry.groups ?? []]));
+
+      return {
+        ...evaluation,
+        modules: evaluation.modules.map((entry) => ({
+          ...entry,
+          offeredStills: byModule.get(entry.moduleId) ?? [],
+          charts: chartsOf.get(entry.moduleId) ?? [],
+        })),
+      };
+    }),
+
+  /**
+   * The frozen document, for the coach who published it.
+   *
+   * The same content the athlete's link resolves to — the coach reads what they
+   * sent, not a second rendering of it.
+   */
+  publishedSnapshot: withPermission('report:read')
+    .input(assessmentAnalysisSchema)
+    .query(({ ctx, input }) => publishedSnapshot(ctx.db, ctx.tenant, input.assessmentId)),
+
+  /**
+   * Removes the working files of analyses nobody came back to.
+   *
+   * Age, not state: publishing already clears what it published, so what is left
+   * is the coach who analysed a video and never wrote the report. Two weeks
+   * without anybody returning is the honest signal, and the record holds no
+   * better one.
+   */
+  sweepAnalysisFiles: withCoachPermission('report:write').mutation(async ({ ctx }) => ({
+    removed: await sweepAnalysisStills(ctx.tenant),
+  })),
+
+  /** Adds or removes one still from the document. Draft only (§16). */
+  setStill: withPermission('report:write')
+    .input(setStillSchema)
+    .mutation(async ({ ctx, input }) => {
+      const updated = await setDraftStill(
+        ctx.db,
+        ctx.tenant,
+        input.reportId,
+        input.moduleId,
+        input.key,
+        input.chosen,
+      );
+
+      if (!updated) throw notFound('Analysis');
+
+      return { ok: true };
+    }),
 
   /**
    * Stores what the coach wrote into one text.
@@ -120,7 +257,49 @@ export const reportsRouter = createTRPCRouter({
   publish: withPermission('report:write')
     .input(publishReportSchema)
     .mutation(async ({ ctx, input }) => {
-      const result = await publishReport(ctx.db, ctx.tenant, input.reportId, moduleLabels);
+      /**
+       * Copy the chosen stills, freeze the document, then clear the temporary
+       * ones — in that order.
+       *
+       * Freezing first would name pictures that were never written; clearing
+       * first would lose them if the copy failed. A failure in between leaves a
+       * temporary object for the bucket's lifecycle rule, which is the harmless
+       * direction.
+       */
+      const evaluation = await evaluationForReport(
+        ctx.db,
+        ctx.tenant,
+        input.reportId,
+        moduleLabels,
+      );
+
+      const included = (evaluation?.modules ?? []).filter((entry) => entry.included);
+      const frozen = await freezeReportMedia(input.reportId, included);
+
+      // The same curves the coach was looking at, frozen with the document: a
+      // staged test read without them is a column of numbers.
+      const withCurves = await Promise.all(
+        included.map(async (entry) => ({
+          moduleId: entry.moduleId,
+          charts: (await measurementChart(ctx.db, ctx.tenant, entry.moduleId)) ?? [],
+        })),
+      );
+
+      const result = await publishReport(
+        ctx.db,
+        ctx.tenant,
+        input.reportId,
+        moduleLabels,
+        frozen,
+        withCurves,
+      );
+
+      if (result.ok) {
+        await discardAnalysisStills(
+          ctx.tenant,
+          included.map((entry) => entry.moduleId),
+        );
+      }
 
       if (!result.ok && result.reason === 'NOT_FOUND') throw notFound('Analysis');
       if (!result.ok) {
@@ -148,6 +327,7 @@ export const reportsRouter = createTRPCRouter({
         ctx.coach.id,
         input.reportId,
         input.days,
+        input.password,
       );
 
       if (!share) throw notFound('Analysis');

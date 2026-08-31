@@ -32,7 +32,10 @@ const TENANT = { organizationId: 'org_a' } as const;
 const OTHER = { organizationId: 'org_b' } as const;
 
 /** The vocabulary the service is handed; it holds none of its own. */
-const LABELS = { module: (key: string) => (key === 'lactate' ? 'Laktat' : key) };
+const LABELS = {
+  module: (key: string) => key,
+  moduleStatus: (status: string) => status,
+};
 
 const CONFIGURATION = {
   measurementTypes: [{ measurementTypeId: 'mt_lactate', role: 'required' }],
@@ -787,7 +790,20 @@ function evaluationDb(options: {
           question: 'Wie steht es um die Kraft?',
           status: 'COMPLETED',
           performedAt: DAY('2026-03-01'),
-          case: { athlete: { id: 'ath_1', firstName: 'Anna', lastName: 'Beispiel' } },
+          case: {
+            athlete: {
+              id: 'ath_1',
+              firstName: 'Anna',
+              lastName: 'Beispiel',
+              // All four selected, all four optional in the record — the
+              // fixture keeps them absent, which is the commoner case and the
+              // one the BMI, the age and the strength standards must survive.
+              heightCm: null,
+              weightKg: null,
+              dateOfBirth: null,
+              sex: 'not_specified',
+            },
+          },
           modules,
         }),
       ),
@@ -811,7 +827,24 @@ function evaluationDb(options: {
       ),
       updateMany: vi.fn(() => Promise.resolve({ count: 1 })),
     },
-    measurement: { findMany: vi.fn(() => Promise.resolve(options.readings ?? [])) },
+    measurement: {
+      /**
+       * Two reads, in order: this athlete's readings, then the workspace's
+       * other athletes for the percentile. The second is answered empty — a
+       * cohort is its own question, and these tests are about the first.
+       */
+      findMany: vi.fn(
+        ((): (() => Promise<unknown[]>) => {
+          let call = 0;
+
+          return () => {
+            call += 1;
+
+            return Promise.resolve(call === 1 ? (options.readings ?? []) : []);
+          };
+        })(),
+      ),
+    },
     exercise: { findMany: vi.fn(() => Promise.resolve(options.exercises ?? [])) },
   } as unknown as Parameters<typeof assessmentEvaluation>[0];
 
@@ -1092,7 +1125,7 @@ describe('storing what the coach wrote', () => {
 
     expect(written?.overall).toEqual({ interpretation: 'A', recommendation: 'B' });
     expect(written?.sections).toEqual([
-      { moduleId: 'mod_1', interpretation: 'C', recommendation: 'neu' },
+      { moduleId: 'mod_1', interpretation: 'C', recommendation: 'neu', stills: [] },
     ]);
   });
 

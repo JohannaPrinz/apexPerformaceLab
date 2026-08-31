@@ -9,7 +9,6 @@ export {
   StartEvaluation,
   type EvaluationView,
 } from './components/evaluation';
-export { SeriesTable, seriesLabel, type SeriesRow } from './components/series-table';
 
 /**
  * Creating an analysis, for the one caller outside this slice: completing an
@@ -21,3 +20,15 @@ export { createAnalysisAction } from './server/actions';
 export { SharedReport } from './components/shared-report';
 export { SharePasswordForm } from './components/share-password-form';
 export { PublishAndShare, type ShareRow } from './components/publish-and-share';
+
+/**
+ * One analysed movement, drawn the way the report draws it.
+ *
+ * Exported because the athlete's profile shows the same four blocks — where the
+ * values came from, the course, the angles against their targets, and what the
+ * coach wrote. A second rendering there would be a second reading of one
+ * recording.
+ */
+export { MovementBlock } from './components/movement-block';
+export { mediaUrl } from './components/document';
+export type { DocumentMovement, DocumentTest } from './components/document';

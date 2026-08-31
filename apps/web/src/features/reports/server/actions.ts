@@ -8,7 +8,7 @@ import type { DraftField } from '@apex/domain';
 import { env } from '@/env';
 import { api } from '@/trpc/server';
 
-import { shareMessage } from './share-message';
+import { passwordMessage, shareMessage } from './share-message';
 
 /**
  * Form entry points for the analysis section.
@@ -124,10 +124,12 @@ export async function publishReportAction(
 export interface ShareCreated extends AnalysisActionState {
   readonly share?: {
     readonly url: string;
-    /** Shown once. Only its hash is stored; nothing can display it again. */
+    /** What the coach typed. Only its hash is stored; nothing displays it again. */
     readonly password: string;
     readonly expiresAt: string;
     readonly message: { subject: string; text: string; mailto: string };
+    /** The password, in its own message — never in the one with the link. */
+    readonly passwordMessage: { subject: string; text: string; mailto: string };
   };
 }
 
@@ -145,20 +147,30 @@ export async function createShareAction(
   reportId: string,
   days: number,
   withOffer: boolean,
+  /** The password the coach chose. Only its hash is stored. */
+  password: string,
 ): Promise<ShareCreated> {
   try {
-    const [share, evaluation] = await Promise.all([
-      api.reports.createShare({ reportId, days }),
-      api.reports.evaluation({ assessmentId }),
+    /**
+     * Read the published document, not the draft.
+     *
+     * Sharing happens *after* publication, and by then there is no draft: asking
+     * for one returned nothing, and the message went out addressed to nobody,
+     * signed by nobody and dated today. The snapshot carries all three, frozen
+     * with the document the link opens.
+     */
+    const [share, snapshot] = await Promise.all([
+      api.reports.createShare({ reportId, days, password }),
+      api.reports.publishedSnapshot({ assessmentId }),
     ]);
 
     const origin = (await headers()).get('origin') ?? env.NEXT_PUBLIC_APP_URL;
     const url = `${origin}/geteilt/${share.token}`;
 
     const message = shareMessage({
-      athleteFirstName: evaluation?.athlete.firstName ?? '',
-      coachName: evaluation?.coachName ?? 'Dein Coach',
-      performedAt: evaluation?.assessment.performedAt ?? new Date(),
+      athleteFirstName: snapshot?.athlete.firstName ?? '',
+      coachName: snapshot?.coach.name ?? 'Dein Coach',
+      performedAt: snapshot === null ? new Date() : new Date(snapshot.assessment.performedAt),
       expiresAt: share.expiresAt,
       url,
       withOffer,
@@ -166,16 +178,34 @@ export async function createShareAction(
 
     revalidatePath(`/assessments/${assessmentId}/auswertung`);
 
+    /**
+     * The password travels separately, on purpose.
+     *
+     * A link and the password that opens it in one message is one intercepted
+     * mailbox away from being no protection at all. So there are two texts: the
+     * one with the link, and a short one the coach sends by another route.
+     */
+    const secret = passwordMessage({
+      athleteFirstName: snapshot?.athlete.firstName ?? '',
+      coachName: snapshot?.coach.name ?? 'Dein Coach',
+      password,
+    });
+
     return {
       status: 'idle',
       share: {
         url,
-        password: share.password,
+        password,
         expiresAt: share.expiresAt.toISOString(),
         message: {
           subject: message.subject,
           text: message.text,
           mailto: `mailto:?subject=${encodeURIComponent(message.subject)}&body=${encodeURIComponent(message.text)}`,
+        },
+        passwordMessage: {
+          subject: secret.subject,
+          text: secret.text,
+          mailto: `mailto:?subject=${encodeURIComponent(secret.subject)}&body=${encodeURIComponent(secret.text)}`,
         },
       },
     };
@@ -198,4 +228,27 @@ export async function revokeShareAction(
   revalidatePath(`/assessments/${assessmentId}/auswertung`);
 
   return { status: 'idle' };
+}
+
+/**
+ * Adds or removes one still from the document.
+ *
+ * A choice about *this* analysis, like the sentence beside it — which is why it
+ * writes to the draft and not to the video analysis. A still nobody chose is
+ * never copied at publication and expires with the rest.
+ */
+export async function setStillAction(
+  reportId: string,
+  moduleId: string,
+  key: string,
+  chosen: boolean,
+): Promise<AnalysisActionState> {
+  try {
+    await api.reports.setStill({ reportId, moduleId, key, chosen });
+    revalidatePath('/assessments', 'layout');
+
+    return { status: 'idle' };
+  } catch (error) {
+    return failed(error, 'Das Standbild konnte nicht übernommen werden.');
+  }
 }

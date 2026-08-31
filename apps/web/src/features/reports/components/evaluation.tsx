@@ -2,70 +2,95 @@
 
 import { useState, useTransition } from 'react';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
-import type { DraftField } from '@apex/domain';
-import { Badge, Button } from '@apex/ui';
+import { ExternalLink, EyeOff } from 'lucide-react';
 
+import type { AthleteSex, Tendency } from '@apex/domain';
+import { Button } from '@apex/ui';
+
+import { ActionMenu, ActionMenuItem } from '@/components/common/action-menu';
+import type { ChartGroupView } from '@/components/common/measurement-chart';
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_TARGET } from '@/components/common/touch';
 
 import {
   createAnalysisAction,
   setAnalysisModuleAction,
+  setStillAction,
   updateDraftTextAction,
 } from '../server/actions';
 
-import { SeriesTable, type SeriesRow } from './series-table';
+import {
+  documentFromEvaluation,
+  mediaUrl,
+  type DocumentMovement,
+  type DocumentTarget,
+} from './document';
+import { ReportDocument } from './report-document';
 
 /**
- * The analysis of one assessment, on its own screen.
+ * The analysis of one assessment, on the coach's side of the link.
  *
- * ## What the screen is built around
+ * ## Why this file is thin
  *
- * Facts first, and they are **rendered, never typed**: everything above a text
- * box comes from the measurements as they stand, so it cannot go stale and there
- * is nothing to overwrite. Everything in a text box is the coach's, and nothing
- * here ever writes into one.
+ * The document is `ReportDocument`, and the athlete reads the very same
+ * component. What lives here is only what the coach may *do*: choose which tests
+ * the analysis draws on, and write into it. Sending it later takes nothing
+ * away — so what a coach reads while editing is what the athlete receives, which
+ * is the one thing the two-screen version could never promise.
  *
- * ## The fill state is said once
+ * ## The basis is a line, not a list
  *
- * One line, three numbers. The screen this replaced stated it seven times in
- * five different denominators, which left a coach reconciling the page against
- * itself instead of reading it.
- *
- * ## Empty is not the same as unavailable
- *
- * A reference group and a potential are shown as what they are — not yet
- * possible, with the reason. An interpretation and a recommendation are shown as
- * empty fields, because they are the coach's to fill. Neither is faked, and
- * neither is hidden: a block that vanished would leave a coach wondering whether
- * they had missed it.
+ * Which tests are drawn on used to be a permanently open list of checkboxes
+ * above everything else. It is a decision made once and revisited rarely, so it
+ * is a summary line that opens on demand.
  */
-
-const NUMBER = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 2 });
-const DATE = new Intl.DateTimeFormat('de-DE', {
-  day: '2-digit',
-  month: '2-digit',
-  year: 'numeric',
-});
 
 const BLOCK_REASONS: Readonly<Record<string, string>> = {
   NO_VALUES: 'Für diesen Test wurde kein Wert erfasst.',
   ARCHIVED: 'Dieser Test ist archiviert.',
 };
 
+export interface EvaluationSeriesView {
+  readonly key: string;
+  readonly typeName: string;
+  readonly measurementTypeKey: string;
+  readonly unit: string;
+  readonly side: string;
+  readonly exerciseName: string | null;
+  readonly passIndex: number | null;
+  readonly context: Record<string, string>;
+  readonly source: string;
+  readonly current: { value: number; capturedAt: Date };
+  readonly previous: { value: number; capturedAt: Date } | null;
+  readonly difference: number | null;
+  readonly best: { value: number; capturedAt: Date } | null;
+  readonly count: number;
+  readonly betterDirection: 'lower' | 'higher' | null;
+  readonly tendency: Tendency | null;
+  readonly target: DocumentTarget | null;
+  readonly percentile: { percentile: number; cohort: number } | null;
+}
+
 export interface EvaluationModuleView {
   readonly moduleId: string;
   readonly name: string;
   readonly typeLabel: string;
   readonly status: string;
+  readonly statusLabel: string;
   readonly blocked: string | null;
   readonly included: boolean;
   readonly recorded: number;
   readonly expected: number;
   readonly derivations: readonly string[];
   readonly protocolLabel: string | null;
-  readonly series: readonly SeriesRow[];
+  readonly series: readonly EvaluationSeriesView[];
+  readonly images: readonly { id: string; key: string; label: string }[];
+  readonly movement: DocumentMovement | null;
+  readonly charts: readonly ChartGroupView[];
+  /** Stills the analysis screen left for this test, whether chosen or not. */
+  readonly offeredStills: readonly { key: string; label: string }[];
   readonly interpretation: string;
   readonly recommendation: string;
 }
@@ -74,21 +99,41 @@ export interface EvaluationView {
   readonly reportId: string;
   readonly version: number;
   readonly assessment: { id: string; question: string; status: string; performedAt: Date };
-  readonly athlete: { id: string; firstName: string; lastName: string };
+  readonly athlete: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    /** For the BMI and the age beside a body-composition test. Often absent. */
+    heightCm: number | null;
+    dateOfBirth: Date | null;
+    /** What the strength standards are read against. Often absent as well. */
+    weightKg: number | null;
+    sex: AthleteSex;
+  };
+  readonly coachName: string;
   readonly summary: { tests: number; usable: number; included: number; values: number };
   readonly modules: readonly EvaluationModuleView[];
   readonly overall: { interpretation: string; recommendation: string };
 }
 
-export function AssessmentEvaluation({ evaluation }: { readonly evaluation: EvaluationView }) {
+export function AssessmentEvaluation({
+  evaluation,
+  locked = false,
+}: {
+  readonly evaluation: EvaluationView;
+  /**
+   * Whether the analysis may still be written into.
+   *
+   * A published analysis is frozen (§16), and one that has already been handed
+   * to an athlete must not change under them either — the link they hold points
+   * at what they were given. Locked, this renders exactly the document the
+   * athlete sees, with nothing to type in.
+   */
+  readonly locked?: boolean;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-
-  const { summary, modules } = evaluation;
-  const included = modules.filter((entry) => entry.included);
-  const selectable = modules.filter((entry) => entry.blocked === null);
-  const blocked = modules.filter((entry) => entry.blocked !== null);
 
   const toggle = (moduleId: string, next: boolean) => {
     setError(null);
@@ -105,138 +150,85 @@ export function AssessmentEvaluation({ evaluation }: { readonly evaluation: Eval
     });
   };
 
-  const save =
-    (target: { kind: 'overall' } | { kind: 'section'; moduleId: string }) =>
-    (field: DraftField, text: string) => {
-      setError(null);
-      startTransition(async () => {
-        const result = await updateDraftTextAction(evaluation.reportId, target, field, text);
-        if (result.message) setError(result.message);
-      });
-    };
+  const save = (
+    target: { kind: 'overall' } | { kind: 'section'; moduleId: string },
+    field: 'interpretation' | 'recommendation',
+    text: string,
+  ) => {
+    setError(null);
+    startTransition(async () => {
+      const result = await updateDraftTextAction(evaluation.reportId, target, field, text);
+      if (result.message) setError(result.message);
+    });
+  };
+
+  const chooseStill = (moduleId: string, key: string, chosen: boolean) => {
+    setError(null);
+    startTransition(async () => {
+      const result = await setStillAction(evaluation.reportId, moduleId, key, chosen);
+      if (result.message) setError(result.message);
+      else router.refresh();
+    });
+  };
 
   return (
-    <div className="flex flex-col gap-8">
-      {/* One line, three numbers, said once. */}
-      <section aria-label="Umfang" className="flex flex-col gap-2">
-        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm" data-numeric>
-          <span className="font-medium text-foreground">
-            {summary.included} von {summary.usable}{' '}
-            {summary.usable === 1 ? 'auswertbarem Test' : 'auswertbaren Tests'} einbezogen
-          </span>
-          <span className="text-muted-foreground">
-            · {summary.values} {summary.values === 1 ? 'Messwert' : 'Messwerte'}
-            {summary.tests > summary.usable
-              ? ` · ${String(summary.tests - summary.usable)} ohne Werte`
-              : ''}
-          </span>
+    <div className="flex flex-col gap-6">
+      {locked ? (
+        <p className="max-w-prose rounded-md border border-border bg-muted px-4 py-3 text-sm text-pretty">
+          Diese Auswertung wurde bereits geteilt. Sie lässt sich nicht mehr ändern — der Link, den
+          der Athlet hat, zeigt auf das, was er bekommen hat.
         </p>
-      </section>
-
-      {/* The basis, only where there is something to decide. */}
-      {selectable.length > 1 || blocked.length > 0 ? (
-        <section aria-labelledby="basis" className="flex flex-col gap-3">
-          <div className="flex flex-col gap-1">
-            <h2 id="basis" className="text-base font-medium">
-              Grundlage
-            </h2>
-            <p className="max-w-prose text-sm text-pretty text-muted-foreground">
-              Welche Tests diese Auswertung heranzieht. Die Auswahl gehört zur Auswertung — der Test
-              selbst bleibt unverändert.
-            </p>
-          </div>
-
-          <ul className="flex flex-col gap-2">
-            {modules.map((entry) => (
-              <li
-                key={entry.moduleId}
-                className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-border p-3"
-              >
-                <label className={`${TOUCH_TARGET} flex min-w-0 flex-1 items-center gap-3`}>
-                  <input
-                    type="checkbox"
-                    checked={entry.included}
-                    disabled={pending || entry.blocked !== null}
-                    onChange={(event) => {
-                      toggle(entry.moduleId, event.target.checked);
-                    }}
-                    className="size-4 shrink-0 rounded border-input disabled:opacity-50"
-                  />
-                  <span className="flex min-w-0 flex-col">
-                    <span className="text-sm font-medium break-words">{entry.name}</span>
-                    <span className="text-xs text-muted-foreground">{entry.typeLabel}</span>
-                  </span>
-                </label>
-
-                {/* Its own line below the name on a phone: measured at 375 the
-                    reason squeezed "Nie erfasst" onto three lines. `basis-full`
-                    rather than a hidden column, because the reason is the point
-                    of the row. */}
-                {entry.blocked === null ? (
-                  <span
-                    className="basis-full text-xs text-muted-foreground sm:basis-auto"
-                    data-numeric
-                  >
-                    {entry.recorded} von {entry.expected} Werten
-                  </span>
-                ) : (
-                  /* Named, not merely disabled: a control that refuses without
-                     saying why is a puzzle, and the reason is knowable here. */
-                  <span className="basis-full text-xs text-muted-foreground sm:basis-auto">
-                    {BLOCK_REASONS[entry.blocked] ?? 'Nicht auswertbar.'}
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
       ) : null}
 
-      {included.length === 0 ? (
-        <p className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-          Diese Auswertung zieht noch keinen Test heran.
-        </p>
-      ) : (
-        included.map((entry) => (
-          <ModuleBlock
-            key={entry.moduleId}
-            module={entry}
-            onSave={save({ kind: 'section', moduleId: entry.moduleId })}
-          />
-        ))
-      )}
+      <ReportDocument
+        view={documentFromEvaluation(evaluation)}
+        editing={
+          locked
+            ? undefined
+            : {
+                onText: save,
+                disabled: pending,
+                basis: <Basis evaluation={evaluation} pending={pending} onToggle={toggle} />,
+                stillPicker: (moduleId) => {
+                  const test = evaluation.modules.find((entry) => entry.moduleId === moduleId);
+                  if (test === undefined || test.offeredStills.length === 0) return null;
 
-      {/* The analysis as a whole, last — it is written after reading the tests. */}
-      <section
-        aria-labelledby="overall"
-        className="flex flex-col gap-3 border-t border-border pt-6"
-      >
-        <h2 id="overall" className="text-lg font-semibold">
-          Gesamtauswertung
-        </h2>
+                  return (
+                    <StillPicker
+                      offered={test.offeredStills}
+                      chosen={test.images.map((image) => image.key)}
+                      pending={pending}
+                      onToggle={(key, next) => {
+                        chooseStill(moduleId, key, next);
+                      }}
+                    />
+                  );
+                },
+                testMenu: (moduleId) => (
+                  <ActionMenu
+                    label={`Aktionen: ${evaluation.modules.find((e) => e.moduleId === moduleId)?.name ?? 'Test'}`}
+                  >
+                    <ActionMenuItem asChild>
+                      <Link href={`/assessments/${evaluation.assessment.id}/tests/${moduleId}`}>
+                        <ExternalLink aria-hidden="true" />
+                        Test öffnen
+                      </Link>
+                    </ActionMenuItem>
 
-        <TextField
-          id="overall-interpretation"
-          label="Einschätzung über alle Tests"
-          hint="Was ergibt sich aus den Ergebnissen zusammengenommen?"
-          value={evaluation.overall.interpretation}
-          disabled={pending}
-          onSave={(text) => {
-            save({ kind: 'overall' })('interpretation', text);
-          }}
-        />
-
-        <TextField
-          id="overall-recommendation"
-          label="Empfehlung"
-          hint="Was schlagen Sie vor?"
-          value={evaluation.overall.recommendation}
-          disabled={pending}
-          onSave={(text) => {
-            save({ kind: 'overall' })('recommendation', text);
-          }}
-        />
-      </section>
+                    <ActionMenuItem
+                      disabled={pending}
+                      onClick={() => {
+                        toggle(moduleId, false);
+                      }}
+                    >
+                      <EyeOff aria-hidden="true" />
+                      Aus der Auswertung nehmen
+                    </ActionMenuItem>
+                  </ActionMenu>
+                ),
+              }
+        }
+      />
 
       {error === null ? null : (
         <p role="alert" className="text-sm text-destructive">
@@ -247,151 +239,146 @@ export function AssessmentEvaluation({ evaluation }: { readonly evaluation: Eval
   );
 }
 
-function ModuleBlock({
-  module: entry,
-  onSave,
+/**
+ * Which stills of a video analysis this document uses.
+ *
+ * Shown only to the coach, and only where the analysis screen actually left
+ * some. A picked still is copied into the document at publication; an unpicked
+ * one is never copied and expires with the rest of the analysis screen's
+ * leftovers — so choosing here is an editorial decision, not a deletion.
+ */
+function StillPicker({
+  offered,
+  chosen,
+  pending,
+  onToggle,
 }: {
-  readonly module: EvaluationModuleView;
-  readonly onSave: (field: DraftField, text: string) => void;
+  readonly offered: readonly { key: string; label: string }[];
+  readonly chosen: readonly string[];
+  readonly pending: boolean;
+  readonly onToggle: (key: string, next: boolean) => void;
 }) {
-  /**
-   * The distance to the coach's own best value.
-   *
-   * The one potential that can be stated today, and only because a yardstick
-   * exists: a best value appears solely where the test's protocol declares which
-   * direction is wanted. Three states, and the middle one is the reason this is
-   * not a one-liner — a browser run showed "no direction declared" printed
-   * beside a best-value column, because the current reading *was* the best and
-   * the distance was zero.
-   */
-  const withBest = entry.series.filter((row) => row.best !== null);
-  const gaps = withBest
-    .map((row) => ({
-      row,
-      gap: Math.round((row.current.value - (row.best?.value ?? 0)) * 100) / 100,
-    }))
-    .filter((found) => found.gap !== 0);
-
-  const potential =
-    withBest.length === 0
-      ? 'erscheint, sobald für diesen Test eine angestrebte Richtung hinterlegt ist.'
-      : gaps.length === 0
-        ? 'Der aktuelle Wert ist zugleich der Bestwert dieser Reihe.'
-        : gaps
-            .map(
-              (found) =>
-                `${found.row.typeName}: ${NUMBER.format(Math.abs(found.gap))}${
-                  found.row.unit === '' ? '' : ` ${found.row.unit}`
-                } zum eigenen Bestwert vom ${DATE.format(found.row.best?.capturedAt ?? new Date())}`,
-            )
-            .join(' · ');
-
   return (
-    <section
-      aria-label={entry.name}
-      className="flex flex-col gap-4 rounded-md border border-border p-4"
-    >
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 className="text-base font-semibold break-words">{entry.name}</h2>
-        <span className="text-xs text-muted-foreground">{entry.typeLabel}</span>
-        {entry.protocolLabel === null ? null : (
-          <Badge variant="outline">{entry.protocolLabel}</Badge>
-        )}
-      </div>
-
-      {entry.derivations.length === 0 ? null : (
-        <p className="text-xs text-muted-foreground">
-          Berechnet nach {entry.derivations.join(', ')}.
-        </p>
-      )}
-
-      <SeriesTable rows={entry.series} />
-
-      {/* Prepared, honest, and not repeated per row: neither statement is about
-          a single number. */}
-      <p className="max-w-prose text-xs text-pretty text-muted-foreground">
-        <span className="font-medium">Referenzgruppe:</span> keine hinterlegt — Apex OS führt keine
-        Normwerte. <span className="font-medium">Verbesserungspotenzial:</span> {potential}
+    <fieldset className="flex flex-col gap-2 border-t border-border pt-3">
+      <legend className="sr-only">Standbilder aus der Videoanalyse</legend>
+      <p className="text-xs text-muted-foreground">
+        Standbilder aus der Videoanalyse — ausgewählte gehen mit der Auswertung an den Athleten.
       </p>
 
-      <TextField
-        id={`interpretation-${entry.moduleId}`}
-        label="Einordnung"
-        hint="Was bedeuten diese Werte fachlich?"
-        value={entry.interpretation}
-        disabled={false}
-        onSave={(text) => {
-          onSave('interpretation', text);
-        }}
-      />
+      <ul className="flex flex-wrap gap-2">
+        {offered.map((still) => {
+          const picked = chosen.includes(still.key);
 
-      <TextField
-        id={`recommendation-${entry.moduleId}`}
-        label="Empfehlung"
-        hint="Was folgt daraus für diesen Test?"
-        value={entry.recommendation}
-        disabled={false}
-        onSave={(text) => {
-          onSave('recommendation', text);
-        }}
-      />
-    </section>
+          return (
+            <li key={still.key}>
+              <label
+                className={`${FOCUS_RING} flex cursor-pointer flex-col gap-1 rounded border p-1 ${
+                  picked ? 'border-accent bg-accent-soft' : 'border-border'
+                }`}
+              >
+                <span className="flex items-center gap-1.5 text-[0.6875rem]">
+                  <input
+                    type="checkbox"
+                    checked={picked}
+                    disabled={pending}
+                    onChange={(event) => {
+                      onToggle(still.key, event.target.checked);
+                    }}
+                    className="size-3.5 rounded border-input disabled:opacity-50"
+                  />
+                  {still.label} {picked ? '· übernommen' : '· übernehmen'}
+                </span>
+                {/* eslint-disable-next-line @next/next/no-img-element -- served
+                    by a route that checks the session, not a public URL. */}
+                <img
+                  src={mediaUrl(still.key)}
+                  alt={`Standbild: ${still.label}`}
+                  loading="lazy"
+                  className="h-16 w-auto rounded-sm object-cover"
+                />
+              </label>
+            </li>
+          );
+        })}
+      </ul>
+    </fieldset>
   );
 }
 
-/**
- * One text the coach writes.
- *
- * Saved on leaving the field: a paragraph is written, not typed at, and a write
- * behind every letter would be a write behind every letter. The value is held
- * locally so a re-render caused by saving another field cannot pull half-typed
- * text out from under the cursor.
- */
-function TextField({
-  id,
-  label,
-  hint,
-  value,
-  disabled,
-  onSave,
+/** Which tests the analysis draws on. One line, opened only when it is changed. */
+function Basis({
+  evaluation,
+  pending,
+  onToggle,
 }: {
-  readonly id: string;
-  readonly label: string;
-  readonly hint: string;
-  readonly value: string;
-  readonly disabled: boolean;
-  readonly onSave: (text: string) => void;
+  readonly evaluation: EvaluationView;
+  readonly pending: boolean;
+  readonly onToggle: (moduleId: string, next: boolean) => void;
 }) {
-  const [text, setText] = useState(value);
-  const [seen, setSeen] = useState(value);
-
-  // Adjusted during render rather than in an effect: an effect would paint the
-  // old text first and replace it a frame later.
-  if (seen !== value) {
-    setSeen(value);
-    setText(value);
-  }
+  const { summary, modules } = evaluation;
 
   return (
-    <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-sm font-medium">
-        {label}
-      </label>
-      <textarea
-        id={id}
-        value={text}
-        disabled={disabled}
-        rows={3}
-        placeholder={hint}
-        onChange={(event) => {
-          setText(event.target.value);
-        }}
-        onBlur={() => {
-          if (text !== value) onSave(text);
-        }}
-        className={`${FOCUS_RING} min-h-20 w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-base disabled:opacity-50 lg:text-sm`}
-      />
-    </div>
+    <details className="rounded-md border border-border bg-card">
+      <summary className="flex cursor-pointer flex-wrap items-center gap-x-2 gap-y-1 px-4 py-3 text-sm">
+        <span className="font-medium" data-numeric>
+          {summary.included} von {summary.usable}{' '}
+          {summary.usable === 1 ? 'auswertbarem Test' : 'auswertbaren Tests'}
+        </span>
+        <span className="text-muted-foreground" data-numeric>
+          · {summary.values} {summary.values === 1 ? 'Messwert' : 'Messwerte'}
+          {summary.tests > summary.usable
+            ? ` · ${String(summary.tests - summary.usable)} ohne Werte`
+            : ''}
+        </span>
+        <span className="ml-auto text-xs text-accent">Grundlage ändern</span>
+      </summary>
+
+      <div className="flex flex-col gap-2 border-t border-border p-3">
+        <p className="max-w-prose text-xs text-pretty text-muted-foreground">
+          Die Auswahl gehört zur Auswertung — der Test selbst bleibt unverändert.
+        </p>
+
+        <ul className="flex flex-col gap-1.5">
+          {modules.map((entry) => (
+            <li
+              key={entry.moduleId}
+              className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-border px-3 py-2"
+            >
+              <label className={`${TOUCH_TARGET} flex min-w-0 flex-1 items-center gap-3`}>
+                <input
+                  type="checkbox"
+                  checked={entry.included}
+                  disabled={pending || entry.blocked !== null}
+                  onChange={(event) => {
+                    onToggle(entry.moduleId, event.target.checked);
+                  }}
+                  className={`${FOCUS_RING} size-4 shrink-0 rounded border-input disabled:opacity-50`}
+                />
+                <span className="flex min-w-0 flex-col">
+                  <span className="text-sm font-medium break-words">{entry.name}</span>
+                  <span className="text-xs text-muted-foreground">{entry.typeLabel}</span>
+                </span>
+              </label>
+
+              {entry.blocked === null ? (
+                <span
+                  className="basis-full text-xs text-muted-foreground sm:basis-auto"
+                  data-numeric
+                >
+                  {entry.recorded} von {entry.expected} Werten
+                </span>
+              ) : (
+                /* Named, not merely disabled: a control that refuses without
+                   saying why is a puzzle, and the reason is knowable here. */
+                <span className="basis-full text-xs text-muted-foreground sm:basis-auto">
+                  {BLOCK_REASONS[entry.blocked] ?? 'Nicht auswertbar.'}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </details>
   );
 }
 

@@ -12,17 +12,38 @@ import {
   readModuleConfiguration,
   REPORT_SNAPSHOT_VERSION,
   readReportDraft,
+  readReportSnapshot,
+  percentileOf,
+  type AthleteSex,
+  scaleDirectionOf,
   selfComparisons,
+  seriesIdentity,
+  targetForReading,
+  meetsAngleTarget,
+  hasTempo,
+  movementProfile,
+  parseAnalysisStillKey,
+  positionOf,
+  setTempo,
+  trackOf,
+  tendencyOf,
+  withDraftStill,
   withDraftText,
   type ComparableReading,
   type DraftField,
   type DraftTarget,
   type ModuleConfiguration,
+  type Percentile,
   type Readiness,
   type ReadinessLevel,
+  type ReportMedia,
   type ReportSnapshot,
+  type SetTempo,
+  type Tendency,
 } from '@apex/domain';
 import type { TenantContext } from '@apex/types';
+
+import type { ChartGroup } from '@/features/assessments';
 
 import type { CreateReportInput } from '../schemas';
 
@@ -51,9 +72,86 @@ const BODY_FAT_METHOD_LABELS: Readonly<Record<string, string>> = {
   jackson_pollock_7: 'Jackson & Pollock, 7 Punkte',
 };
 
+/**
+ * The coordinates of a reading, in the coach's language.
+ *
+ * A video-analysis test declares a joint axis and a position axis without a
+ * closed list of values, so what lands in a measurement is the profile's own
+ * key — `knee`, `flexed`. That is the right thing to *store*: it is stable and
+ * it is what makes two readings the same quantity. It is the wrong thing to
+ * *show*, and the analysis screen never shows it.
+ *
+ * So the keys are translated back through the profile that wrote them, and
+ * anything the profile does not know is left exactly as it stands — a coach's
+ * own axis value is already their language.
+ */
+function readableContext(
+  context: Record<string, string>,
+  configuration: ModuleConfiguration | null,
+): Record<string, string> {
+  const profile = movementProfile(configuration?.movement?.profileKey);
+  if (profile === null) return context;
+
+  const readable: Record<string, string> = {};
+  for (const [key, value] of Object.entries(context)) {
+    readable[key] = trackOf(profile, value)?.label ?? positionOf(profile, value)?.label ?? value;
+  }
+
+  return readable;
+}
+
+/**
+ * What a still shows, in the coach's language.
+ *
+ * The key carries the profile's position key; the profile carries its label. A
+ * still whose position the profile no longer defines keeps the raw key rather
+ * than losing its caption — an uncaptioned picture in a document is worse than
+ * a technical one.
+ */
+function stillLabel(key: string, configuration: ModuleConfiguration | null): string {
+  const parsed = parseAnalysisStillKey(key);
+  if (parsed === null) return 'Standbild';
+
+  const profile = movementProfile(configuration?.movement?.profileKey);
+  const position = profile === null ? null : positionOf(profile, parsed.position);
+
+  return position?.label ?? parsed.position;
+}
+
+/**
+ * The stored analysis of one test, ready to draw.
+ *
+ * Tempo is computed here rather than stored: it follows from the curve and the
+ * repetitions by arithmetic, and a stored copy would be a second thing to keep
+ * in step with the recording it came from. `hasTempo` decides whether there is
+ * anything to say — a set of two repetitions honestly has nothing.
+ */
+function movementOf(configuration: ModuleConfiguration | null): EvaluationMovement | null {
+  const movement = configuration?.movement;
+  const result = movement?.result;
+
+  if (movement === undefined || result === undefined) return null;
+
+  const profile = movementProfile(movement.profileKey);
+  const signal = result.signal.map((point) => ({ timestampMs: point.t, primary: point.v }));
+  const tempo = setTempo(signal, result.reps);
+
+  return {
+    profileKey: movement.profileKey,
+    profileName: profile?.name ?? movement.profileKey,
+    repetitions: result.repetitions,
+    durationMs: result.durationMs,
+    signal,
+    reps: result.reps,
+    tempo: hasTempo(tempo) ? tempo : null,
+  };
+}
+
 /** How a test type is named. Passed in, so this module holds no vocabulary. */
 export interface ModuleLabels {
   readonly module: (moduleKey: string) => string;
+  /** How far a test got, in words — the tile's head shows it. */
+  readonly moduleStatus: (status: string) => string;
 }
 
 type ReportDb = Pick<
@@ -525,12 +623,23 @@ export async function assessmentAnalysisOverview(
  */
 
 /** One measured series of one test, with what came before it. */
+/** A target the test set for this angle, and whether the reading meets it. */
+export interface EvaluationTarget {
+  readonly comparison: 'at_most' | 'at_least' | 'equals';
+  readonly degrees: number;
+  readonly met: boolean;
+}
+
 export interface EvaluationSeries {
   readonly key: string;
   readonly typeName: string;
+  /** The catalogue key, so wording can be exact without a second lookup. */
+  readonly measurementTypeKey: string;
   readonly unit: string;
   readonly side: string;
   readonly exerciseName: string | null;
+  /** The catalogue key of that exercise, for rules that match on it. */
+  readonly exerciseKey: string;
   readonly passIndex: number | null;
   readonly context: Record<string, string>;
   readonly source: string;
@@ -541,6 +650,56 @@ export interface EvaluationSeries {
   readonly lowest: { value: number; capturedAt: Date };
   readonly best: { value: number; capturedAt: Date } | null;
   readonly count: number;
+  /**
+   * Which way this test wants the number to go, or `null` where nobody said.
+   *
+   * Carried to the screen rather than resolved here, because the shared document
+   * freezes it and the two must agree.
+   */
+  readonly betterDirection: 'lower' | 'higher' | null;
+  /** `null` where no tendency may be stated — no direction, or no earlier value. */
+  readonly tendency: Tendency | null;
+  readonly target: EvaluationTarget | null;
+  /**
+   * Where this value sits among the workspace's other athletes.
+   *
+   * `null` wherever it cannot honestly be stated — no declared direction, or too
+   * few comparable athletes. See `percentileOf`; Apex OS carries no norms, so
+   * the only real comparison group is the one the workspace measured itself.
+   */
+  readonly percentile: Percentile | null;
+}
+
+/**
+ * What a video analysis saw, for the tests that had one.
+ *
+ * Read from the test's own stored analysis — the same payload the angles were
+ * derived from — so the report draws the movement rather than restating
+ * aggregates whose origin nobody can see. `null` for every test without a video
+ * behind it, which is most of them.
+ */
+export interface EvaluationMovement {
+  /**
+   * The profile's key, not only its name.
+   *
+   * The still picker has nothing but the object keys, and those carry the
+   * profile's own position keys — `flexed`, `extended`. Without the key there is
+   * no way back to "gebeugt" and "gestreckt", and the picker offered two
+   * thumbnails captioned only "übernehmen".
+   */
+  readonly profileKey: string;
+  readonly profileName: string;
+  readonly repetitions: number;
+  readonly durationMs: number;
+  readonly signal: readonly { timestampMs: number; primary: number | null }[];
+  readonly reps: readonly {
+    index: number;
+    startedAtMs: number;
+    endedAtMs: number;
+    durationMs: number;
+  }[];
+  /** Derived, never stored — and `null` where the recording cannot support it. */
+  readonly tempo: SetTempo | null;
 }
 
 /** Why a test cannot be drawn on. Derivable reasons only — see below. */
@@ -551,6 +710,7 @@ export interface EvaluationModule {
   readonly name: string;
   readonly typeLabel: string;
   readonly status: string;
+  readonly statusLabel: string;
   /**
    * Why this test is not selectable, or `null` where it is.
    *
@@ -568,6 +728,33 @@ export interface EvaluationModule {
   /** The conditions the test declared, so a comparison can be checked. */
   readonly protocolLabel: string | null;
   readonly series: readonly EvaluationSeries[];
+  /**
+   * The stills the coach picked for this test, as storage keys.
+   *
+   * Which stills *exist* is a question for the object store and is asked
+   * separately — this service stays answerable without a bucket, so an analysis
+   * still opens in a workspace that has none.
+   */
+  readonly movement: EvaluationMovement | null;
+  /**
+   * This test as a curve, with the earlier runs of its kind beside it.
+   *
+   * Filled in by the router, which owns the query: a staged test — a lactate
+   * step test, an incremental run — only becomes readable as a line over the
+   * demand it was performed at, and that is exactly what the assessment is for.
+   * Empty for a test that records one value per series; those read as tiles.
+   */
+  readonly charts: readonly ChartGroup[];
+  readonly chosenStills: readonly string[];
+  /**
+   * Those same stills, captioned.
+   *
+   * Named here rather than on the screen because the caption comes from the
+   * movement profile the analysis declared, and that is configuration — the
+   * screen would have to reach for the profile to say "tiefste Position", and
+   * the frozen document would have to reach for it a second time.
+   */
+  readonly images: readonly { id: string; key: string; label: string }[];
   readonly interpretation: string;
   readonly recommendation: string;
 }
@@ -582,7 +769,17 @@ export interface AssessmentEvaluation {
     readonly status: string;
     readonly performedAt: Date;
   };
-  readonly athlete: { readonly id: string; readonly firstName: string; readonly lastName: string };
+  readonly athlete: {
+    readonly id: string;
+    readonly firstName: string;
+    readonly lastName: string;
+    /** For the BMI and the age beside a body-composition test. Often absent. */
+    readonly heightCm: number | null;
+    readonly dateOfBirth: Date | null;
+    /** What the strength standards are read against. Often absent as well. */
+    readonly weightKg: number | null;
+    readonly sex: AthleteSex;
+  };
   /** Who authored the analysis, for the document and for the message. */
   readonly coachName: string;
   /**
@@ -639,7 +836,19 @@ export async function assessmentEvaluation(
       status: true,
       performedAt: true,
       case: {
-        select: { athlete: { select: { id: true, firstName: true, lastName: true } } },
+        select: {
+          athlete: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              heightCm: true,
+              weightKg: true,
+              dateOfBirth: true,
+              sex: true,
+            },
+          },
+        },
       },
       modules: {
         where: { archivedAt: null },
@@ -710,7 +919,7 @@ export async function assessmentEvaluation(
             assessmentModule: {
               select: { id: true, moduleKey: true, payload: true, moduleVersion: true },
             },
-            measurementType: { select: { name: true, unit: true } },
+            measurementType: { select: { key: true, name: true, unit: true } },
           },
           orderBy: [{ capturedAt: 'asc' }, { id: 'asc' }],
         });
@@ -726,9 +935,11 @@ export async function assessmentEvaluation(
             id: { in: exerciseIds },
             OR: [{ organizationId: tenant.organizationId }, { organizationId: null }],
           },
-          select: { id: true, name: true },
+          select: { id: true, name: true, key: true },
         });
   const exerciseNames = new Map(exercises.map((exercise) => [exercise.id, exercise.name]));
+  // The key beside the name: rules match on the key, screens show the name.
+  const exerciseKeys = new Map(exercises.map((exercise) => [exercise.id, exercise.key ?? '']));
 
   /** Each involved test's protocol, read once from its own stored payload. */
   const configurations = new Map<string, ModuleConfiguration | null>();
@@ -763,10 +974,87 @@ export async function assessmentEvaluation(
     });
   }
 
+  /**
+   * One comparable value per **other** athlete, keyed by series.
+   *
+   * The athlete's own readings are excluded — a percentile against oneself is
+   * not one — and each other athlete contributes their best value, so whoever
+   * was tested most often does not weigh more than whoever was tested once.
+   */
+  const cohort = new Map<string, Map<string, { lowest: number; highest: number }>>();
+
+  if (moduleKeys.length > 0) {
+    const peers = await db.measurement.findMany({
+      where: scoped(tenant, {
+        supersededById: null,
+        assessmentModule: {
+          moduleKey: { in: moduleKeys },
+          archivedAt: null,
+          assessment: { case: { athleteId: { not: athleteId } } },
+        },
+      }),
+      select: {
+        measurementTypeId: true,
+        side: true,
+        exerciseId: true,
+        passIndex: true,
+        context: true,
+        numericValue: true,
+        capturedAt: true,
+        assessmentModule: {
+          select: {
+            id: true,
+            payload: true,
+            moduleVersion: true,
+            assessment: { select: { case: { select: { athleteId: true } } } },
+          },
+        },
+      },
+      take: 5000,
+    });
+
+    for (const row of peers) {
+      const value = row.numericValue === null ? null : Number(row.numericValue.toString());
+      if (value === null || !Number.isFinite(value)) continue;
+
+      const identity = seriesIdentity({
+        measurementTypeId: row.measurementTypeId,
+        side: row.side,
+        exerciseId: row.exerciseId,
+        passIndex: row.passIndex,
+        context: row.context,
+        value,
+        capturedAt: row.capturedAt,
+        moduleId: row.assessmentModule.id,
+        protocolKey: protocolKey(protocolOf(row.assessmentModule)?.protocol ?? null),
+      });
+
+      const who = row.assessmentModule.assessment.case.athleteId;
+      const byAthlete =
+        cohort.get(identity) ?? new Map<string, { lowest: number; highest: number }>();
+      const held = byAthlete.get(who);
+
+      // Both extremes per athlete: which one is their *best* depends on the
+      // direction, and that is a property of the series being compared, not of
+      // this loop.
+      byAthlete.set(
+        who,
+        held === undefined
+          ? { lowest: value, highest: value }
+          : { lowest: Math.min(held.lowest, value), highest: Math.max(held.highest, value) },
+      );
+      cohort.set(identity, byAthlete);
+    }
+  }
+
   const named = new Map(
     readings.map((row) => [
       row.measurementTypeId,
-      { name: row.measurementType.name, unit: row.measurementType.unit },
+      {
+        key: row.measurementType.key,
+        name: row.measurementType.name,
+        unit: row.measurementType.unit,
+      },
     ]),
   );
 
@@ -797,6 +1085,7 @@ export async function assessmentEvaluation(
       name: name === '' ? labels.module(entry.moduleKey) : name,
       typeLabel: labels.module(entry.moduleKey),
       status: entry.status,
+      statusLabel: labels.moduleStatus(entry.status),
       blocked,
       included: blocked === null && (inclusion.get(entry.id) ?? false),
       recorded: readiness.recorded,
@@ -807,18 +1096,51 @@ export async function assessmentEvaluation(
       protocolLabel: configuration?.protocol?.label ?? configuration?.protocol?.key ?? null,
       series: comparisons.map((comparison): EvaluationSeries => {
         const type = named.get(comparison.coordinates.measurementTypeId);
+        const direction = configuration?.protocol?.betterDirection ?? null;
+
+        /**
+         * The direction the percentile counts from.
+         *
+         * A maximal strength test carries no protocol direction — the templates
+         * declare none, because whether a coach wants more load is their call.
+         * But "how much load" has an unambiguous ahead-end regardless of what
+         * anyone wants, and without one there is no percentile at all, which is
+         * how a workspace with fifty deadlifts on file ended up showing nothing.
+         *
+         * So the quantity's own direction fills in where the coach declared
+         * none — and only there. It is deliberately **not** used for the
+         * tendency arrow: that one says whether a change is welcome, which is
+         * the judgement the coach did not make.
+         */
+        const rankDirection = direction ?? scaleDirectionOf(type?.key ?? '');
+
+        /**
+         * The target this reading is judged against, decided here rather than
+         * on the screen: the published document freezes the verdict, and a
+         * second implementation beside it would eventually disagree.
+         */
+        const set = targetForReading(configuration, {
+          measurementTypeId: comparison.coordinates.measurementTypeId,
+          side: comparison.coordinates.side,
+          context: contextOf(comparison.coordinates.context),
+        });
 
         return {
           key: comparison.key,
           typeName: type?.name ?? 'Unbekannte Messgröße',
+          measurementTypeKey: type?.key ?? '',
           unit: type?.unit ?? '',
           side: comparison.coordinates.side,
           exerciseName:
             comparison.coordinates.exerciseId === null
               ? null
               : (exerciseNames.get(comparison.coordinates.exerciseId) ?? null),
+          exerciseKey:
+            comparison.coordinates.exerciseId === null
+              ? ''
+              : (exerciseKeys.get(comparison.coordinates.exerciseId) ?? ''),
           passIndex: comparison.coordinates.passIndex,
-          context: contextOf(comparison.coordinates.context),
+          context: readableContext(contextOf(comparison.coordinates.context), configuration),
           source: comparison.source,
           current: comparison.current,
           previous: comparison.previous,
@@ -827,8 +1149,33 @@ export async function assessmentEvaluation(
           lowest: comparison.lowest,
           best: comparison.best,
           count: comparison.count,
+          betterDirection: direction,
+          tendency: tendencyOf(comparison.difference, direction),
+          percentile: percentileOf(
+            comparison.current.value,
+            [...(cohort.get(comparison.key)?.values() ?? [])].map((entry) =>
+              rankDirection === 'lower' ? entry.lowest : entry.highest,
+            ),
+            rankDirection,
+          ),
+          target:
+            set === null
+              ? null
+              : {
+                  comparison: set.comparison,
+                  degrees: set.degrees,
+                  met: meetsAngleTarget(comparison.current.value, set),
+                },
         };
       }),
+      movement: movementOf(configuration),
+      charts: [],
+      chosenStills: section.stills,
+      images: section.stills.map((key) => ({
+        id: key,
+        key,
+        label: stillLabel(key, configuration),
+      })),
       interpretation: section.interpretation,
       recommendation: section.recommendation,
     };
@@ -846,7 +1193,20 @@ export async function assessmentEvaluation(
       status: assessment.status,
       performedAt: assessment.performedAt,
     },
-    athlete: assessment.case.athlete,
+    athlete: {
+      ...assessment.case.athlete,
+      // Prisma hands decimals back as `Decimal` — the document does arithmetic
+      // with this, so it is turned into a number here rather than at four
+      // call sites downstream.
+      heightCm:
+        assessment.case.athlete.heightCm === null
+          ? null
+          : Number(assessment.case.athlete.heightCm.toString()),
+      weightKg:
+        assessment.case.athlete.weightKg === null
+          ? null
+          : Number(assessment.case.athlete.weightKg.toString()),
+    },
     // Optional in the record — a coach may never have filled in a display name,
     // and a document signed "null" would be worse than one signed by nobody.
     // An empty display name counts as absent, which is why this is a helper
@@ -865,6 +1225,96 @@ export async function assessmentEvaluation(
     modules,
     overall: draft.overall,
   };
+}
+
+/**
+ * Adds or removes one still from a draft.
+ *
+ * Read, change, write — never a blind overwrite, so a click on one picture
+ * cannot drop the coach's texts or the other pictures. Refuses anything the key
+ * grammar does not recognise: a draft that named a key nobody wrote would
+ * survive until publication and then quietly produce a document with a missing
+ * picture.
+ */
+export async function setDraftStill(
+  db: ReportDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  reportId: string,
+  moduleId: string,
+  key: string,
+  chosen: boolean,
+): Promise<boolean> {
+  if (chosen && parseAnalysisStillKey(key)?.organizationId !== tenant.organizationId) return false;
+
+  const report = await db.report.findFirst({
+    where: scoped(tenant, { id: reportId, status: 'DRAFT' as const }),
+    select: { draft: true },
+  });
+
+  if (!report) return false;
+
+  const draft = readReportDraft(report.draft) ?? emptyReportDraft();
+
+  const { count } = await db.report.updateMany({
+    where: scoped(tenant, { id: reportId, status: 'DRAFT' as const }),
+    data: { draft: withDraftStill(draft, moduleId, key, chosen) },
+  });
+
+  return count > 0;
+}
+
+/**
+ * The frozen document of an assessment, for the workspace that owns it.
+ *
+ * ## Why this exists beside `assessmentEvaluation`
+ *
+ * That one answers "what could an analysis draw on", and it only ever looks at a
+ * **draft** — which is right, because that is what a coach edits. Once the
+ * analysis is published there is no draft, and everything that asked for one
+ * came back empty: the coach's own screen showed no document at all, and the
+ * message to the athlete lost the name, the author and the date it should have
+ * carried.
+ *
+ * A published analysis is not gone, it is finished. This is how it is read, and
+ * it is the same content the athlete's link resolves to — one document, one
+ * source, whoever is looking.
+ */
+export async function publishedSnapshot(
+  db: ReportDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  assessmentId: string,
+): Promise<ReportSnapshot | null> {
+  const report = await db.report.findFirst({
+    where: scoped(tenant, { assessmentId, status: 'PUBLISHED' as const }),
+    orderBy: [{ version: 'desc' }],
+    select: { content: true },
+  });
+
+  return report === null ? null : readReportSnapshot(report.content);
+}
+
+/**
+ * The evaluation behind one analysis, found by the analysis rather than by the
+ * assessment.
+ *
+ * Publishing needs it twice — once to copy the chosen pictures, once to freeze
+ * the numbers — and both must see the same thing. Exported so the copy step can
+ * run before the freeze without duplicating the lookup.
+ */
+export async function evaluationForReport(
+  db: ReportDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  reportId: string,
+  labels: ModuleLabels,
+): Promise<AssessmentEvaluation | null> {
+  const report = await db.report.findFirst({
+    where: scoped(tenant, { id: reportId }),
+    select: { assessmentId: true },
+  });
+
+  if (!report?.assessmentId) return null;
+
+  return assessmentEvaluation(db, tenant, report.assessmentId, labels);
 }
 
 /**
@@ -893,7 +1343,25 @@ export async function publishReport(
   tenant: Pick<TenantContext, 'organizationId'>,
   reportId: string,
   labels: ModuleLabels,
+  /**
+   * The stills already copied into this report's own folder, per test.
+   *
+   * Passed in rather than fetched: copying bytes is the object store's business
+   * and this function is the one that must stay testable without a bucket. The
+   * caller copies first and publishes second, so a document is never frozen
+   * pointing at pictures that were never written.
+   */
+  frozenMedia: ReadonlyMap<string, readonly ReportMedia[]> = new Map(),
+  /**
+   * The curves, per included test.
+   *
+   * Passed in for the same reason the media are: drawing them needs the
+   * measurement queries, and this function must stay answerable without them.
+   */
+  withCharts: readonly { readonly moduleId: string; readonly charts: readonly ChartGroup[] }[] = [],
 ): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'EMPTY' }> {
+  const media = frozenMedia;
+  const curves = new Map(withCharts.map((entry) => [entry.moduleId, entry.charts]));
   const report = await db.report.findFirst({
     where: scoped(tenant, { id: reportId, status: 'DRAFT' as const }),
     select: { id: true, assessmentId: true },
@@ -920,20 +1388,31 @@ export async function publishReport(
     athlete: {
       firstName: evaluation.athlete.firstName,
       lastName: evaluation.athlete.lastName,
+      heightCm: evaluation.athlete.heightCm,
+      dateOfBirth: evaluation.athlete.dateOfBirth?.toISOString() ?? null,
+      weightKg: evaluation.athlete.weightKg,
+      sex: evaluation.athlete.sex,
     },
     coach: { name: evaluation.coachName },
     modules: included.map((entry) => ({
       moduleId: entry.moduleId,
       name: entry.name,
       typeLabel: entry.typeLabel,
+      performedAt: evaluation.assessment.performedAt.toISOString(),
+      // The word, not the enum. The evaluation already carries the German label
+      // and the frozen document showed "COMPLETED" beside a German date because
+      // this reached past it to the raw status.
+      statusLabel: entry.statusLabel,
       protocolLabel: entry.protocolLabel,
       derivations: [...entry.derivations],
       series: entry.series.map((row) => ({
         key: row.key,
         typeName: row.typeName,
+        measurementTypeKey: row.measurementTypeKey,
         unit: row.unit,
         side: row.side,
         exerciseName: row.exerciseName,
+        exerciseKey: row.exerciseKey,
         passIndex: row.passIndex,
         context: row.context,
         source: row.source,
@@ -941,7 +1420,32 @@ export async function publishReport(
         previous: row.previous === null ? null : moment(row.previous),
         difference: row.difference,
         best: row.best === null ? null : moment(row.best),
+        betterDirection: row.betterDirection,
+        target: row.target,
+        percentile: row.percentile,
       })),
+      charts: (curves.get(entry.moduleId) ?? entry.charts).map((group) => ({
+        ...group,
+        loadCandidates: [...group.loadCandidates],
+        series: group.series.map((line) => ({
+          ...line,
+          points: line.points.map((point) => ({ ...point, loads: { ...point.loads } })),
+        })),
+      })),
+      media: [...(media.get(entry.moduleId) ?? [])],
+      // The curve travels with the document: re-running the analysis tomorrow
+      // must not change the picture an athlete was already shown.
+      movement:
+        entry.movement === null
+          ? null
+          : {
+              profileKey: entry.movement.profileKey,
+              profileName: entry.movement.profileName,
+              repetitions: entry.movement.repetitions,
+              durationMs: entry.movement.durationMs,
+              reps: entry.movement.reps.map((rep) => ({ ...rep })),
+              signal: entry.movement.signal.map((point) => ({ ...point })),
+            },
       interpretation: entry.interpretation,
       recommendation: entry.recommendation,
     })),
