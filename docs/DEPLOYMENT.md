@@ -23,7 +23,7 @@
 | --------------- | ------------------------------------------------------ |
 | Web application | Vercel (Next.js, region `fra1`)                        |
 | Database        | Managed PostgreSQL — Neon, Supabase or Vercel Postgres |
-| Object storage  | Cloudflare R2                                          |
+| Object storage  | Supabase Storage (private bucket)                      |
 | Background jobs | Trigger.dev                                            |
 | Email           | Resend                                                 |
 | Analytics       | PostHog (EU cloud)                                     |
@@ -91,19 +91,21 @@ build necessarily has placeholder values.
 Full list with comments: [`.env.example`](../.env.example).
 Validation schema: [`apps/web/src/env.ts`](../apps/web/src/env.ts).
 
-| Variable                                   | Required | Scope  | Notes                                        |
-| ------------------------------------------ | -------- | ------ | -------------------------------------------- |
-| `DATABASE_URL`                             | ✅       | Server | Pooled connection                            |
-| `DIRECT_URL`                               | ✅       | Server | Unpooled — migrations only                   |
-| `BETTER_AUTH_SECRET`                       | ✅       | Server | ≥32 random bytes, **unique per environment** |
-| `BETTER_AUTH_URL`                          | ✅       | Server | Full deployment URL                          |
-| `NEXT_PUBLIC_APP_URL`                      | ✅       | Client | Full deployment URL                          |
-| `GITHUB_CLIENT_ID` / `_SECRET`             | ➖       | Server | Omit to disable the provider                 |
-| `GOOGLE_CLIENT_ID` / `_SECRET`             | ➖       | Server | Omit to disable the provider                 |
-| `R2_*`                                     | ➖       | Server | Required once uploads ship                   |
-| `RESEND_API_KEY`, `EMAIL_FROM`             | ➖       | Server | Required once email ships                    |
-| `TRIGGER_SECRET_KEY`, `TRIGGER_PROJECT_ID` | ➖       | Server | Required once jobs ship                      |
-| `NEXT_PUBLIC_POSTHOG_KEY` / `_HOST`        | ➖       | Client | Project key is public by design              |
+| Variable                                    | Required | Scope  | Notes                                        |
+| ------------------------------------------- | -------- | ------ | -------------------------------------------- |
+| `DATABASE_URL`                              | ✅       | Server | Pooled connection                            |
+| `DIRECT_URL`                                | ✅       | Server | Unpooled — migrations only                   |
+| `BETTER_AUTH_SECRET`                        | ✅       | Server | ≥32 random bytes, **unique per environment** |
+| `BETTER_AUTH_URL`                           | ✅       | Server | Full deployment URL                          |
+| `NEXT_PUBLIC_APP_URL`                       | ✅       | Client | Full deployment URL                          |
+| `GITHUB_CLIENT_ID` / `_SECRET`              | ➖       | Server | Omit to disable the provider                 |
+| `GOOGLE_CLIENT_ID` / `_SECRET`              | ➖       | Server | Omit to disable the provider                 |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | ➖       | Server | Omit and the product runs without pictures   |
+| `SUPABASE_STORAGE_BUCKET`                   | ➖       | Server | Defaults to `apex-os`                        |
+| `CRON_SECRET`                               | ➖       | Server | Without it the sweep schedule refuses to run |
+| `RESEND_API_KEY`, `EMAIL_FROM`              | ➖       | Server | Required once email ships                    |
+| `TRIGGER_SECRET_KEY`, `TRIGGER_PROJECT_ID`  | ➖       | Server | Required once jobs ship                      |
+| `NEXT_PUBLIC_POSTHOG_KEY` / `_HOST`         | ➖       | Client | Project key is public by design              |
 
 **`NEXT_PUBLIC_*` values are inlined into the client bundle.** Never give a
 secret that prefix — see [SECURITY.md §6](./SECURITY.md#6-secrets--configuration).
@@ -151,12 +153,12 @@ drop old column in a later release) is the only safe sequence.
 
 ## 8. Third-party services
 
-| Service       | Setup                                                                                                |
-| ------------- | ---------------------------------------------------------------------------------------------------- |
-| Cloudflare R2 | Create bucket + API token; set `R2_*`. Serve public assets from a custom domain, not the app origin. |
-| Resend        | Verify the sending domain (SPF/DKIM) before sending; set `EMAIL_FROM` to that domain.                |
-| Trigger.dev   | Create the project, set the secret key, deploy jobs separately from the web app.                     |
-| PostHog       | EU cloud by default (`https://eu.i.posthog.com`) — relevant for GDPR.                                |
+| Service          | Setup                                                                                                                                                                                               |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Supabase Storage | Create a **private** bucket; set `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_STORAGE_BUCKET`. Never serve it publicly — every read goes through the app, which decides who is asking. |
+| Resend           | Verify the sending domain (SPF/DKIM) before sending; set `EMAIL_FROM` to that domain.                                                                                                               |
+| Trigger.dev      | Create the project, set the secret key, deploy jobs separately from the web app.                                                                                                                    |
+| PostHog          | EU cloud by default (`https://eu.i.posthog.com`) — relevant for GDPR.                                                                                                                               |
 
 ## 9. Rollback
 

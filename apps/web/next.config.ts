@@ -22,13 +22,14 @@ const nextConfig: NextConfig = {
 
   typedRoutes: true,
 
-  images: {
-    remotePatterns: [
-      // Cloudflare R2 public bucket / custom domain.
-      { protocol: 'https', hostname: '**.r2.dev' },
-      { protocol: 'https', hostname: '**.r2.cloudflarestorage.com' },
-    ],
-  },
+  /**
+   * No remote image hosts.
+   *
+   * Every picture the product serves comes from its own routes — the bucket is
+   * private and the bytes are handed out only after the app has decided who is
+   * asking. Nothing is loaded from a public object-store domain, so the
+   * allow-list is empty rather than naming a store that is no longer used.
+   */
 
   experimental: {
     // Server Actions accept file uploads (athlete media); the default 1 MB cap

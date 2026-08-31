@@ -28,11 +28,31 @@ export const env = createEnv({
     GOOGLE_CLIENT_ID: z.string().optional(),
     GOOGLE_CLIENT_SECRET: z.string().optional(),
 
-    R2_ACCOUNT_ID: z.string().optional(),
-    R2_ACCESS_KEY_ID: z.string().optional(),
-    R2_SECRET_ACCESS_KEY: z.string().optional(),
-    R2_BUCKET_NAME: z.string().optional(),
-    R2_PUBLIC_URL: z.url().optional(),
+    /**
+     * Supabase Storage — the one object store.
+     *
+     * Optional so a workspace without it still runs: an assessment is recorded,
+     * an analysis published and a link shared exactly as before, simply without
+     * pictures. The adapter answers "not configured" rather than throwing, and
+     * every screen that could show a file leaves it out.
+     *
+     * The **service role** key, not the anon key: these reads and writes happen
+     * on the server after the app has decided who may see what, and the bucket
+     * itself is private. An anon key would put that decision in the browser.
+     */
+    SUPABASE_URL: z.url().optional(),
+    SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
+    /** One private bucket holds all three areas, separated by path. */
+    SUPABASE_STORAGE_BUCKET: z.string().default('apex-os'),
+
+    /**
+     * The shared secret the scheduled sweep authenticates with.
+     *
+     * Optional, and the sweep refuses everything without it: an endpoint that
+     * deleted on request would let anyone who found the URL clear a coach's
+     * working material.
+     */
+    CRON_SECRET: z.string().optional(),
 
     RESEND_API_KEY: z.string().optional(),
     EMAIL_FROM: z.string().optional(),
@@ -66,11 +86,10 @@ export const env = createEnv({
     GITHUB_CLIENT_SECRET: process.env.GITHUB_CLIENT_SECRET,
     GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
-    R2_ACCOUNT_ID: process.env.R2_ACCOUNT_ID,
-    R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID,
-    R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY,
-    R2_BUCKET_NAME: process.env.R2_BUCKET_NAME,
-    R2_PUBLIC_URL: process.env.R2_PUBLIC_URL,
+    SUPABASE_URL: process.env.SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+    SUPABASE_STORAGE_BUCKET: process.env.SUPABASE_STORAGE_BUCKET,
+    CRON_SECRET: process.env.CRON_SECRET,
     RESEND_API_KEY: process.env.RESEND_API_KEY,
     EMAIL_FROM: process.env.EMAIL_FROM,
     TRIGGER_SECRET_KEY: process.env.TRIGGER_SECRET_KEY,

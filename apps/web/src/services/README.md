@@ -17,6 +17,6 @@ something here only once a second slice needs it.
 | `billing`      | Subscription state, plan limits, quota enforcement |
 | `notification` | Fan-out across email, in-app and push              |
 | `audit`        | Append-only record of tenant-scoped mutations      |
-| `storage`      | Signed upload/download URLs over Cloudflare R2     |
+| `storage`      | Reads and writes against Supabase Storage          |
 
 _None implemented yet._

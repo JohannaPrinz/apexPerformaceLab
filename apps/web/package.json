@@ -21,6 +21,7 @@
     "@apex/types": "workspace:*",
     "@apex/ui": "workspace:*",
     "@mediapipe/tasks-vision": "1.0.1",
+    "@supabase/supabase-js": "2.112.4",
     "@t3-oss/env-nextjs": "0.13.11",
     "@tanstack/react-query": "5.101.4",
     "@trpc/client": "11.18.0",

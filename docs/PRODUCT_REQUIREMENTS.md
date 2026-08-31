@@ -78,7 +78,7 @@ _TBD._ Profile, organization, members, billing, integrations.
 | ------------------- | ---------------------------------------------------------------- |
 | Roles & permissions | _TBD_ — see `packages/auth/src/permissions.ts`                   |
 | Notifications       | _TBD_ — email (Resend), in-app                                   |
-| File uploads        | _TBD_ — Cloudflare R2, size/type limits                          |
+| File uploads        | Supabase Storage, private bucket; stills bounded to 1000 px      |
 | Localization        | _TBD_ — locales, date/number formatting, units (metric/imperial) |
 | Audit trail         | _TBD_ — which actions are recorded                               |
 
