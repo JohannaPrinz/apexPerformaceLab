@@ -6,7 +6,7 @@ import { SignUpForm } from '@/features/auth';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Create account',
+  title: 'Konto anlegen',
 };
 
 /**
@@ -28,21 +28,22 @@ export default async function SignUpPage({
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-2">
         <span className="eyebrow">Apex OS</span>
-        <h1 className="text-2xl font-semibold">Create your workspace</h1>
+        <h1 className="text-2xl font-semibold">Arbeitsbereich anlegen</h1>
         <p className="text-sm text-pretty text-muted-foreground">
-          Register as a coach. You get your own workspace straight away — no team setup required.
+          Als Coach registrieren. Ihr Arbeitsbereich steht sofort bereit — ohne Einrichtung eines
+          Teams.
         </p>
       </div>
 
       <SignUpForm redirectTo={safeRedirect(redirectTo)} />
 
       <p className="text-sm text-muted-foreground">
-        Already have an account?{' '}
+        Sie haben bereits ein Konto?{' '}
         <Link
           href="/sign-in"
           className={`${TOUCH_TARGET} inline-flex items-center text-accent underline-offset-4 hover:underline`}
         >
-          Sign in
+          Anmelden
         </Link>
       </p>
     </div>

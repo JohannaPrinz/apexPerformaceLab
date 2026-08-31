@@ -6,7 +6,7 @@ import { SignInForm } from '@/features/auth';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Sign in',
+  title: 'Anmelden',
 };
 
 export default async function SignInPage({
@@ -20,19 +20,19 @@ export default async function SignInPage({
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-2">
         <span className="eyebrow">Apex OS</span>
-        <h1 className="text-2xl font-semibold">Sign in</h1>
-        <p className="text-sm text-pretty text-muted-foreground">Continue in your workspace.</p>
+        <h1 className="text-2xl font-semibold">Anmelden</h1>
+        <p className="text-sm text-pretty text-muted-foreground">Weiter in Ihrem Arbeitsbereich.</p>
       </div>
 
       <SignInForm redirectTo={safeRedirect(redirectTo)} />
 
       <p className="text-sm text-muted-foreground">
-        No account yet?{' '}
+        Noch kein Konto?{' '}
         <Link
           href="/sign-up"
           className={`${TOUCH_TARGET} inline-flex items-center text-accent underline-offset-4 hover:underline`}
         >
-          Create one
+          Jetzt anlegen
         </Link>
       </p>
     </div>

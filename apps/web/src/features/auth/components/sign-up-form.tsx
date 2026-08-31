@@ -79,14 +79,14 @@ export function SignUpForm({ redirectTo = '/start' }: { redirectTo?: string }) {
         autoComplete="name"
         required
         error={errors['name']}
-        hint="Your workspace starts out named after you. You can rename it later."
+        hint="Ihr Arbeitsbereich trägt zunächst Ihren Namen. Sie können ihn später umbenennen."
       />
 
       <Field
         id="email"
         name="email"
         type="email"
-        label="Email"
+        label="E-Mail"
         autoComplete="email"
         required
         error={errors['email']}
@@ -96,11 +96,11 @@ export function SignUpForm({ redirectTo = '/start' }: { redirectTo?: string }) {
         id="password"
         name="password"
         type="password"
-        label="Password"
+        label="Passwort"
         autoComplete="new-password"
         required
         error={errors['password']}
-        hint={`At least ${MIN_PASSWORD_LENGTH} characters.`}
+        hint={`Mindestens ${MIN_PASSWORD_LENGTH} Zeichen.`}
       />
 
       {formError ? (
@@ -110,7 +110,7 @@ export function SignUpForm({ redirectTo = '/start' }: { redirectTo?: string }) {
       ) : null}
 
       <Button type="submit" variant="accent" className={TOUCH_BUTTON} disabled={pending}>
-        {pending ? 'Creating your workspace…' : 'Create account'}
+        {pending ? 'Arbeitsbereich wird angelegt …' : 'Konto anlegen'}
       </Button>
     </form>
   );

@@ -69,7 +69,7 @@ export function SignInForm({ redirectTo = '/start' }: { redirectTo?: string }) {
         id="email"
         name="email"
         type="email"
-        label="Email"
+        label="E-Mail"
         autoComplete="email"
         required
         error={errors['email']}
@@ -79,7 +79,7 @@ export function SignInForm({ redirectTo = '/start' }: { redirectTo?: string }) {
         id="password"
         name="password"
         type="password"
-        label="Password"
+        label="Passwort"
         autoComplete="current-password"
         required
         error={errors['password']}
@@ -92,7 +92,7 @@ export function SignInForm({ redirectTo = '/start' }: { redirectTo?: string }) {
       ) : null}
 
       <Button type="submit" variant="accent" className={TOUCH_BUTTON} disabled={pending}>
-        {pending ? 'Signing in…' : 'Sign in'}
+        {pending ? 'Wird angemeldet …' : 'Anmelden'}
       </Button>
     </form>
   );
