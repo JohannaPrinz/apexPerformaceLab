@@ -174,6 +174,7 @@ model Organization {
   /// `Coach` is deliberately absent: a coach profile is organisation-independent
   /// (§6). Affiliation runs through `Membership` above.
   athletes         Athlete[]
+  athleteAccesses  AthleteAccess[]
   cases            PerformanceCase[]
   goals            Goal[]
   assessments      Assessment[]
@@ -288,20 +289,22 @@ model Coach {
   userId String? @unique
   user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  credentials      CoachCredential[]
-  athletesCreated  Athlete[]
-  modulesCreated   AssessmentModule[]
-  exercisesCreated Exercise[]
-  cases            PerformanceCase[]
-  appointments     Appointment[]
-  insights         Insight[]
-  reports          Report[]
-  notes            Note[]
-  videoAnnotations VideoAnnotation[]
-  uploadedAssets   Asset[]
-  sharesCreated    Share[]
-  bleedingRecorded BleedingEpisode[]
-  trackingRecorded TrackingEntry[]
+  credentials          CoachCredential[]
+  athletesCreated      Athlete[]
+  athleteAccess        AthleteAccess[]    @relation("AthleteAccessGrantee")
+  athleteAccessGranted AthleteAccess[]    @relation("AthleteAccessGrantor")
+  modulesCreated       AssessmentModule[]
+  exercisesCreated     Exercise[]
+  cases                PerformanceCase[]
+  appointments         Appointment[]
+  insights             Insight[]
+  reports              Report[]
+  notes                Note[]
+  videoAnnotations     VideoAnnotation[]
+  uploadedAssets       Asset[]
+  sharesCreated        Share[]
+  bleedingRecorded     BleedingEpisode[]
+  trackingRecorded     TrackingEntry[]
 
   @@map("coaches")
 }
@@ -424,6 +427,7 @@ model Athlete {
   assets           Asset[]
   programs         Program[]
   notes            Note[]
+  accesses         AthleteAccess[]
   appointments     Appointment[]
   timelineEntries  TimelineEntry[]
   bleedingEpisodes BleedingEpisode[]
@@ -1552,6 +1556,55 @@ model Asset {
 }
 
 /// A timestamped comment on a Video (§18). Only valid for `kind = VIDEO`.
+/// Which coaches may see an athlete besides the one who records them (§7).
+///
+/// ## Why this exists
+///
+/// Until now every coach of a workspace saw every athlete in it, so "sharing an
+/// athlete" had nothing to grant. Ownership already existed —
+/// `Athlete.createdByCoach` — and this is the other half: the named exceptions
+/// to it.
+///
+/// ## Why a grant is not immediately effective
+///
+/// An athlete's record is theirs before it is the workspace's. A coach may
+/// offer access; it takes effect once the athlete has agreed, which is what
+/// `confirmedAt` records. A row with `confirmedAt` still null is a standing
+/// offer, visible and revocable, and grants nothing.
+///
+/// Revoking deletes the row: this is a permission, not a history, and a
+/// withdrawn permission that lingered as a record would be read as one.
+model AthleteAccess {
+  id                 String    @id @default(cuid(2))
+  /// When the athlete agreed. Null while the offer stands — and access with it.
+  confirmedAt        DateTime?
+  /// Who recorded that agreement. Null while none has been recorded.
+  confirmedByCoachId String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  athleteId String
+  athlete   Athlete @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+
+  /// The coach being given access.
+  coachId String
+  coach   Coach  @relation("AthleteAccessGrantee", fields: [coachId], references: [id], onDelete: Cascade)
+
+  /// Who offered it. `Restrict` for the same reason authorship is elsewhere:
+  /// the record must keep saying who made the decision.
+  grantedByCoachId String
+  grantedByCoach   Coach  @relation("AthleteAccessGrantor", fields: [grantedByCoachId], references: [id], onDelete: Restrict)
+
+  /// One grant per coach per athlete. A second would be the same permission
+  /// twice, and revoking one would leave the other standing.
+  @@unique([athleteId, coachId])
+  @@index([organizationId, coachId])
+  @@map("athlete_accesses")
+}
+
 model VideoAnnotation {
   id          String   @id @default(cuid(2))
   timestampMs Int

@@ -38,6 +38,8 @@ export type {
   AthleteModel as Athlete,
   // Standing alone in time rather than inside an assessment: what was
   // documented, never a computed cycle phase.
+  // Which coaches may see an athlete besides the one who records them (§7).
+  AthleteAccessModel as AthleteAccess,
   BleedingEpisodeModel as BleedingEpisode,
   // A value that stands alone in time (§13): shares the measurement type, and
   // therefore the unit, with a Measurement — and nothing else.
