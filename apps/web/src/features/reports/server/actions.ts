@@ -6,7 +6,10 @@ import { headers } from 'next/headers';
 import type { DraftField } from '@apex/domain';
 
 import { env } from '@/env';
+import { sendEmail } from '@/integrations/email';
 import { api } from '@/trpc/server';
+
+import { PASSWORD_DELAY_MINUTES } from '../schemas';
 
 import { passwordMessage, shareMessage } from './share-message';
 
@@ -124,29 +127,43 @@ export async function publishReportAction(
 export interface ShareCreated extends AnalysisActionState {
   readonly share?: {
     readonly url: string;
-    /** What the coach typed. Only its hash is stored; nothing displays it again. */
-    readonly password: string;
     readonly expiresAt: string;
-    readonly message: { subject: string; text: string; mailto: string };
-    /** The password, in its own message — never in the one with the link. */
-    readonly passwordMessage: { subject: string; text: string; mailto: string };
+    /** Where both messages went. */
+    readonly recipient: string;
+    /** When the second one is due, so the screen can say it rather than imply it. */
+    readonly passwordDueAt: string;
+    /**
+     * What the athlete will not receive, and why.
+     *
+     * The link exists either way — a message that failed to send is not a reason
+     * to withhold access the coach already granted. Named so they can pass it on
+     * themselves instead of assuming it arrived.
+     */
+    readonly undelivered?: { readonly link: string | null; readonly password: string | null };
   };
 }
 
 /**
- * Grants access and composes the message that carries it.
+ * Grants access and sends it to the athlete.
  *
- * The message is **composed, not sent**: there is no mail transport in this
- * system and no sender domain has been decided. Handing it to the coach's own
- * mail client is not a placeholder for that — it puts the coach's own address on
- * correspondence the athlete already recognises, which no receiving server has
- * reason to distrust.
+ * ## Why two messages, a quarter of an hour apart
+ *
+ * A link and the password that opens it in one mailbox is one interception away
+ * from being no protection at all. So the link goes now and the password
+ * follows, held by the provider — long enough that they do not land together,
+ * short enough that nobody waits on it.
+ *
+ * ## Why a failed message does not undo the link
+ *
+ * Access is a decision the coach made; delivery is a separate matter that can
+ * fail for reasons that have nothing to do with it — a bounced mailbox, an
+ * unconfigured sender. The link therefore stands, and what did not arrive is
+ * named so the coach can pass it on themselves.
  */
 export async function createShareAction(
   assessmentId: string,
   reportId: string,
   days: number,
-  withOffer: boolean,
   /** The password the coach chose. Only its hash is stored. */
   password: string,
 ): Promise<ShareCreated> {
@@ -173,7 +190,10 @@ export async function createShareAction(
       performedAt: snapshot === null ? new Date() : new Date(snapshot.assessment.performedAt),
       expiresAt: share.expiresAt,
       url,
-      withOffer,
+      // Always. The message is what an athlete gets after a single examination,
+      // and the point of the offer is that a second one says what the first
+      // cannot — see `shareMessage`.
+      withOffer: true,
     });
 
     revalidatePath(`/assessments/${assessmentId}/auswertung`);
@@ -191,22 +211,39 @@ export async function createShareAction(
       password,
     });
 
+    const passwordDueAt = new Date(Date.now() + PASSWORD_DELAY_MINUTES * 60_000);
+    const recipient = share.recipient ?? '';
+
+    const [sentLink, sentPassword] = await Promise.all([
+      sendEmail({
+        to: recipient,
+        subject: message.subject,
+        text: message.text,
+        html: message.html,
+      }),
+      sendEmail({
+        to: recipient,
+        subject: secret.subject,
+        text: secret.text,
+        sendAt: passwordDueAt,
+      }),
+    ]);
+
     return {
       status: 'idle',
       share: {
         url,
-        password,
         expiresAt: share.expiresAt.toISOString(),
-        message: {
-          subject: message.subject,
-          text: message.text,
-          mailto: `mailto:?subject=${encodeURIComponent(message.subject)}&body=${encodeURIComponent(message.text)}`,
-        },
-        passwordMessage: {
-          subject: secret.subject,
-          text: secret.text,
-          mailto: `mailto:?subject=${encodeURIComponent(secret.subject)}&body=${encodeURIComponent(secret.text)}`,
-        },
+        recipient,
+        passwordDueAt: passwordDueAt.toISOString(),
+        ...(sentLink.ok && sentPassword.ok
+          ? {}
+          : {
+              undelivered: {
+                link: sentLink.ok ? null : sentLink.message,
+                password: sentPassword.ok ? null : sentPassword.message,
+              },
+            }),
       },
     };
   } catch (error) {

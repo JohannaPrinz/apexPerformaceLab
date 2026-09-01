@@ -90,6 +90,8 @@ export interface CreatedShare {
   /** Shown once, here, and never again — only its hash is kept. */
   readonly password: string;
   readonly expiresAt: Date;
+  /** The athlete's current address, or `null` where none is on file. */
+  readonly recipient: string | null;
 }
 
 /**
@@ -117,7 +119,17 @@ export async function createReportShare(
 ): Promise<CreatedShare | null> {
   const report = await db.report.findFirst({
     where: scoped(tenant, { id: reportId, status: 'PUBLISHED' as const }),
-    select: { id: true },
+    select: {
+      id: true,
+      /**
+       * Where the message goes, read **now** rather than from the document.
+       *
+       * The snapshot froze who the athlete was on the day it was published; an
+       * address they have since changed is still the address they read. One is
+       * a record, the other is a destination.
+       */
+      assessment: { select: { case: { select: { athlete: { select: { email: true } } } } } },
+    },
   });
 
   if (!report) return null;
@@ -136,7 +148,13 @@ export async function createReportShare(
     select: { id: true },
   });
 
-  return { id: share.id, token, password, expiresAt };
+  return {
+    id: share.id,
+    token,
+    password,
+    expiresAt,
+    recipient: report.assessment?.case.athlete.email ?? null,
+  };
 }
 
 /**

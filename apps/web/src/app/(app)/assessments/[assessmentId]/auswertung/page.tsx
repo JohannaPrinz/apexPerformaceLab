@@ -14,6 +14,7 @@ import {
   SharedReport,
   StartEvaluation,
 } from '@/features/reports';
+import { emailReady } from '@/integrations/email';
 import { api } from '@/trpc/server';
 
 import type { Metadata } from 'next';
@@ -72,8 +73,18 @@ export default async function AssessmentEvaluationPage({
   const shares = reportId === null ? [] : await api.reports.shares({ reportId });
   const finished = evaluation === null && latest?.status === 'PUBLISHED';
 
-  const athlete =
-    evaluation?.athlete ?? (await api.athletes.byId({ athleteId: assessment.athleteId }));
+  /**
+   * The athlete's record — read once, for two questions.
+   *
+   * The analysis carries their name; the panel needs their address, which the
+   * analysis does not hold. Reading it here lets the panel name the recipient
+   * before the coach commits, and refuse with the actual reason where it cannot
+   * — no address on file, or no sender configured.
+   */
+  const record = await api.athletes.byId({ athleteId: assessment.athleteId });
+  const athlete = evaluation?.athlete ?? record;
+  const recipient = record.email ?? null;
+  const mailReady = emailReady();
 
   return (
     <main className="mx-auto flex w-full max-w-content flex-col gap-8 px-6 py-12">
@@ -120,6 +131,8 @@ export default async function AssessmentEvaluationPage({
             published={false}
             shares={shares}
             hasIncludedTests={evaluation.summary.included > 0}
+            recipient={recipient}
+            mailReady={mailReady}
           />
         </>
       ) : finished && reportId !== null ? (
@@ -142,6 +155,8 @@ export default async function AssessmentEvaluationPage({
             published
             shares={shares}
             hasIncludedTests
+            recipient={recipient}
+            mailReady={mailReady}
           />
         </>
       ) : (
