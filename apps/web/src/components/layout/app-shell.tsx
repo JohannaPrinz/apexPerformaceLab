@@ -53,7 +53,9 @@ export function AppShell({
           order Tailwind happens to emit them in. A sticky element already
           establishes a containing block, so the menu panel anchors to it
           correctly without the second utility. */}
-      <header className="sticky top-0 z-40 flex items-center gap-2 border-b border-border bg-background px-4 py-2 lg:hidden">
+      {/* `print:hidden`: a printed page carries the document and nothing that
+          only works on a screen. Navigation on paper is a stripe of dead ink. */}
+      <header className="sticky top-0 z-40 flex items-center gap-2 border-b border-border bg-background px-4 py-2 lg:hidden print:hidden">
         <MobileMenu coachName={coachName} />
 
         <div className="flex min-w-0 flex-1 flex-col">
@@ -69,7 +71,7 @@ export function AppShell({
 
       {/* Desktop. `sticky` with its own scroll so a long navigation never drags
           the page, and the footer stays reachable. */}
-      <aside className="hidden w-60 shrink-0 border-r border-border lg:sticky lg:top-0 lg:flex lg:h-dvh lg:flex-col">
+      <aside className="hidden w-60 shrink-0 border-r border-border lg:sticky lg:top-0 lg:flex lg:h-dvh lg:flex-col print:lg:hidden">
         <div className="flex flex-col gap-0.5 px-4 py-5">
           <span className="eyebrow leading-none">Arbeitsbereich</span>
           {/* The element the switcher replaces — one place, as designed. */}

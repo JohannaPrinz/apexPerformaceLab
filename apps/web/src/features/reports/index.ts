@@ -18,6 +18,9 @@ export { createAnalysisAction } from './server/actions';
 
 /** The surface a shared link opens onto. */
 export { SharedReport } from './components/shared-report';
+// The reader's own copy: the browser writes this page to PDF from the layout
+// they are looking at. See `SaveAsPdf`.
+export { SaveAsPdf } from './components/save-as-pdf';
 export { SharePasswordForm } from './components/share-password-form';
 export { PublishAndShare, type ShareRow } from './components/publish-and-share';
 

@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { db } from '@apex/database';
 import { shareDaysLeft } from '@apex/domain';
 
-import { SharedReport, SharePasswordForm } from '@/features/reports';
+import { SaveAsPdf, SharedReport, SharePasswordForm } from '@/features/reports';
 import { hasSharePass } from '@/features/reports/server/share-access';
 import { resolveShare } from '@/features/reports/server/sharing';
 
@@ -97,11 +97,16 @@ export default async function SharedReportPage({ params }: { params: Promise<{ t
     <Frame>
       <SharedReport snapshot={share.snapshot} token={token} />
 
-      {daysLeft === null ? null : (
-        <p className="border-t border-border pt-4 text-xs text-muted-foreground">
-          Dieser Link ist noch {daysLeft === 0 ? 'heute' : `${String(daysLeft)} Tage`} gültig.
-        </p>
-      )}
+      {/* The link expires; a saved copy does not. Offered at the end, where a
+          reader arrives having read the thing they might want to keep. */}
+      <div className="flex flex-wrap items-center gap-3 border-t border-border pt-4 print:hidden">
+        <SaveAsPdf />
+        {daysLeft === null ? null : (
+          <p className="text-xs text-muted-foreground">
+            Dieser Link ist noch {daysLeft === 0 ? 'heute' : `${String(daysLeft)} Tage`} gültig.
+          </p>
+        )}
+      </div>
     </Frame>
   );
 }

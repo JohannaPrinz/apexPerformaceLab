@@ -36,6 +36,8 @@ const PROTECTED_PREFIXES = [
   '/exercises',
   '/cases',
   '/assessments',
+  // Print views of what an athlete receives. Chrome-free, still signed in.
+  '/druck',
   '/insights',
   '/recommendations',
   '/reports',
