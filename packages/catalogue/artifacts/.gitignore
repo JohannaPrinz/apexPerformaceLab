@@ -7,3 +7,11 @@
 # `pnpm catalogue:fetch` recreates anything here from the recorded URLs.
 */
 !.gitignore
+
+# The curation runs are generally ignored, except for the specific selection
+# artefact read by `build-import.test.ts`. Older/intermediate runs and review
+# files remain untracked.
+!curation/
+curation/**
+!curation/2026-08-16-r18/
+!curation/2026-08-16-r18/selection.json
