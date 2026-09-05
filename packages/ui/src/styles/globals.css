@@ -187,7 +187,31 @@
   --duration-slow: 700ms;
 }
 
-.dark {
+/**
+ * The dark palette — and, on `.paper`, the palette of a document.
+ *
+ * `.paper` declares the very same values on itself rather than inheriting
+ * them, which is what makes it independent of the reader's theme. Custom
+ * properties resolve from the nearest ancestor that declares them, so a
+ * subtree marked `.paper` reads dark whether or not `<html>` carries `.dark` —
+ * without repeating a single value, and without any rule having to out-specify
+ * another.
+ *
+ * ## Why the document is dark
+ *
+ * Because that is what the coach sees while writing it, and a preview that
+ * looked different from the file would be worth less than no preview. The
+ * document was briefly light for a printer's sake; the decision is the
+ * practice's, and the practice reads dark.
+ *
+ * **A dark document depends on the backgrounds being printed.** The print
+ * block sets `print-color-adjust: exact`, which changes the browser's default
+ * — but a person who unticks "Hintergrundgrafiken" in the print dialog still
+ * wins, and then the page arrives as pale text on white paper. Worth knowing
+ * before sending an analysis to a printer rather than to a PDF.
+ */
+.dark,
+.paper {
   --background: var(--brand-deep);
   --foreground: var(--deep-ink);
   --body: var(--deep-ink-soft);
@@ -459,5 +483,168 @@
      counterpoint to the negative tracking on display type. */
   .eyebrow {
     @apply font-mono text-eyebrow text-muted-foreground uppercase;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PAPER
+   What a document has to survive when it stops being a screen. Every rule here
+   fixes something a browser run found in an exported analysis, and none of them
+   applies anywhere else.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media print {
+  /* A4 with a real margin. Without this the browser uses its own default —
+     which differs per browser and per printer, and is what made the same
+     document come out differently for two people. */
+  @page {
+    size: A4;
+    margin: 16mm 14mm;
+  }
+
+  /* The reader's theme is not the document's theme.
+
+     This used to redeclare a handful of tokens here — and a handful is exactly
+     what went wrong: `--accent-soft`, `--border-strong`, `--primary` and the
+     status colours were left at their dark values, so a printed analysis came
+     out as a white page carrying a dark-theme green card. The palette is not
+     something to re-pick per medium; `.paper` above carries the whole of it,
+     and the print route wears it. */
+
+  /* Backgrounds and fills carry meaning here — the strength of a bleeding, the
+     band of a percentile, the colour of a curve. Browsers drop them by default
+     to save ink, which for this document deletes the information. */
+  * {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /* One ground for the whole sheet, and it is the document's own.
+     The root element's background is propagated to the page canvas, which is
+     what carries it into the `@page` margins as well — otherwise a dark
+     document would arrive as a dark block inside a white frame. */
+  html,
+  body {
+    background: var(--brand-deep);
+    /* Paper has no viewport height; a page that inherits one prints blank
+       trailing sheets. */
+    height: auto;
+    min-height: 0;
+  }
+
+  .paper {
+    min-height: 0;
+  }
+
+  /* **A scroller clips on paper.** On screen a wide table can be pushed
+     sideways; on a page the part past the edge is simply not there. A browser
+     run found a skinfold table cut through the middle of a word. Widths that
+     hold a table open have to go with it. */
+  [class*='overflow-x-auto'],
+  [class*='overflow-auto'],
+  [class*='overflow-x-scroll'] {
+    overflow: visible !important;
+  }
+
+  table {
+    min-width: 0 !important;
+    width: 100% !important;
+    table-layout: auto;
+  }
+
+  /* Long headings in a narrow column break rather than push the table wide.
+     `whitespace-nowrap` is right on a screen with a scroller beside it and
+     wrong on a page: a browser run found a seven-column skinfold table held
+     open by "Hautfalte Oberschenkel" until it ran off the sheet. */
+  th,
+  td {
+    white-space: normal !important;
+    /* `break-word`, not `anywhere`: a label wraps at its spaces and only
+       splits inside a word when the word alone cannot fit. `anywhere` broke
+       "Körperfett" into "Körperfe / tt" in a column that had room for it. */
+    overflow-wrap: break-word;
+  }
+
+  /* A figure is not a word: 2.520 must not break after the 2. */
+  [data-numeric] {
+    overflow-wrap: normal;
+  }
+
+  /* A finding split across two sheets is a finding somebody has to reassemble.
+     Tables, figures and pictures stay whole where they fit on one. */
+  table,
+  figure,
+  img,
+  svg,
+  thead,
+  tbody tr {
+    break-inside: avoid;
+  }
+
+  /* **A bordered box that is taller than a page must not stay a box.** A
+     browser draws the box it was given, break or no break — so a test card
+     with a chart and a table in it ran onto a second sheet and had its rounded
+     edge painted straight through the rows underneath. A printed analysis came
+     back with "Hüfte links 176°" struck through.
+
+     Scoped to the two boxes that are tall enough for it: a test, and the table
+     of all values. Everything shorter keeps its card — the coach's assessment
+     is a few lines and never breaks, and stripping it would cost the document
+     its structure for nothing.
+
+     What replaces the box is a hairline above the section, which survives a
+     break because there is nothing left to draw across. */
+  article section[aria-label],
+  article details {
+    border-radius: 0 !important;
+    border-width: 0 !important;
+    border-top-width: 1px !important;
+    border-top-style: solid !important;
+    border-top-color: var(--border) !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    padding: 6mm 0 0 !important;
+    margin-top: 2mm;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  caption {
+    break-after: avoid;
+  }
+
+  /* Never a heading alone at the foot of a page, never one line alone at the
+     head of the next. */
+  p,
+  li {
+    orphans: 3;
+    widows: 3;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  /* A collapsed disclosure prints as a triangle nobody can open — the content
+     behind it is simply missing from the file. On paper everything is open. */
+  details {
+    break-inside: avoid;
+  }
+
+  details > summary {
+    display: none;
+  }
+
+  /* Controls belong to a screen. Anything the reader cannot act on in a PDF is
+     noise on the page. */
+  button:not([data-print]),
+  input,
+  select,
+  textarea,
+  [role='tablist'],
+  nav {
+    display: none !important;
   }
 }

@@ -8,7 +8,18 @@
  *
  * Access is unchanged: `/druck` is a protected prefix in `proxy.ts`, and every
  * read underneath still goes through a tenant-scoped procedure.
+ *
+ * It also fixes the palette — see `paper` below.
  */
 export default function PrintLayout({ children }: { children: React.ReactNode }) {
-  return children;
+  /**
+   * `paper` fixes the document's palette, whatever theme the coach works in.
+   *
+   * It is the app's dark palette: the document reads the way the practice
+   * reads. What matters as much as which one it is, is that it is **one** —
+   * the page followed the theme on screen and was forced light in print, so a
+   * coach previewed one document and saved another. The preview is the page,
+   * which is the only reason a preview is worth having.
+   */
+  return <div className="paper min-h-dvh bg-background text-body">{children}</div>;
 }
