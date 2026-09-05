@@ -8,7 +8,14 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": [".next/**", "!.next/cache/**", "dist/**"],
+      // `.next/dev` is excluded for the same reason as `.next/cache`, and it
+      // matters more: it is Turbopack's persistent database for `next dev` —
+      // not a build output at all — and it grows to gigabytes as the dev server
+      // runs. Cached with the build, every `pnpm build` archived it: one repo
+      // reached 5346 cache entries of about 8.7 GB each, 287 GB in total, and
+      // filled a 501 GB disk. Nothing reads it back; `next start` uses
+      // `.next/server`, `.next/static` and the manifests.
+      "outputs": [".next/**", "!.next/cache/**", "!.next/dev/**", "dist/**"],
       "env": [
         "DATABASE_URL",
         "DIRECT_URL",
