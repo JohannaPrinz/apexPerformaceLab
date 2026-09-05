@@ -67,9 +67,18 @@ import type { CreateReportInput } from '../schemas';
  * server-rendered text, and the mapping is small, closed and checked against
  * the domain vocabulary by the test beside it.
  */
-const BODY_FAT_METHOD_LABELS: Readonly<Record<string, string>> = {
+/**
+ * The published procedures a test computes with, as the document names them.
+ *
+ * A second copy of this table used to live here under a body-fat name, and it
+ * did not learn about the energy conversion — so a published analysis read
+ * "Berechnet nach atwater_energy", an enum key printed into a document handed
+ * to an athlete. Named for what it covers, and every method belongs in it.
+ */
+const DERIVATION_METHOD_LABELS: Readonly<Record<string, string>> = {
   jackson_pollock_3: 'Jackson & Pollock, 3 Punkte',
   jackson_pollock_7: 'Jackson & Pollock, 7 Punkte',
+  atwater_energy: 'Atwater-Faktoren (4 · 4 · 9 kcal/g)',
 };
 
 /**
@@ -1091,7 +1100,7 @@ export async function assessmentEvaluation(
       recorded: readiness.recorded,
       expected: readiness.expected,
       derivations: (configuration?.derivations ?? []).map(
-        (derivation) => BODY_FAT_METHOD_LABELS[derivation.method] ?? derivation.method,
+        (derivation) => DERIVATION_METHOD_LABELS[derivation.method] ?? derivation.method,
       ),
       protocolLabel: configuration?.protocol?.label ?? configuration?.protocol?.key ?? null,
       series: comparisons.map((comparison): EvaluationSeries => {
@@ -1318,70 +1327,33 @@ export async function evaluationForReport(
 }
 
 /**
- * Freezes an analysis into a document.
+ * The document a report freezes, composed from what the analysis currently says.
  *
- * ## Why the facts are copied rather than referenced
+ * Lifted out of `publishReport` so a **preview** can be built from the same
+ * lines. A coach may save a PDF before publishing, and a preview assembled a
+ * second way would eventually disagree with the document that is actually
+ * handed over — which is worth less than no preview at all.
  *
- * §2: Reports are snapshots. An athlete opening a link a week later must see
- * what the coach signed off — not what the record says today. A correction
- * entered afterwards would otherwise rewrite a document somebody has already
- * read, and a later change is meant to be a **new version**, which is what the
- * version column is for.
- *
- * ## What the document does not carry
- *
- * The assessment's question, which tests were set aside, and how full the
- * examination was. All three are the coach's working notes about their own
- * thoroughness, and the first regularly names an injury. The athlete gets the
- * results and what the coach wrote about them.
- *
- * Refuses an analysis with nothing in it: publishing an empty document would
- * produce a link that opens onto nothing.
+ * Pure: it reads nothing. The media and the curves are passed in, because
+ * fetching either belongs to a caller that has an object store and the
+ * measurement queries.
  */
-export async function publishReport(
-  db: ReportDb,
-  tenant: Pick<TenantContext, 'organizationId'>,
-  reportId: string,
-  labels: ModuleLabels,
-  /**
-   * The stills already copied into this report's own folder, per test.
-   *
-   * Passed in rather than fetched: copying bytes is the object store's business
-   * and this function is the one that must stay testable without a bucket. The
-   * caller copies first and publishes second, so a document is never frozen
-   * pointing at pictures that were never written.
-   */
-  frozenMedia: ReadonlyMap<string, readonly ReportMedia[]> = new Map(),
-  /**
-   * The curves, per included test.
-   *
-   * Passed in for the same reason the media are: drawing them needs the
-   * measurement queries, and this function must stay answerable without them.
-   */
-  withCharts: readonly { readonly moduleId: string; readonly charts: readonly ChartGroup[] }[] = [],
-): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'EMPTY' }> {
-  const media = frozenMedia;
-  const curves = new Map(withCharts.map((entry) => [entry.moduleId, entry.charts]));
-  const report = await db.report.findFirst({
-    where: scoped(tenant, { id: reportId, status: 'DRAFT' as const }),
-    select: { id: true, assessmentId: true },
-  });
-
-  if (!report?.assessmentId) return { ok: false, reason: 'NOT_FOUND' };
-
-  const evaluation = await assessmentEvaluation(db, tenant, report.assessmentId, labels);
-  if (!evaluation) return { ok: false, reason: 'NOT_FOUND' };
-
-  const included = evaluation.modules.filter((entry) => entry.included);
-  if (included.length === 0) return { ok: false, reason: 'EMPTY' };
-
-  const publishedAt = new Date();
+export function composeSnapshot(
+  evaluation: AssessmentEvaluation,
+  included: readonly EvaluationModule[],
+  options: {
+    readonly publishedAt: Date;
+    readonly media: ReadonlyMap<string, readonly ReportMedia[]>;
+    readonly curves: ReadonlyMap<string, readonly ChartGroup[]>;
+  },
+): ReportSnapshot {
+  const { publishedAt, media, curves } = options;
   const moment = (point: { value: number; capturedAt: Date }) => ({
     value: point.value,
     capturedAt: point.capturedAt.toISOString(),
   });
 
-  const content: ReportSnapshot = {
+  return {
     version: REPORT_SNAPSHOT_VERSION,
     publishedAt: publishedAt.toISOString(),
     assessment: { performedAt: evaluation.assessment.performedAt.toISOString() },
@@ -1451,6 +1423,124 @@ export async function publishReport(
     })),
     overall: evaluation.overall,
   };
+}
+
+/**
+ * The document as it stands, before anybody publishes it.
+ *
+ * ## Why this exists
+ *
+ * A coach should be able to hold the analysis in their hand — on paper, as a
+ * file — while it can still be changed. Once published it is frozen (§16), and
+ * a first look that only arrives after that is a first look that comes too
+ * late.
+ *
+ * ## Why it is not stored
+ *
+ * Nothing here writes. A draft PDF is a *rendering* of the working state, not a
+ * version of the record: two coaches printing on the same afternoon may
+ * legitimately get different pages, and the record must contain neither of
+ * them. Only publishing creates a version.
+ *
+ * ## What differs from the published document
+ *
+ * The pictures. Publishing copies the chosen stills into the report's own
+ * folder so the document keeps them; before that they are still the working
+ * files of the analysis, and that is what a draft shows. The keys differ, the
+ * pictures are the same ones — and if a still is swept before publication, the
+ * draft says so by not having it, which is the truth about that document.
+ */
+export async function draftSnapshot(
+  db: ReportDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  assessmentId: string,
+  labels: ModuleLabels,
+): Promise<ReportSnapshot | null> {
+  const evaluation = await assessmentEvaluation(db, tenant, assessmentId, labels);
+  if (!evaluation) return null;
+
+  const included = evaluation.modules.filter((entry) => entry.included);
+  if (included.length === 0) return null;
+
+  const media = new Map<string, readonly ReportMedia[]>(
+    included.map((entry) => [
+      entry.moduleId,
+      entry.images.map((image) => ({
+        id: image.id,
+        key: image.key,
+        label: image.label,
+        moduleId: entry.moduleId,
+      })),
+    ]),
+  );
+
+  return composeSnapshot(evaluation, included, {
+    publishedAt: new Date(),
+    media,
+    curves: new Map(),
+  });
+}
+
+/**
+ * Freezes an analysis into a document.
+ *
+ * ## Why the facts are copied rather than referenced
+ *
+ * §2: Reports are snapshots. An athlete opening a link a week later must see
+ * what the coach signed off — not what the record says today. A correction
+ * entered afterwards would otherwise rewrite a document somebody has already
+ * read, and a later change is meant to be a **new version**, which is what the
+ * version column is for.
+ *
+ * ## What the document does not carry
+ *
+ * The assessment's question, which tests were set aside, and how full the
+ * examination was. All three are the coach's working notes about their own
+ * thoroughness, and the first regularly names an injury. The athlete gets the
+ * results and what the coach wrote about them.
+ *
+ * Refuses an analysis with nothing in it: publishing an empty document would
+ * produce a link that opens onto nothing.
+ */
+export async function publishReport(
+  db: ReportDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  reportId: string,
+  labels: ModuleLabels,
+  /**
+   * The stills already copied into this report's own folder, per test.
+   *
+   * Passed in rather than fetched: copying bytes is the object store's business
+   * and this function is the one that must stay testable without a bucket. The
+   * caller copies first and publishes second, so a document is never frozen
+   * pointing at pictures that were never written.
+   */
+  frozenMedia: ReadonlyMap<string, readonly ReportMedia[]> = new Map(),
+  /**
+   * The curves, per included test.
+   *
+   * Passed in for the same reason the media are: drawing them needs the
+   * measurement queries, and this function must stay answerable without them.
+   */
+  withCharts: readonly { readonly moduleId: string; readonly charts: readonly ChartGroup[] }[] = [],
+): Promise<{ ok: true } | { ok: false; reason: 'NOT_FOUND' | 'EMPTY' }> {
+  const media = frozenMedia;
+  const curves = new Map(withCharts.map((entry) => [entry.moduleId, entry.charts]));
+  const report = await db.report.findFirst({
+    where: scoped(tenant, { id: reportId, status: 'DRAFT' as const }),
+    select: { id: true, assessmentId: true },
+  });
+
+  if (!report?.assessmentId) return { ok: false, reason: 'NOT_FOUND' };
+
+  const evaluation = await assessmentEvaluation(db, tenant, report.assessmentId, labels);
+  if (!evaluation) return { ok: false, reason: 'NOT_FOUND' };
+
+  const included = evaluation.modules.filter((entry) => entry.included);
+  if (included.length === 0) return { ok: false, reason: 'EMPTY' };
+
+  const publishedAt = new Date();
+  const content = composeSnapshot(evaluation, included, { publishedAt, media, curves });
 
   const { count } = await db.report.updateMany({
     where: scoped(tenant, { id: reportId, status: 'DRAFT' as const }),

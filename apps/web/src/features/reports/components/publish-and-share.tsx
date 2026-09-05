@@ -12,7 +12,7 @@ import { Badge, Button } from '@apex/ui';
 
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_FIELD, TOUCH_TARGET } from '@/components/common/touch';
 
-import { MIN_SHARE_PASSWORD_LENGTH, PASSWORD_DELAY_MINUTES } from '../schemas';
+import { MIN_SHARE_PASSWORD_LENGTH } from '../schemas';
 import {
   createShareAction,
   publishReportAction,
@@ -46,9 +46,6 @@ const DATE = new Intl.DateTimeFormat('de-DE', {
   month: '2-digit',
   year: 'numeric',
 });
-
-/** When the second message is due. The hour is what a coach checks against. */
-const TIME = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' });
 
 const STATE_LABELS: Readonly<Record<string, string>> = {
   ACTIVE: 'Aktiv',
@@ -145,17 +142,40 @@ export function PublishAndShare({
       </div>
 
       {published ? null : (
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            type="button"
-            variant="accent"
-            className={TOUCH_BUTTON}
-            disabled={pending || !hasIncludedTests}
-            title={hasIncludedTests ? undefined : 'Diese Auswertung zieht keinen Test heran.'}
-            onClick={publish}
-          >
-            {pending ? 'Wird abgeschlossen …' : 'Auswertung abschließen'}
-          </Button>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              variant="accent"
+              className={TOUCH_BUTTON}
+              disabled={pending || !hasIncludedTests}
+              title={hasIncludedTests ? undefined : 'Diese Auswertung zieht keinen Test heran.'}
+              onClick={publish}
+            >
+              {pending ? 'Wird abgeschlossen …' : 'Auswertung abschließen'}
+            </Button>
+
+            {/* Before the irreversible step, not after it. Abschließen cannot be
+                undone, so the last chance to read the document properly — on
+                paper, away from the screen it was written on — falls here. */}
+            {hasIncludedTests ? (
+              <Link
+                href={`/druck/auswertung/${assessmentId}`}
+                target="_blank"
+                className={`${FOCUS_RING} ${TOUCH_TARGET} inline-flex items-center gap-1.5 rounded border border-border px-3 text-sm hover:bg-muted`}
+              >
+                <ExternalLink aria-hidden="true" className="size-3.5" />
+                Als PDF ansehen und speichern
+              </Link>
+            ) : null}
+          </div>
+
+          {hasIncludedTests ? (
+            <p className="max-w-prose text-xs text-pretty text-muted-foreground">
+              Der Entwurf lässt sich jederzeit als PDF speichern — er ist als Entwurf gekennzeichnet
+              und ändert nichts an der Auswertung.
+            </p>
+          ) : null}
         </div>
       )}
 
@@ -245,10 +265,8 @@ export function PublishAndShare({
             ) : mailReady ? (
               <p className="max-w-prose text-xs text-pretty text-muted-foreground">
                 Geht an <span className="font-medium">{recipient}</span>, mit dem Angebot einer
-                dauerhaften Betreuung. Das Passwort legen Sie fest; es folgt{' '}
-                {PASSWORD_DELAY_MINUTES} Minuten später in einer eigenen Nachricht — ein Link und
-                sein Passwort im selben Postfach schützen nichts mehr. Gespeichert wird nur seine
-                Prüfsumme, angezeigt wird es nie wieder.
+                dauerhaften Betreuung. Das Passwort legen Sie fest; es kommt in einer zweiten
+                Nachricht. Gespeichert wird nur seine Prüfsumme, angezeigt wird es nie wieder.
               </p>
             ) : (
               <p className="text-xs text-pretty text-destructive">
@@ -262,9 +280,8 @@ export function PublishAndShare({
               <div className="flex flex-col gap-1">
                 <h3 className="text-sm font-medium">Gesendet</h3>
                 <p className="text-xs">
-                  An <span className="font-medium">{created.recipient}</span>. Das Passwort folgt um{' '}
-                  <span data-numeric>{TIME.format(new Date(created.passwordDueAt))}</span> Uhr. Der
-                  Link ist gültig bis{' '}
+                  Zwei Nachrichten an <span className="font-medium">{created.recipient}</span> — die
+                  Auswertung und das Passwort. Der Link ist gültig bis{' '}
                   <span data-numeric>{DATE.format(new Date(created.expiresAt))}</span>.
                 </p>
               </div>

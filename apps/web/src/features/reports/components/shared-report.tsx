@@ -30,8 +30,11 @@ import { ReportDocument } from './report-document';
 export function SharedReport({
   snapshot,
   token,
+  forPrint = false,
 }: {
   readonly snapshot: ReportSnapshot;
+  /** Set by the print route; see `ReportDocument`. */
+  readonly forPrint?: boolean;
   /**
    * The link this reader arrived by, where there is one.
    *
@@ -44,6 +47,7 @@ export function SharedReport({
 }) {
   return (
     <ReportDocument
+      forPrint={forPrint}
       view={documentFromSnapshot(
         snapshot,
         tendencyOf,

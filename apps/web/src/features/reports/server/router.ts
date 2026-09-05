@@ -43,6 +43,7 @@ import {
   setReportModuleInclusion,
   updateDraftText,
   evaluationForReport,
+  draftSnapshot,
   publishedSnapshot,
   setDraftStill,
 } from './service';
@@ -196,6 +197,17 @@ export const reportsRouter = createTRPCRouter({
   publishedSnapshot: withPermission('report:read')
     .input(assessmentAnalysisSchema)
     .query(({ ctx, input }) => publishedSnapshot(ctx.db, ctx.tenant, input.assessmentId)),
+
+  /**
+   * The document as it stands, for a coach who wants it on paper before
+   * publishing.
+   *
+   * `report:read`, not `report:write`: this reads and stores nothing. What it
+   * returns is never the record — only publishing writes a version (§16).
+   */
+  draftSnapshot: withPermission('report:read')
+    .input(assessmentAnalysisSchema)
+    .query(({ ctx, input }) => draftSnapshot(ctx.db, ctx.tenant, input.assessmentId, moduleLabels)),
 
   /**
    * Removes the working files of analyses nobody came back to.

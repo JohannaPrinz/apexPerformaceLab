@@ -113,9 +113,19 @@ function toneFor(row: DocumentRow) {
 export function ReportDocument({
   view,
   editing,
+  forPrint = false,
 }: {
   readonly view: DocumentView;
   readonly editing?: DocumentEditing;
+  /**
+   * Whether this rendering is going onto paper.
+   *
+   * One thing genuinely cannot be settled in a stylesheet: a collapsed
+   * `<details>` prints as a triangle nobody can open, and the rows behind it
+   * are simply absent from the file. CSS can hide the summary but not open the
+   * disclosure — so the print route says so, and the table is rendered open.
+   */
+  readonly forPrint?: boolean;
 }) {
   return (
     <article className="flex flex-col gap-8">
@@ -137,14 +147,14 @@ export function ReportDocument({
           Diese Auswertung zieht noch keinen Test heran.
         </p>
       ) : (
-        <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 xl:grid-cols-3 print:grid-cols-1">
           {view.tests.map((test) => (
             <TestTile key={test.moduleId} test={test} athlete={view.athlete} editing={editing} />
           ))}
         </div>
       )}
 
-      <FullTable tests={view.tests} />
+      <FullTable tests={view.tests} open={forPrint} />
     </article>
   );
 }
@@ -308,7 +318,7 @@ function TestTile({
 
       {test.derivations.length === 0 ? null : (
         <p className="text-[0.6875rem] text-muted-foreground">
-          Berechnet nach {test.derivations.join(', ')}.
+          Berechnet nach {test.derivations.map(methodLabel).join(', ')}.
         </p>
       )}
 
@@ -683,12 +693,39 @@ function PercentileBlock({ test }: { readonly test: DocumentTest }) {
  * this is the numbers, and it is what a screen reader gets a table structure
  * from.
  */
-function FullTable({ tests }: { readonly tests: readonly DocumentTest[] }) {
+/**
+ * The name of a computed method, repairing what an older document froze.
+ *
+ * A snapshot stores the **label**, and for a while the table that produced it
+ * did not know about the energy conversion — so documents published in that
+ * window carry the raw key `atwater_energy`, which is what an athlete then read
+ * on their analysis. A published document is frozen (§16) and must not be
+ * rewritten, so the repair belongs here, at the moment of showing: a stored
+ * value that is recognisably a method key is named; anything else is printed as
+ * it was written.
+ */
+function methodLabel(stored: string): string {
+  const known: Readonly<Record<string, string>> = {
+    jackson_pollock_3: 'Jackson & Pollock, 3 Punkte',
+    jackson_pollock_7: 'Jackson & Pollock, 7 Punkte',
+    atwater_energy: 'Atwater-Faktoren (4 · 4 · 9 kcal/g)',
+  };
+
+  return known[stored] ?? stored;
+}
+
+function FullTable({
+  tests,
+  open = false,
+}: {
+  readonly tests: readonly DocumentTest[];
+  readonly open?: boolean;
+}) {
   const rows = tests.flatMap((test) => test.rows.map((row) => ({ test, row })));
   if (rows.length === 0) return null;
 
   return (
-    <details className="rounded-md border border-border bg-card">
+    <details open={open} className="rounded-md border border-border bg-card">
       <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
         Alle Werte als Tabelle <span data-numeric>({rows.length})</span>
       </summary>
