@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { bodyFatMethodSchema } from '../athletes/body-fat';
+import { BODY_FAT_METHODS } from '../athletes/body-fat';
 import {
   EQUALS_TOLERANCE_DEGREES,
   movementAnalysisConfigSchema,
@@ -265,6 +265,22 @@ export function protocolKey(protocol: TestProtocol | null | undefined): string |
   ].join('|');
 }
 
+/**
+ * The ways a test computes a value instead of asking for one.
+ *
+ * A superset of the body-fat methods, and deliberately one flat list rather
+ * than a per-quantity union: what a configuration has to record is "which
+ * published procedure produced this number", and that question has the same
+ * shape whether the answer is a skinfold regression or an energy conversion.
+ *
+ * Adding to the end keeps every stored payload readable — a configuration
+ * written before `atwater_energy` existed simply never names it.
+ */
+export const DERIVATION_METHODS = [...BODY_FAT_METHODS, 'atwater_energy'] as const;
+
+export const derivationMethodSchema = z.enum(DERIVATION_METHODS);
+export type DerivationMethod = z.infer<typeof derivationMethodSchema>;
+
 export const moduleConfigurationSchema = z
   .object({
     /**
@@ -349,7 +365,7 @@ export const moduleConfigurationSchema = z
            * the folds it happens to hold would pick the wrong equation the moment
            * a coach adds a site.
            */
-          method: bodyFatMethodSchema,
+          method: derivationMethodSchema,
         }),
       )
       .optional(),

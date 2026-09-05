@@ -29,6 +29,7 @@
  * can check against a real screen.
  */
 export * from './athletes/age';
+export * from './athletes/bleeding';
 export * from './athletes/body-fat';
 export * from './athletes/trend-cards';
 export * from './athletes/sex';
@@ -40,6 +41,7 @@ export * from './exercises/import';
 export * from './measurement-types';
 export * from './assessments/status';
 export * from './assessments/report-draft';
+export * from './assessments/energy';
 export * from './assessments/percentile';
 export * from './assessments/report-media';
 export * from './assessments/report-snapshot';

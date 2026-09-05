@@ -1,8 +1,7 @@
 import { z } from 'zod';
 
-import type { BodyFatMethod } from '../athletes/body-fat';
 import type { SystemMeasurementTypeKey } from '../measurement-types';
-import type { ContextDimension, MeasurementRole } from './configuration';
+import type { ContextDimension, DerivationMethod, MeasurementRole } from './configuration';
 import type { ModuleKey } from './index';
 
 /**
@@ -100,7 +99,7 @@ export interface MeasurementTemplate {
    * the derived value is refused as not configured; put it in and the coach is
    * shown a field for a number the system is about to calculate.
    */
-  readonly derivations?: readonly { readonly key: string; readonly method: BodyFatMethod }[];
+  readonly derivations?: readonly { readonly key: string; readonly method: DerivationMethod }[];
   readonly recordsSide: boolean;
   readonly dimensions: readonly ContextDimension[];
   /**
@@ -306,6 +305,41 @@ export const MEASUREMENT_TEMPLATES = [
     // Declared without values so the coach names them.
     dimensions: [{ key: 'site', label: 'Messstelle' }],
   },
+  /**
+   * A day's food, as the coach and the athlete write it down.
+   *
+   * **The three macronutrients are required and the other two are not**,
+   * because the total depends on exactly those three: a day missing its fat is
+   * not a lighter day, it is a day nobody finished writing down. Fibre and
+   * fluid are recorded beside them and change no calculation — `optional` is
+   * the only role that says "this may legitimately be absent" without leaving
+   * the test reading "teilweise auswertbar" for ever.
+   *
+   * The energy figure is derived, never typed. See `derivations` and
+   * `assessments/energy.ts` for the factors and where they come from.
+   *
+   * No target, no requirement, no verdict. How much a person should eat is a
+   * professional judgement about that person, and the platform holds no basis
+   * for one.
+   */
+  {
+    key: 'nutrition_intake',
+    name: 'Ernährung',
+    moduleKey: 'nutrition',
+    measurements: [
+      { key: 'protein', role: 'required' },
+      { key: 'carbohydrates', role: 'required' },
+      { key: 'fat', role: 'required' },
+      { key: 'fibre', role: 'optional' },
+      { key: 'fluid_intake', role: 'optional' },
+      { key: 'energy_intake', role: 'optional' },
+    ],
+    derivations: [{ key: 'energy_intake', method: 'atwater_energy' }],
+    passes: 1,
+    recordsSide: false,
+    dimensions: [],
+  },
+
   // ── Standardised time trials ───────────────────────────────────────────────
   //
   // Four templates that differ in exactly one thing each, and each difference is

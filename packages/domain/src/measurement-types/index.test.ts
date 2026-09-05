@@ -24,7 +24,7 @@ describe('system measurement type catalogue', () => {
     // took, not a side effect. Fourteen at the MVP, plus `speed`, the seven
     // caliper sites, `joint_angle` for video analysis and `duration` for
     // anything measured in time.
-    expect(SYSTEM_MEASUREMENT_TYPES).toHaveLength(24);
+    expect(SYSTEM_MEASUREMENT_TYPES).toHaveLength(38);
   });
 
   /**
@@ -63,6 +63,26 @@ describe('system measurement type catalogue', () => {
       'jump_height',
       'duration',
       'running_cadence',
+      // A day's food. The three macronutrients carry the energy total; fibre
+      // and fluid are recorded beside them and enter no calculation.
+      'protein',
+      'carbohydrates',
+      'fat',
+      'fibre',
+      'fluid_intake',
+      // Computed from the three above, never typed.
+      'energy_intake',
+      // What the athlete reports about their own day. Subjective by
+      // construction — see the catalogue for why none of them carries a
+      // direction.
+      'sleep_duration',
+      'sleep_quality',
+      'hunger',
+      'digestion',
+      'stress',
+      'cycle_rating',
+      'energy_level',
+      'training_rating',
     ]);
   });
 
@@ -222,7 +242,7 @@ describe('category is a filter, not a module binding (§12)', () => {
       (MODULE_KEYS as readonly string[]).includes(category),
     );
 
-    expect(shared).toEqual(['body_composition', 'strength', 'mobility']);
+    expect(shared).toEqual(['body_composition', 'strength', 'mobility', 'nutrition']);
   });
 });
 

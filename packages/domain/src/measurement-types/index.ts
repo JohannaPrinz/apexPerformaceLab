@@ -59,6 +59,8 @@ export const MEASUREMENT_CATEGORIES = [
   'muscle_activity',
   'mobility',
   'performance',
+  'nutrition',
+  'biofeedback',
 ] as const;
 
 export const measurementCategorySchema = z.enum(MEASUREMENT_CATEGORIES);
@@ -72,6 +74,8 @@ export const MEASUREMENT_CATEGORY_LABELS: Readonly<Record<MeasurementCategory, s
   muscle_activity: 'Muscle Activity',
   mobility: 'Mobility',
   performance: 'Performance',
+  nutrition: 'Ernährung',
+  biofeedback: 'Biofeedback',
 } as const;
 
 /**
@@ -364,6 +368,154 @@ export const SYSTEM_MEASUREMENT_TYPES = [
     unit: 'Schritte/min',
     valueType: 'NUMERIC',
     category: 'performance',
+  },
+
+  // ── Nutrition ─────────────────────────────────────────────────────────────
+  //
+  // What was eaten and drunk over one day. Grams for the three macronutrients
+  // and for fibre, because that is the unit every food label and every
+  // nutrition app states them in; litres for fluid.
+  //
+  // **No reference values and no direction on any of them**, for the same
+  // reason as everywhere else in this file: how much protein a person needs
+  // depends on their body, their training and their goal, and a catalogue that
+  // shipped one number would produce "too little" markers that do not hold up.
+  // The coach reads the figures.
+  {
+    key: 'protein',
+    name: 'Eiweiß',
+    unit: 'g',
+    valueType: 'NUMERIC',
+    category: 'nutrition',
+  },
+  {
+    key: 'carbohydrates',
+    name: 'Kohlenhydrate',
+    unit: 'g',
+    valueType: 'NUMERIC',
+    category: 'nutrition',
+  },
+  {
+    key: 'fat',
+    name: 'Fette',
+    // Deliberately not `body_fat`, and deliberately not sharing a key with it.
+    // One is what a person ate, the other is what their body is made of; a
+    // chart that put the two on one axis would be a chart of two different
+    // things, which is the same rule `weight` and `external_load` follow.
+    unit: 'g',
+    valueType: 'NUMERIC',
+    category: 'nutrition',
+  },
+  {
+    key: 'fibre',
+    name: 'Ballaststoffe',
+    unit: 'g',
+    valueType: 'NUMERIC',
+    category: 'nutrition',
+  },
+  {
+    key: 'fluid_intake',
+    name: 'Trinkmenge',
+    // Litres, not millilitres: a day's drinking is read as 2,8 — writing it as
+    // 2800 puts four digits in a column that holds one-decimal figures
+    // everywhere else.
+    unit: 'L',
+    valueType: 'NUMERIC',
+    category: 'nutrition',
+  },
+  {
+    key: 'energy_intake',
+    name: 'Gesamtkalorien',
+    // Kilocalories, because that is what the coach and the athlete both speak
+    // in. Never typed — computed from protein, carbohydrate and fat; see
+    // `assessments/energy.ts`.
+    unit: 'kcal',
+    valueType: 'NUMERIC',
+    category: 'nutrition',
+  },
+
+  // ── Biofeedback ───────────────────────────────────────────────────────────
+  //
+  // What an athlete reports about their own day. Every one of these is a
+  // **self-report on a scale the person sets for themselves** — a 7 for stress
+  // means what this athlete and this coach have agreed it means, and the
+  // platform holds no definition of it. That is why there is no reference
+  // range, no direction and no verdict anywhere near them: the scale is
+  // subjective by construction, and a number the platform interpreted would be
+  // interpreting something it did not define.
+  //
+  // `1–10` as the unit, matching `rpe` — the one scale already in the
+  // catalogue, so two self-reports are written the same way.
+  //
+  // Sleep is the exception and deliberately two quantities: **how long** is
+  // hours and measurable, **how well** is a rating. Collapsing them would make
+  // "6" ambiguous between a duration and a judgement.
+  {
+    key: 'sleep_duration',
+    name: 'Schlaf',
+    unit: 'h',
+    valueType: 'NUMERIC',
+    category: 'biofeedback',
+  },
+  {
+    key: 'sleep_quality',
+    name: 'Schlafqualität',
+    unit: '1–10',
+    valueType: 'NUMERIC',
+    category: 'biofeedback',
+  },
+  {
+    key: 'hunger',
+    name: 'Hunger',
+    unit: '1–10',
+    valueType: 'NUMERIC',
+    category: 'biofeedback',
+  },
+  {
+    key: 'digestion',
+    name: 'Verdauung',
+    unit: '1–10',
+    valueType: 'NUMERIC',
+    category: 'biofeedback',
+  },
+  {
+    key: 'stress',
+    name: 'Stress',
+    unit: '1–10',
+    valueType: 'NUMERIC',
+    category: 'biofeedback',
+  },
+  {
+    key: 'cycle_rating',
+    name: 'Zyklus',
+    // `_rating`, and not `cycle`, for two reasons that both matter. The trend
+    // card that lists bleeding episodes is keyed `cycle`, and a measurement type
+    // of that key would collide with it in the same namespace. And the two are
+    // different things: the card records **when a bleeding was**, as episodes,
+    // computing no phase and no prediction; this is a daily self-report on a
+    // scale, like every other row of the biofeedback table. Neither replaces the
+    // other.
+    unit: '1–10',
+    valueType: 'NUMERIC',
+    category: 'biofeedback',
+  },
+  {
+    key: 'energy_level',
+    name: 'Energielevel',
+    unit: '1–10',
+    valueType: 'NUMERIC',
+    category: 'biofeedback',
+  },
+  {
+    key: 'training_rating',
+    name: 'Training',
+    // Not `rpe`, which it would otherwise be mistaken for. RPE is how hard one
+    // effort felt, recorded inside a test beside the load that produced it; this
+    // is how the day's training went, written down at the end of it. Sharing a
+    // key would put a diagnostic reading and a diary entry on one axis.
+    unit: '1–10',
+    valueType: 'NUMERIC',
+    category: 'biofeedback',
   },
 ] as const satisfies readonly SystemMeasurementType[];
 
