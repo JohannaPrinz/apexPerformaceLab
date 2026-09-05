@@ -50,23 +50,28 @@ export default async function AssessmentPage({
 
   // A configured test is copied into this assessment — a second run of it — or
   // into another assessment of the same athlete.
-  const [siblings, exerciseCatalogue, analysis, athlete, reports] = await Promise.all([
-    api.assessments.listForAthlete({ athleteId: assessment.athleteId }),
-    // The ordinary catalogue procedure — this workspace plus system-wide, and
-    // never another tenant's. The dialog picks from what it is given; it does
-    // not query and does not decide reachability.
-    api.exercises.list({ includeArchived: false, limit: 200, offset: 0 }),
-    // Only the counts the link needs. The analysis itself has its own screen
-    // now, and reading it here would load a page nobody is looking at.
-    api.reports.assessmentOverview({ assessmentId }),
-    // The name for the way back. An existing procedure rather than widening
-    // the assessment payload — this is presentation, not part of what an
-    // assessment is.
-    api.athletes.byId({ athleteId: assessment.athleteId }),
-    // Whether one was already published: a finished analysis must not read as
-    // an invitation to start a second one.
-    api.reports.listForAssessment({ assessmentId }),
-  ]);
+  const [siblings, exerciseCatalogue, measurementTypes, ownTemplates, analysis, athlete, reports] =
+    await Promise.all([
+      api.assessments.listForAthlete({ athleteId: assessment.athleteId }),
+      // The ordinary catalogue procedure — this workspace plus system-wide, and
+      // never another tenant's. The dialog picks from what it is given; it does
+      // not query and does not decide reachability.
+      api.exercises.list({ includeArchived: false, limit: 200, offset: 0 }),
+      // The quantity catalogue, so a chosen template can show what it records.
+      api.assessments.measurementTypes(),
+      // The configurations this workspace saved for itself.
+      api.assessments.ownTemplates(),
+      // Only the counts the link needs. The analysis itself has its own screen
+      // now, and reading it here would load a page nobody is looking at.
+      api.reports.assessmentOverview({ assessmentId }),
+      // The name for the way back. An existing procedure rather than widening
+      // the assessment payload — this is presentation, not part of what an
+      // assessment is.
+      api.athletes.byId({ athleteId: assessment.athleteId }),
+      // Whether one was already published: a finished analysis must not read as
+      // an invitation to start a second one.
+      api.reports.listForAssessment({ assessmentId }),
+    ]);
 
   const exerciseOptions = exerciseCatalogue.map((exercise) => ({
     id: exercise.id,
@@ -242,8 +247,16 @@ export default async function AssessmentPage({
               does *to* this section, so it belongs at its head rather than
               after everything it produces. */}
           {live ? (
-            <div className="flex shrink-0 items-center gap-2">
-              <CreateTestDialog assessmentId={assessment.id} exercises={exerciseOptions} />
+            /* Wrapping, not `shrink-0`: at 375 px the two German labels
+               measure 376 px side by side and pushed the whole page sideways.
+               They take a line of their own instead. */
+            <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
+              <CreateTestDialog
+                assessmentId={assessment.id}
+                exercises={exerciseOptions}
+                measurementTypes={measurementTypes}
+                ownTemplates={ownTemplates}
+              />
 
               <Button variant="outline" className={TOUCH_BUTTON} asChild>
                 <Link href={`/assessments/${assessment.id}/tests/new`}>

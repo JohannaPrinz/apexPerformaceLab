@@ -737,15 +737,32 @@ Four things sit close together and must not be confused:
 
 | Concept               | What it is                                    | Lives           |
 | --------------------- | --------------------------------------------- | --------------- |
-| **Template**          | a global professional starting point          | code registry   |
+| **Template**          | a professional starting point                 | see below       |
 | **Assessment Module** | one concrete test, with its own configuration | a database row  |
 | **Measurement Type**  | a quantity that _may_ be recorded             | catalogue (§12) |
 | **Measurement**       | a value that _was_ recorded                   | a database row  |
 
-A template proposes a configuration. Applying it **copies** that configuration
-into the Module, and **no reference to the template is stored**.
+Templates come in two kinds, and the difference is where they live:
 
-> **Changing a global template never changes an Assessment that already exists.**
+- **System templates** stay in the **code registry** (`packages/domain`). They
+  are a global professional statement: identical in every workspace, reviewable
+  in a diff, edited by nobody.
+- **Workspace templates** are **data** (`module_templates`, scoped by
+  `organizationId`). They are what one practice happens to run — their own
+  arrangement of roles, stage counts and quantities — saved from a configuration
+  a coach adjusted. Every coach of that workspace may use, rename and delete
+  them; no other workspace ever sees them.
+
+That split is the point: what is professionally global belongs under review,
+what is local to a practice belongs to the practice. Neither is offered as the
+other — the picker names the two groups separately.
+
+A template of either kind proposes a configuration. Applying it **copies** that
+configuration into the Module, and **no reference to the template is stored**.
+
+> **Changing a template never changes an Assessment that already exists** —
+> and that holds for a workspace template as much as for a global one: renaming
+> or deleting one cannot reach a test that was created from it.
 
 That is a structural property, not a rule anyone has to remember: there is no
 path back from a Module to the template it came from. Readiness, the entry grid
@@ -1960,7 +1977,9 @@ read-only state begins only when the last collaboration ends (§21).
 
 29. If two terms describe one thing, it is one object with a status.
 
-30. A template is a starting point. Applying it copies the configuration; no
+30. A template is a starting point. System templates live in the code registry,
+    workspace templates in `module_templates` scoped by `organizationId`.
+    Applying either copies the configuration; no
     reference to the template is kept, and changing a template never changes an
     Assessment that already exists (§11).
 

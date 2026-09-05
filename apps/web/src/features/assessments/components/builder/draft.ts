@@ -1,7 +1,7 @@
 import {
   findMeasurementTemplate,
   moduleConfigurationSchema,
-  type BodyFatMethod,
+  type DerivationMethod,
   type ContextDimension,
   type MeasurementRole,
   type MeasurementTemplate,
@@ -69,7 +69,7 @@ export interface BuilderDraft {
    * reopening a caliper test does not turn its percentage back into a field the
    * coach is expected to fill in.
    */
-  readonly derivations: readonly { measurementTypeId: string; method: BodyFatMethod }[];
+  readonly derivations: readonly { measurementTypeId: string; method: DerivationMethod }[];
   readonly notes: string;
   /**
    * The conditions this test is carried out under, structured.

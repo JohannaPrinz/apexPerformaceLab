@@ -29,9 +29,18 @@ import {
   recordMovementAnalysisSchema,
   updateModuleConfigurationSchema,
   updateModuleSchema,
+  saveModuleTemplateSchema,
+  moduleTemplateIdSchema,
+  renameModuleTemplateSchema,
 } from '../schemas';
 
 import { openAnalysisTarget } from './analysis-target';
+import {
+  deleteOwnTemplate,
+  listOwnTemplates,
+  renameOwnTemplate,
+  saveOwnTemplate,
+} from './module-templates';
 import {
   addModule,
   availableMeasurementTypes,
@@ -184,6 +193,44 @@ export const assessmentsRouter = createTRPCRouter({
   measurementTypes: withPermission('assessment:read').query(({ ctx }) =>
     availableMeasurementTypes(ctx.db, ctx.tenant.organizationId),
   ),
+
+  /**
+   * The test configurations this workspace saved.
+   *
+   * Offered beside the shipped templates and never mixed with them: one is a
+   * global professional starting point, the other is what this practice runs.
+   * A coach should be able to tell which is which at a glance.
+   */
+  ownTemplates: withPermission('assessment:read').query(({ ctx }) =>
+    listOwnTemplates(ctx.db, ctx.tenant),
+  ),
+
+  saveTemplate: withCoachPermission('assessment:write')
+    .input(saveModuleTemplateSchema)
+    .mutation(async ({ ctx, input }) => {
+      const saved = await saveOwnTemplate(ctx.db, ctx.tenant, ctx.coach.id, input);
+      if (!saved) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Vorlage unvollständig.' });
+
+      return saved;
+    }),
+
+  renameTemplate: withCoachPermission('assessment:write')
+    .input(renameModuleTemplateSchema)
+    .mutation(async ({ ctx, input }) => {
+      const done = await renameOwnTemplate(ctx.db, ctx.tenant, input.templateId, input.name);
+      if (!done) throw notFound('Vorlage');
+
+      return { ok: true };
+    }),
+
+  deleteTemplate: withCoachPermission('assessment:write')
+    .input(moduleTemplateIdSchema)
+    .mutation(async ({ ctx, input }) => {
+      const done = await deleteOwnTemplate(ctx.db, ctx.tenant, input.templateId);
+      if (!done) throw notFound('Vorlage');
+
+      return { ok: true };
+    }),
 
   /**
    * The test a standalone video analysis is filed under, opened if absent.

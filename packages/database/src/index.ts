@@ -48,6 +48,7 @@ export type {
   GoalModel as Goal,
   AssessmentModel as Assessment,
   AssessmentModuleModel as AssessmentModule,
+  ModuleTemplateModel as ModuleTemplate,
   MeasurementTypeModel as MeasurementType,
   ExerciseModel as Exercise,
   ExerciseVariantModel as ExerciseVariant,

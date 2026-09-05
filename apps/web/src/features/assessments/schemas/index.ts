@@ -239,6 +239,27 @@ export type AssessmentView = (typeof ASSESSMENT_VIEWS)[number];
  * finds the athlete's video-analysis test or opens one (§8). `purpose` is the coach's own words and becomes the Assessment's
  * question when one has to be created; it is never generated.
  */
+/**
+ * Saving a configuration under a name to reuse.
+ *
+ * The name is the coach's own and is never generated: a template nobody can
+ * tell from the next one is a template nobody uses. Everything else about it is
+ * the configuration the builder already validates.
+ */
+export const saveModuleTemplateSchema = z.object({
+  name: z.string().trim().min(1, 'Bitte einen Namen für die Vorlage eingeben.').max(120),
+  moduleKey: moduleKeySchema,
+  configuration: moduleConfigurationSchema,
+});
+
+export const moduleTemplateIdSchema = z.object({
+  templateId: z.string().min(1).max(64),
+});
+
+export const renameModuleTemplateSchema = moduleTemplateIdSchema.extend({
+  name: z.string().trim().min(1, 'Bitte einen Namen für die Vorlage eingeben.').max(120),
+});
+
 export const analysisTargetSchema = z.object({
   athleteId: z.string().min(1),
   purpose: z.string().trim().min(1, 'Wofür wurde diese Analyse gemacht?').max(500),

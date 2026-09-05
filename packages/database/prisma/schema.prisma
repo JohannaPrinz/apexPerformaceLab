@@ -175,6 +175,7 @@ model Organization {
   /// (§6). Affiliation runs through `Membership` above.
   athletes         Athlete[]
   athleteAccesses  AthleteAccess[]
+  moduleTemplates  ModuleTemplate[]
   cases            PerformanceCase[]
   goals            Goal[]
   assessments      Assessment[]
@@ -289,22 +290,23 @@ model Coach {
   userId String? @unique
   user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  credentials          CoachCredential[]
-  athletesCreated      Athlete[]
-  athleteAccess        AthleteAccess[]    @relation("AthleteAccessGrantee")
-  athleteAccessGranted AthleteAccess[]    @relation("AthleteAccessGrantor")
-  modulesCreated       AssessmentModule[]
-  exercisesCreated     Exercise[]
-  cases                PerformanceCase[]
-  appointments         Appointment[]
-  insights             Insight[]
-  reports              Report[]
-  notes                Note[]
-  videoAnnotations     VideoAnnotation[]
-  uploadedAssets       Asset[]
-  sharesCreated        Share[]
-  bleedingRecorded     BleedingEpisode[]
-  trackingRecorded     TrackingEntry[]
+  credentials            CoachCredential[]
+  athletesCreated        Athlete[]
+  athleteAccess          AthleteAccess[]    @relation("AthleteAccessGrantee")
+  athleteAccessGranted   AthleteAccess[]    @relation("AthleteAccessGrantor")
+  modulesCreated         AssessmentModule[]
+  moduleTemplatesCreated ModuleTemplate[]
+  exercisesCreated       Exercise[]
+  cases                  PerformanceCase[]
+  appointments           Appointment[]
+  insights               Insight[]
+  reports                Report[]
+  notes                  Note[]
+  videoAnnotations       VideoAnnotation[]
+  uploadedAssets         Asset[]
+  sharesCreated          Share[]
+  bleedingRecorded       BleedingEpisode[]
+  trackingRecorded       TrackingEntry[]
 
   @@map("coaches")
 }
@@ -501,9 +503,10 @@ model BleedingEpisode {
   /// is the one people actually track, and demanding an end would make the
   /// common entry the awkward one.
   endedOn   DateTime? @db.Date
+
   note      String?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -975,6 +978,57 @@ model ExerciseVariant {
   @@index([variantId])
   @@index([organizationId])
   @@map("exercise_variants")
+}
+
+/// A test configuration a Workspace saved to reuse.
+///
+/// ## Why this exists beside the code registry
+///
+/// The shipped templates are a *global professional* starting point and stay in
+/// `packages/domain` — reviewable in a diff, identical everywhere, and never
+/// edited by anyone. This is the other kind: what one practice happens to run,
+/// with the roles and stage counts they settled on. That is knowledge belonging
+/// to a workspace, not to the platform, and it cannot live in code.
+///
+/// ## Why applying one still copies
+///
+/// Nothing here changes §30: applying a template copies its configuration into
+/// the Module and **no reference is stored**. Renaming or deleting one of these
+/// therefore cannot reach a test that was already created from it — the same
+/// structural property the shipped templates have, for the same reason.
+model ModuleTemplate {
+  id String @id @default(cuid(2))
+
+  /// What the coach called it. Their words; nothing derives it.
+  name String
+
+  /// Which kind of test it configures (§11). Constrains where it is offered.
+  moduleKey String
+
+  /// The configuration itself, in the shape `moduleConfigurationSchema` reads.
+  ///
+  /// Stored whole rather than spread across columns for the same reason
+  /// `AssessmentModule.payload` is: it is one versioned document that the
+  /// domain owns, and splitting it here would put its schema in two places.
+  payload Json
+
+  /// The registry version the configuration was captured under (§11).
+  moduleVersion Int @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Who saved it. Recorded for the same reason every other authorship is:
+  /// once several coaches share a workspace it is not reconstructible later.
+  createdByCoachId String
+  createdByCoach   Coach  @relation(fields: [createdByCoachId], references: [id], onDelete: Restrict)
+
+  /// The picker offers the templates of one workspace for one kind of test.
+  @@index([organizationId, moduleKey])
+  @@map("module_templates")
 }
 
 model Measurement {

@@ -300,3 +300,69 @@ export async function setAssessmentStatusAction(
     return { message: toMessage(error) };
   }
 }
+
+/**
+ * Saves the configuration on screen as a template of this workspace.
+ *
+ * Only from an adjusted one: saving a shipped template unchanged would put a
+ * second copy of it in the picker under a different name, and the coach would
+ * have two entries meaning the same thing.
+ */
+export async function saveModuleTemplateAction(
+  assessmentId: string,
+  name: string,
+  moduleKey: string,
+  configuration: unknown,
+): Promise<{ message?: string; templateId?: string }> {
+  const key = moduleKeySchema.safeParse(moduleKey);
+  if (!key.success) return { message: 'Unbekannter Testtyp.' };
+
+  const parsed = moduleConfigurationSchema.safeParse(configuration);
+  if (!parsed.success) {
+    return { message: parsed.error.issues[0]?.message ?? 'Diese Vorlage ist unvollständig.' };
+  }
+
+  try {
+    const saved = await api.assessments.saveTemplate({
+      name,
+      moduleKey: key.data,
+      configuration: parsed.data,
+    });
+    revalidatePath(`/assessments/${assessmentId}`);
+
+    return { templateId: saved.id };
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
+/** Renames one. The tests made from it are untouched — they carry their own copy. */
+export async function renameModuleTemplateAction(
+  assessmentId: string,
+  templateId: string,
+  name: string,
+): Promise<{ message?: string }> {
+  try {
+    await api.assessments.renameTemplate({ templateId, name });
+    revalidatePath(`/assessments/${assessmentId}`);
+
+    return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
+/** Deletes one for good. Nothing points at it; see `deleteOwnTemplate`. */
+export async function deleteModuleTemplateAction(
+  assessmentId: string,
+  templateId: string,
+): Promise<{ message?: string }> {
+  try {
+    await api.assessments.deleteTemplate({ templateId });
+    revalidatePath(`/assessments/${assessmentId}`);
+
+    return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
