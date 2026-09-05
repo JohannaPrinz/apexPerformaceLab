@@ -37,10 +37,40 @@ export interface CreateContextOptions {
 export async function createTRPCContext({ headers }: CreateContextOptions) {
   const session = await auth.api.getSession({ headers });
 
+  /**
+   * Answers that cannot change while one request is being served.
+   *
+   * A page renders by calling several procedures, and every one of them used to
+   * re-resolve the caller's membership and coach profile — the same two rows,
+   * eight times over, before any of the actual data was read. A profile render
+   * was measured at 13 membership lookups and 6 coach lookups out of 61 queries
+   * in total.
+   *
+   * Kept on the context rather than in React's `cache()` because a procedure
+   * also runs from a route handler and a server action, where that cache does
+   * not apply. The context itself is already created once per request, so this
+   * map has exactly the lifetime the memo needs — and nothing outside a request
+   * can see it.
+   *
+   * **Only for reads whose answer is fixed for the request**: who the caller is
+   * and what they may do. Never for the data a procedure is about, which a
+   * mutation earlier in the same request may well have changed.
+   */
+  const once = new Map<string, Promise<unknown>>();
+
   return {
     db,
     headers,
     session,
+    perRequest<T>(key: string, read: () => Promise<T>): Promise<T> {
+      const known = once.get(key);
+      if (known !== undefined) return known as Promise<T>;
+
+      const started = read();
+      once.set(key, started);
+
+      return started;
+    },
   };
 }
 
@@ -123,12 +153,16 @@ export const organizationProcedure = protectedProcedure.use(async ({ ctx, next }
     });
   }
 
-  const membership = await ctx.db.membership.findUnique({
-    where: {
-      userId_organizationId: { userId: ctx.session.user.id, organizationId },
-    },
-    select: { role: true },
-  });
+  const membership = await ctx.perRequest(
+    `membership:${ctx.session.user.id}:${organizationId}`,
+    () =>
+      ctx.db.membership.findUnique({
+        where: {
+          userId_organizationId: { userId: ctx.session.user.id, organizationId },
+        },
+        select: { role: true },
+      }),
+  );
 
   if (!membership) {
     throw new TRPCError({
@@ -160,10 +194,12 @@ export const organizationProcedure = protectedProcedure.use(async ({ ctx, next }
  * rather than at the top of every authoring mutation.
  */
 export const coachProcedure = organizationProcedure.use(async ({ ctx, next }) => {
-  const coach = await ctx.db.coach.findUnique({
-    where: { userId: ctx.session.user.id },
-    select: { id: true },
-  });
+  const coach = await ctx.perRequest(`coach:${ctx.session.user.id}`, () =>
+    ctx.db.coach.findUnique({
+      where: { userId: ctx.session.user.id },
+      select: { id: true },
+    }),
+  );
 
   if (!coach) {
     throw new TRPCError({

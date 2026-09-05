@@ -11,7 +11,9 @@ import { FOCUS_RING, TOUCH_BUTTON, TOUCH_TARGET } from '@/components/common/touc
 import { AthleteSettingsMenu } from '@/features/athletes/components/athlete-settings-menu';
 import { TrendCards } from '@/features/athletes/components/trend-cards';
 import { ATHLETE_SEX_LABELS_DE } from '@/features/athletes/labels';
+import { MONTH_PARAM, parseMonth, startOfMonth } from '@/features/athletes/month';
 import { parseTrendCards, TREND_CARD_PARAM } from '@/features/athletes/trend-slots';
+import { parseWeek, startOfWeek, WEEK_PARAM } from '@/features/athletes/week';
 import { CaseDialog, CaseSection, NoCases, type CaseAssessment } from '@/features/cases';
 import { api } from '@/trpc/server';
 
@@ -54,6 +56,10 @@ export default async function AthletePage({
     assessments?: string;
     /** Which trends are on screen — see `trend-slots.ts`. Repeated. */
     card?: string | string[];
+    /** Which week the nutrition table shows, as `2026-08-31`. See `week.ts`. */
+    woche?: string;
+    /** Which month the cycle calendar shows, as `2026-03-01`. See `month.ts`. */
+    monat?: string;
   }>;
 }) {
   const { athleteId } = await params;
@@ -97,19 +103,67 @@ export default async function AthletePage({
   // is stored on the athlete.
   const linked = parseTrendCards(query[TREND_CARD_PARAM]);
 
-  const [cases, assessments, trends, coaches, shares] = await Promise.all([
+  /**
+   * Which cards are on screen, decided before anything is fetched for them.
+   *
+   * The address bar wins where it says something — that is how one particular
+   * view is linked. Otherwise the profile opens with what the coach chose,
+   * which came along on the athlete row above.
+   *
+   * Knowing it here is what lets the page ask for everything at once. It used
+   * to load in four waves — the profile, then the trends, then the tables that
+   * depended on what the trends came back with, then the shares — and each wave
+   * waited out the whole depth of the one before it. Against a database 42 ms
+   * away that is not a rounding error: it was most of the two seconds a profile
+   * took to appear.
+   */
+  const cards =
+    linked.length > 0
+      ? linked
+      : athlete.trendCards.map((key) => ({ key, exerciseIds: [] as readonly string[] }));
+
+  const onScreen = new Set(cards.map((card) => card.key));
+  const week = parseWeek(query[WEEK_PARAM]) ?? startOfWeek(new Date());
+  const month = parseMonth(query[MONTH_PARAM]) ?? startOfMonth(new Date());
+
+  const [
+    cases,
+    assessments,
+    trends,
+    coaches,
+    shares,
+    sharedAssessments,
+    nutrition,
+    biofeedback,
+    cycle,
+  ] = await Promise.all([
     // The status filter exists in the schema already; only the interface was
     // missing. `OPEN` alone is the working view.
     api.cases.listForAthlete({ athleteId, ...(showAll ? {} : { status: 'OPEN' as const }) }),
     api.assessments.listForAthlete({ athleteId, includeArchived: showArchived }),
     // Options and charts in one read, so a slot can never offer a quantity the
-    // charts cannot fill.
+    // charts cannot fill. The slots are passed rather than resolved again:
+    // they are the same list the tables below were chosen by, and deriving
+    // them twice is how the two could drift apart.
     api.athletes.trends({
       athleteId,
-      slots: linked.map((card) => ({ key: card.key, exerciseIds: [...card.exerciseIds] })),
+      slots: cards.map((card) => ({ key: card.key, exerciseIds: [...card.exerciseIds] })),
     }),
     api.athletes.shareableCoaches(),
     api.athletes.shares({ athleteId }),
+    // Which assessments an athlete can currently open through a link. One
+    // query for the whole page — "who can see this" is a question about the
+    // roster.
+    api.reports.sharedAssessments({ athleteId }),
+    onScreen.has('nutrition')
+      ? api.athletes.nutritionWeek({ athleteId, weekStart: week })
+      : Promise.resolve(null),
+    onScreen.has('biofeedback')
+      ? api.athletes.biofeedbackWeek({ athleteId, weekStart: week })
+      : Promise.resolve(null),
+    onScreen.has('cycle')
+      ? api.cycle.month({ athleteId, month: month.toISOString().slice(0, 10) })
+      : Promise.resolve(null),
   ]);
 
   /**
@@ -119,9 +173,7 @@ export default async function AthletePage({
    * chain `Athlete → Case → Assessment` (§3) becomes the shape of the page
    * rather than something a coach has to infer from two parallel lists.
    */
-  // Which assessments an athlete can currently open through a link. One query
-  // for the whole page — "who can see this" is a question about the roster.
-  const sharedIds = new Set(await api.reports.sharedAssessments({ athleteId }));
+  const sharedIds = new Set(sharedAssessments);
 
   const byCase = new Map<string, CaseAssessment[]>();
   for (const assessment of assessments) {
@@ -208,15 +260,20 @@ export default async function AthletePage({
         ) : null}
       </div>
 
-      {/* Collapsible, and open to begin with: the master data is what a coach
-          checks first on arriving, and what they fold away once they are
-          working. `<details>` rather than state, so the browser keeps it. */}
+      {/* Collapsible, and **closed** to begin with. It was open, on the
+          reasoning that the master data is what a coach checks first — which
+          holds on the first visit and stops holding on every visit after it.
+          What a coach comes back for is the tracking and the assessments, and
+          nine facts that rarely change were pushing both below the fold. The
+          two lines that matter on arrival — the name, the age — are in the
+          header above and stay visible. `<details>` rather than state, so the
+          browser keeps whichever way the coach leaves it. */}
       <section aria-labelledby="master-data" className="flex flex-col gap-4">
         {/* `group` on the details, so the chevron can follow its open state.
             The marker is removed and replaced by an icon that turns: a browser
             run found the block looked like a plain heading, and a control
             nobody can see is a control nobody uses. */}
-        <details open className="group">
+        <details className="group">
           <summary
             className={`${TOUCH_TARGET} ${FOCUS_RING} flex w-fit cursor-pointer list-none items-center gap-2 rounded [&::-webkit-details-marker]:hidden`}
           >
@@ -286,6 +343,9 @@ export default async function AthletePage({
         options={trends.options}
         charts={trends.charts}
         cards={trends.slots.map((slot) => ({ key: slot.key, exerciseIds: slot.exerciseIds }))}
+        nutrition={nutrition}
+        biofeedback={biofeedback}
+        cycle={cycle}
       />
 
       {/*

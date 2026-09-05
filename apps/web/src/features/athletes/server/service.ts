@@ -7,6 +7,7 @@ import 'server-only';
 // module untestable without a database.
 import type { PrismaClientInstance } from '@apex/database';
 import { scoped, withTenant } from '@apex/database/tenant';
+import { readTrendCards } from '@apex/domain';
 import type { AthleteSex } from '@apex/domain';
 import type { Page, TenantContext } from '@apex/types';
 
@@ -51,6 +52,14 @@ const athleteSelect = {
   createdAt: true,
   userId: true,
   createdByCoachId: true,
+  /**
+   * Which cards this profile opens with.
+   *
+   * Carried by the profile read because it is on the same row and the page
+   * needs it to know *what else to load* — reading it separately made the
+   * tables wait for a whole round of queries that had already fetched it.
+   */
+  trendCards: true,
 } as const;
 
 export interface AthleteRecord {
@@ -69,6 +78,16 @@ export interface AthleteRecord {
   createdAt: Date;
   userId: string | null;
   createdByCoachId: string;
+  /**
+   * The trend cards this profile opens with, by catalogue key.
+   *
+   * Part of the profile read because it is on the same row and because the page
+   * needs it to know **what else to load** — the tables and the calendar are
+   * only fetched for cards that are on screen. Reading it a round later made
+   * every one of them wait for a wave of queries that had already had it in
+   * hand.
+   */
+  trendCards: readonly string[];
 }
 
 /**
@@ -92,6 +111,8 @@ const toRecord = (row: Record<string, unknown>): AthleteRecord =>
     ...row,
     heightCm: toNumber(row['heightCm']),
     weightKg: toNumber(row['weightKg']),
+    // An unreadable payload is no selection, never a guess — see the domain.
+    trendCards: readTrendCards(row['trendCards']),
   }) as AthleteRecord;
 
 /**
