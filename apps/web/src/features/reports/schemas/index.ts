@@ -108,17 +108,6 @@ export const publishReportSchema = reportIdSchema;
  */
 export const MIN_SHARE_PASSWORD_LENGTH = 12;
 
-/**
- * How long the password waits behind the link.
- *
- * Long enough that the two messages do not land in the mailbox together — which
- * is the whole reason there are two — and short enough that nobody sits waiting
- * on it. It lives here rather than beside the action because a `'use server'`
- * module may export nothing but functions, and the screen has to state the
- * figure it promises.
- */
-export const PASSWORD_DELAY_MINUTES = 15;
-
 export const createShareSchema = reportIdSchema.extend({
   days: shareDaysSchema,
   /** Chosen by the coach; only its hash is ever stored. */

@@ -9,8 +9,6 @@ import { env } from '@/env';
 import { sendEmail } from '@/integrations/email';
 import { api } from '@/trpc/server';
 
-import { PASSWORD_DELAY_MINUTES } from '../schemas';
-
 import { passwordMessage, shareMessage } from './share-message';
 
 /**
@@ -130,8 +128,6 @@ export interface ShareCreated extends AnalysisActionState {
     readonly expiresAt: string;
     /** Where both messages went. */
     readonly recipient: string;
-    /** When the second one is due, so the screen can say it rather than imply it. */
-    readonly passwordDueAt: string;
     /**
      * What the athlete will not receive, and why.
      *
@@ -146,12 +142,13 @@ export interface ShareCreated extends AnalysisActionState {
 /**
  * Grants access and sends it to the athlete.
  *
- * ## Why two messages, a quarter of an hour apart
+ * ## Why two messages
  *
  * A link and the password that opens it in one mailbox is one interception away
- * from being no protection at all. So the link goes now and the password
- * follows, held by the provider — long enough that they do not land together,
- * short enough that nobody waits on it.
+ * from being no protection at all, so they are two messages. They currently go
+ * out together: this sends through a mailbox over SMTP, which hands a message
+ * over for immediate delivery and cannot hold one back. Spacing them would need
+ * the second message kept somewhere and a job to release it.
  *
  * ## Why a failed message does not undo the link
  *
@@ -211,23 +208,25 @@ export async function createShareAction(
       password,
     });
 
-    const passwordDueAt = new Date(Date.now() + PASSWORD_DELAY_MINUTES * 60_000);
     const recipient = share.recipient ?? '';
 
-    const [sentLink, sentPassword] = await Promise.all([
-      sendEmail({
-        to: recipient,
-        subject: message.subject,
-        text: message.text,
-        html: message.html,
-      }),
-      sendEmail({
-        to: recipient,
-        subject: secret.subject,
-        text: secret.text,
-        sendAt: passwordDueAt,
-      }),
-    ]);
+    /**
+     * The link first, then the password — one after the other rather than at
+     * once. A mailbox expects one conversation at a time, and the order means
+     * the message carrying the link is the one that gets through when a send
+     * limit is reached. A password with no link behind it helps nobody.
+     */
+    const sentLink = await sendEmail({
+      to: recipient,
+      subject: message.subject,
+      text: message.text,
+      html: message.html,
+    });
+    const sentPassword = await sendEmail({
+      to: recipient,
+      subject: secret.subject,
+      text: secret.text,
+    });
 
     return {
       status: 'idle',
@@ -235,7 +234,6 @@ export async function createShareAction(
         url,
         expiresAt: share.expiresAt.toISOString(),
         recipient,
-        passwordDueAt: passwordDueAt.toISOString(),
         ...(sentLink.ok && sentPassword.ok
           ? {}
           : {
