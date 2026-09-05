@@ -4,10 +4,12 @@ import type { PrismaClientInstance } from '@apex/database';
 import { scoped, withTenant } from '@apex/database/tenant';
 import {
   calculateBodyFat,
+  calculateEnergyIntake,
+  ENERGY_NUTRIENT_KEYS,
   readModuleConfiguration,
   SKINFOLD_SITE_KEYS,
-  type BodyFatOutcome,
-  type BodyFatMethod,
+  type DerivationMethod,
+  type EnergyNutrientKey,
   type SkinfoldSiteKey,
 } from '@apex/domain';
 import type { TenantContext } from '@apex/types';
@@ -38,6 +40,17 @@ import type { TenantContext } from '@apex/types';
  * so the screen can say what is missing instead of showing a silent absence.
  * Guessing a sex, an age, or a missing fold would put a number in a health
  * record that no method produced.
+ *
+ * ## Why one mechanism and not one per quantity
+ *
+ * A body-fat percentage and a day's energy total are computed from different
+ * inputs by different published procedures, and they are the *same kind of
+ * thing*: a value this test produces rather than asks for, written as a
+ * `DERIVED` measurement, superseded when its inputs change, refused with a
+ * reason when the inputs are incomplete. Only the equation differs, so only the
+ * equation branches — everything around it is shared, which is what keeps a
+ * second derived quantity from acquiring a second set of rules about when a
+ * value may be written.
  */
 
 type DerivationDb = Pick<
@@ -45,11 +58,30 @@ type DerivationDb = Pick<
   'measurement' | 'assessmentModule' | 'measurementType' | '$transaction'
 >;
 
+/**
+ * What one equation produced, in terms every derived quantity shares.
+ *
+ * `inputs` is the line a coach cannot reconstruct from the screen — the fold
+ * sum and the age for a skinfold method, the three macronutrients for an energy
+ * total. Stating it makes the number checkable instead of merely present, which
+ * is the whole reason the note beside the stored measurement exists.
+ */
+export type DerivedOutcome =
+  | {
+      readonly ok: true;
+      readonly value: number;
+      readonly inputs: string;
+    }
+  | {
+      readonly ok: false;
+      readonly refusal: { readonly reason: string; readonly missing?: readonly string[] };
+    };
+
 export interface DerivedValueState {
   readonly measurementTypeId: string;
-  readonly method: BodyFatMethod;
+  readonly method: DerivationMethod;
   /** The outcome as of now — the value, or the reason there is none. */
-  readonly outcome: BodyFatOutcome;
+  readonly outcome: DerivedOutcome;
   /** The standing derived measurement, where one has been written. */
   readonly measurementId: string | null;
   /**
@@ -60,12 +92,13 @@ export interface DerivedValueState {
    * of birth is still in the record, and a screen showing only "cannot
    * calculate" would make it look as though nothing had ever been measured.
    */
-  readonly storedPercent: number | null;
-  /** The day the folds were taken, and so the day the age was read on. */
+  readonly storedValue: number | null;
+  /** The day the inputs were taken, and so the day the age was read on. */
   readonly measuredAt: Date | null;
 }
 
 const skinfoldKeys = new Set<string>(SKINFOLD_SITE_KEYS);
+const nutrientKeys = new Set<string>(ENERGY_NUTRIENT_KEYS);
 
 /** The standing derived row for one quantity, if this test has written one. */
 const standingFor = <TRow extends { measurementTypeId: string; source: string }>(
@@ -137,15 +170,26 @@ async function loadContext(
   });
 
   const folds: Partial<Record<SkinfoldSiteKey, number>> = {};
+  const nutrients: Partial<Record<EnergyNutrientKey, number>> = {};
   let foldsTakenAt: Date | null = null;
+  let nutrientsTakenAt: Date | null = null;
 
   for (const row of rows) {
-    if (!skinfoldKeys.has(row.measurementType.key) || row.numericValue === null) continue;
+    if (row.numericValue === null) continue;
+    const key = row.measurementType.key;
 
-    folds[row.measurementType.key as SkinfoldSiteKey] = Number(row.numericValue);
-    // The day the folds were taken, which is the day the age is read on. The
-    // last of them: a sheet finished on Tuesday was measured on Tuesday.
-    foldsTakenAt = row.capturedAt;
+    if (skinfoldKeys.has(key)) {
+      folds[key as SkinfoldSiteKey] = Number(row.numericValue);
+      // The day the folds were taken, which is the day the age is read on. The
+      // last of them: a sheet finished on Tuesday was measured on Tuesday.
+      foldsTakenAt = row.capturedAt;
+      continue;
+    }
+
+    if (nutrientKeys.has(key)) {
+      nutrients[key as EnergyNutrientKey] = Number(row.numericValue);
+      nutrientsTakenAt = row.capturedAt;
+    }
   }
 
   return {
@@ -153,7 +197,57 @@ async function loadContext(
     derivations,
     folds,
     foldsTakenAt,
+    nutrients,
+    nutrientsTakenAt,
     standing: rows,
+  };
+}
+
+/**
+ * One derivation, evaluated against what this test currently holds.
+ *
+ * The branch is the only place a method's identity matters. Everything the
+ * caller does with the answer — writing it, superseding an older one, telling
+ * the screen why there is none — is the same whichever branch produced it.
+ */
+function evaluate(
+  method: DerivationMethod,
+  context: NonNullable<Awaited<ReturnType<typeof loadContext>>>,
+): { readonly outcome: DerivedOutcome; readonly measuredAt: Date | null } {
+  if (method === 'atwater_energy') {
+    const outcome = calculateEnergyIntake(context.nutrients);
+
+    return {
+      outcome: outcome.ok
+        ? {
+            ok: true,
+            value: outcome.value.energyKcal,
+            inputs: energyInputs(context.nutrients),
+          }
+        : { ok: false, refusal: outcome.refusal },
+      measuredAt: context.nutrientsTakenAt,
+    };
+  }
+
+  const outcome = calculateBodyFat({
+    method,
+    sex: context.athlete.sex,
+    dateOfBirth: context.athlete.dateOfBirth,
+    // No folds yet means no measurement day either; the refusal is then the
+    // missing folds, which is the more useful thing to say.
+    measuredAt: context.foldsTakenAt ?? new Date(),
+    folds: context.folds,
+  });
+
+  return {
+    outcome: outcome.ok
+      ? {
+          ok: true,
+          value: outcome.value.bodyFatPercent,
+          inputs: bodyFatInputs(outcome.value.method, outcome.value.sum, outcome.value.age),
+        }
+      : { ok: false, refusal: outcome.refusal },
+    measuredAt: context.foldsTakenAt,
   };
 }
 
@@ -172,24 +266,20 @@ export async function derivedValues(
   const context = await loadContext(db, tenant, moduleId);
   if (context === null) return [];
 
-  return context.derivations.map((derivation) => ({
-    measurementTypeId: derivation.measurementTypeId,
-    method: derivation.method,
-    outcome: calculateBodyFat({
+  return context.derivations.map((derivation) => {
+    const { outcome, measuredAt } = evaluate(derivation.method, context);
+
+    return {
+      measurementTypeId: derivation.measurementTypeId,
       method: derivation.method,
-      sex: context.athlete.sex,
-      dateOfBirth: context.athlete.dateOfBirth,
-      // No folds yet means no measurement day either; the refusal is then the
-      // missing folds, which is the more useful thing to say.
-      measuredAt: context.foldsTakenAt ?? new Date(),
-      folds: context.folds,
-    }),
-    measurementId: standingFor(context.standing, derivation.measurementTypeId)?.id ?? null,
-    storedPercent: numberOrNull(
-      standingFor(context.standing, derivation.measurementTypeId)?.numericValue,
-    ),
-    measuredAt: context.foldsTakenAt,
-  }));
+      outcome,
+      measurementId: standingFor(context.standing, derivation.measurementTypeId)?.id ?? null,
+      storedValue: numberOrNull(
+        standingFor(context.standing, derivation.measurementTypeId)?.numericValue,
+      ),
+      measuredAt,
+    };
+  });
 }
 
 /**
@@ -215,7 +305,7 @@ export async function refreshDerivedMeasurements(
     // screen can say the value can no longer be recomputed.
     if (!state.outcome.ok || state.measuredAt === null) continue;
 
-    const value = state.outcome.value;
+    const { value, inputs } = state.outcome;
     const measuredAt = state.measuredAt;
 
     const standing =
@@ -228,7 +318,7 @@ export async function refreshDerivedMeasurements(
 
     // Unchanged: nothing to write, and writing anyway would fill the record
     // with a chain of identical percentages every time a stage is saved.
-    if (standing !== null && Number(standing.numericValue) === value.bodyFatPercent) continue;
+    if (standing !== null && Number(standing.numericValue) === value) continue;
 
     await db.$transaction(async (tx) => {
       const created = await tx.measurement.create({
@@ -239,8 +329,8 @@ export async function refreshDerivedMeasurements(
           passIndex: null,
           capturedAt: measuredAt,
           source: 'DERIVED',
-          numericValue: value.bodyFatPercent,
-          note: derivationNote(value.method, value.sum, value.age),
+          numericValue: value,
+          note: `Berechnet · ${inputs}`,
         }),
         select: { id: true },
       });
@@ -263,9 +353,29 @@ export async function refreshDerivedMeasurements(
  * what the equation actually consumed. Stating them makes the number checkable
  * instead of merely present.
  */
-function derivationNote(method: BodyFatMethod, sum: number, age: number): string {
+function bodyFatInputs(method: DerivationMethod, sum: number, age: number): string {
   const name =
     method === 'jackson_pollock_3' ? 'Jackson & Pollock, 3 Punkte' : 'Jackson & Pollock, 7 Punkte';
 
-  return `Berechnet · ${name} · Faltensumme ${String(sum)} mm · Alter ${String(age)}`;
+  return `${name} · Faltensumme ${String(sum)} mm · Alter ${String(age)}`;
+}
+
+/**
+ * The same, for an energy total.
+ *
+ * The three gram figures are on the screen, so what a coach cannot check is
+ * which of them the equation used and with which factor. Naming the factors is
+ * the point: it is what turns 2520 kcal from an assertion into arithmetic
+ * somebody can redo.
+ */
+function energyInputs(nutrients: Readonly<Partial<Record<EnergyNutrientKey, number>>>): string {
+  const gram = (value: number | undefined): string =>
+    value === undefined ? '—' : new Intl.NumberFormat('de-DE').format(value);
+
+  return (
+    'Atwater · ' +
+    `Eiweiß ${gram(nutrients.protein)} g × 4 · ` +
+    `Kohlenhydrate ${gram(nutrients.carbohydrates)} g × 4 · ` +
+    `Fette ${gram(nutrients.fat)} g × 9`
+  );
 }

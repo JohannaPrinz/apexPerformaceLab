@@ -220,11 +220,10 @@ describe('the values the test computed', () => {
   const computed = (over: Record<string, unknown> = {}) => ({
     measurementTypeId: 'mt_body_fat',
     method: 'jackson_pollock_3',
-    percent: 17.3,
-    sum: 52,
-    age: 36,
+    value: 17.3,
+    inputs: 'Jackson & Pollock, 3 Punkte · Faltensumme 52 mm · Alter 36',
     refusal: null,
-    storedPercent: 17.3,
+    storedValue: 17.3,
     measuredAt: new Date('2026-01-01T09:00:00Z'),
     ...over,
   });
@@ -249,15 +248,13 @@ describe('the values the test computed', () => {
     renderOverview({ types: derivedTypes, derived: [computed()] });
 
     expect(within(section()).getByText(/Faltensumme 52 mm/)).toBeVisible();
-    expect(within(section()).getByText(/Alter 36 Jahre/)).toBeVisible();
+    expect(within(section()).getByText(/Alter 36/)).toBeVisible();
   });
 
   it('says a missing sex is the reason, not a missing fold', () => {
     renderOverview({
       types: derivedTypes,
-      derived: [
-        computed({ percent: null, sum: null, age: null, refusal: { reason: 'SEX_NOT_SPECIFIED' } }),
-      ],
+      derived: [computed({ value: null, inputs: null, refusal: { reason: 'SEX_NOT_SPECIFIED' } })],
     });
 
     expect(within(section()).getByText(/kein Geschlecht hinterlegt/)).toBeVisible();
@@ -266,7 +263,7 @@ describe('the values the test computed', () => {
   it('says a missing date of birth is the reason', () => {
     renderOverview({
       types: derivedTypes,
-      derived: [computed({ percent: null, refusal: { reason: 'DATE_OF_BIRTH_MISSING' } })],
+      derived: [computed({ value: null, refusal: { reason: 'DATE_OF_BIRTH_MISSING' } })],
     });
 
     expect(within(section()).getByText(/kein Geburtsdatum hinterlegt/)).toBeVisible();
@@ -277,7 +274,7 @@ describe('the values the test computed', () => {
       types: derivedTypes,
       derived: [
         computed({
-          percent: null,
+          value: null,
           refusal: { reason: 'SITES_MISSING', missing: ['skinfold_abdomen', 'skinfold_thigh'] },
         }),
       ],
@@ -312,10 +309,9 @@ describe('the values the test computed', () => {
       types: derivedTypes,
       derived: [
         computed({
-          percent: null,
-          sum: null,
-          age: null,
-          storedPercent: 18.6,
+          value: null,
+          inputs: null,
+          storedValue: 18.6,
           refusal: { reason: 'SEX_NOT_SPECIFIED' },
         }),
       ],
@@ -331,8 +327,8 @@ describe('the values the test computed', () => {
       types: derivedTypes,
       derived: [
         computed({
-          percent: null,
-          storedPercent: null,
+          value: null,
+          storedValue: null,
           refusal: { reason: 'SITES_MISSING', missing: ['skinfold_thigh'] },
         }),
       ],

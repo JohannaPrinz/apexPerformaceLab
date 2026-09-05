@@ -12,14 +12,14 @@ import { TOUCH_BUTTON } from '@/components/common/touch';
 
 import { EditModuleDialog } from '../../components/edit-module-dialog';
 import {
-  BODY_FAT_METHOD_LABELS_DE,
-  BODY_FAT_REFUSAL_LABELS_DE,
+  DERIVATION_INPUT_LABELS_DE,
+  DERIVATION_METHOD_LABELS_DE,
+  DERIVATION_REFUSAL_LABELS_DE,
   MEASUREMENT_ROLE_LABELS_DE,
   MODULE_LABELS_DE,
   MODULE_STATUS_LABELS_DE,
   READINESS_LABELS_DE,
   SIDE_LABELS_DE,
-  SKINFOLD_SITE_LABELS_DE,
 } from '../../components/labels';
 
 import { AnalysisList } from './analysis-list';
@@ -475,12 +475,19 @@ function formatMoment(value: Date): string {
 export interface DerivedView {
   readonly measurementTypeId: string;
   readonly method: string;
-  readonly percent: number | null;
-  readonly sum: number | null;
-  readonly age: number | null;
+  readonly value: number | null;
+  /**
+   * What the equation consumed, already written out.
+   *
+   * A sentence rather than fields, because the inputs differ per method — a
+   * fold sum and an age for a caliper method, three gram figures and their
+   * factors for an energy total — and a screen that had to know which is which
+   * would need a branch per equation to say the same kind of thing.
+   */
+  readonly inputs: string | null;
   readonly refusal: { readonly reason: string; readonly missing?: readonly string[] } | null;
   /** What already stands in the record, whatever can be computed today. */
-  readonly storedPercent: number | null;
+  readonly storedValue: number | null;
   readonly measuredAt: Date | null;
 }
 
@@ -492,8 +499,8 @@ export interface DerivedView {
  * on the athlete record, not another fold. So the refusal is shown with the
  * same weight as the value.
  *
- * Nothing here interprets the percentage. The record holds no direction for
- * body fat, so a number is a number.
+ * Nothing here interprets the value. The record holds no direction for body fat
+ * and no requirement for an energy intake, so a number is a number.
  */
 function DerivedSection({
   derived,
@@ -516,23 +523,23 @@ function DerivedSection({
           >
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
               <span className="text-sm font-medium">
-                {types[entry.measurementTypeId]?.name ?? 'Körperfettanteil'}
+                {types[entry.measurementTypeId]?.name ?? 'Berechneter Wert'}
               </span>
               <span className="text-xs text-muted-foreground">
-                {BODY_FAT_METHOD_LABELS_DE[entry.method] ?? entry.method}
+                {DERIVATION_METHOD_LABELS_DE[entry.method] ?? entry.method}
               </span>
             </div>
 
-            {entry.percent === null ? (
+            {entry.value === null ? (
               <>
-                {/* A refusal must not hide a finding. A percentage computed
-                    earlier is still in the record; showing only "cannot
-                    calculate" would make it look as though nothing had ever
-                    been measured. */}
-                {entry.storedPercent === null ? null : (
+                {/* A refusal must not hide a finding. A value computed earlier
+                    is still in the record; showing only "cannot calculate"
+                    would make it look as though nothing had ever been
+                    measured. */}
+                {entry.storedValue === null ? null : (
                   <>
                     <p className="text-2xl font-semibold" data-numeric>
-                      {germanNumber(entry.storedPercent)} %
+                      {germanNumber(entry.storedValue)} {types[entry.measurementTypeId]?.unit ?? ''}
                     </p>
                     <p className="text-xs text-muted-foreground">
                       Früher berechnet. Mit den heutigen Angaben lässt sich der Wert nicht neu
@@ -541,11 +548,11 @@ function DerivedSection({
                   </>
                 )}
                 <p className="text-xs text-muted-foreground">
-                  {BODY_FAT_REFUSAL_LABELS_DE[entry.refusal?.reason ?? ''] ??
+                  {DERIVATION_REFUSAL_LABELS_DE[entry.refusal?.reason ?? ''] ??
                     'Der Wert konnte nicht berechnet werden.'}
                   {entry.refusal?.missing && entry.refusal.missing.length > 0
                     ? ` Fehlend: ${entry.refusal.missing
-                        .map((site) => SKINFOLD_SITE_LABELS_DE[site] ?? site)
+                        .map((input) => DERIVATION_INPUT_LABELS_DE[input] ?? input)
                         .join(', ')}.`
                     : ''}
                 </p>
@@ -553,15 +560,16 @@ function DerivedSection({
             ) : (
               <>
                 <p className="text-2xl font-semibold" data-numeric>
-                  {germanNumber(entry.percent)} %
+                  {germanNumber(entry.value)} {types[entry.measurementTypeId]?.unit ?? ''}
                 </p>
-                {/* The two inputs a coach cannot read off the folds: their sum
-                    and the age on the day. Stating them makes the number
-                    checkable rather than merely present. */}
-                <p className="text-xs text-muted-foreground" data-numeric>
-                  Faltensumme {entry.sum === null ? '—' : germanNumber(entry.sum)} mm · Alter{' '}
-                  {entry.age === null ? '—' : String(entry.age)} Jahre
-                </p>
+                {/* What the equation actually consumed — a fold sum and an age,
+                    or three gram figures with their factors. Stating it makes
+                    the number checkable rather than merely present. */}
+                {entry.inputs === null ? null : (
+                  <p className="text-xs text-pretty text-muted-foreground" data-numeric>
+                    {entry.inputs}
+                  </p>
+                )}
               </>
             )}
           </li>

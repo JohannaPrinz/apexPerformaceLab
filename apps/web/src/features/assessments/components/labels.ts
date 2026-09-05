@@ -111,10 +111,36 @@ export function moduleLabel(entry: { name: string | null; moduleKey: string }): 
   return MODULE_LABELS_DE[entry.moduleKey as ModuleKey] ?? entry.moduleKey;
 }
 
-/** The caliper methods, as a coach names them. */
-export const BODY_FAT_METHOD_LABELS_DE: Readonly<Record<string, string>> = {
+/**
+ * The professional areas the catalogue is browsed by.
+ *
+ * A filter, never a binding (§12): a lactate test may record a jump height, and
+ * grouping the picker by area is how a coach finds a quantity, not a statement
+ * about which test it belongs to.
+ */
+export const MEASUREMENT_CATEGORY_LABELS_DE: Readonly<Record<string, string>> = {
+  body_composition: 'Körperzusammensetzung',
+  cardiovascular: 'Herz-Kreislauf',
+  endurance: 'Ausdauer',
+  strength: 'Kraft',
+  muscle_activity: 'Muskelaktivität',
+  mobility: 'Beweglichkeit',
+  performance: 'Leistung',
+  nutrition: 'Ernährung',
+};
+
+/**
+ * The published procedures a test computes with, as a coach names them.
+ *
+ * One table for every derivation rather than one per quantity: the line under
+ * a calculated value answers "where does this number come from", and that
+ * question reads the same whether the answer is a skinfold regression or an
+ * energy conversion.
+ */
+export const DERIVATION_METHOD_LABELS_DE: Readonly<Record<string, string>> = {
   jackson_pollock_3: 'Jackson & Pollock, 3 Punkte',
   jackson_pollock_7: 'Jackson & Pollock, 7 Punkte',
+  atwater_energy: 'Atwater-Faktoren',
 };
 
 /** The seven caliper sites, by catalogue key. */
@@ -129,13 +155,13 @@ export const SKINFOLD_SITE_LABELS_DE: Readonly<Record<string, string>> = {
 };
 
 /**
- * Why no percentage was calculated.
+ * Why no value was calculated.
  *
  * Each says what is missing and what to do about it. A screen that only showed
  * an absence would leave a coach checking folds that are all present, when the
  * gap is a date of birth on the athlete record.
  */
-export const BODY_FAT_REFUSAL_LABELS_DE: Readonly<Record<string, string>> = {
+export const DERIVATION_REFUSAL_LABELS_DE: Readonly<Record<string, string>> = {
   SEX_NOT_SPECIFIED:
     'Für den Athleten ist kein Geschlecht hinterlegt. Die Formeln nach Jackson & Pollock sind je Geschlecht unterschiedlich — ohne Angabe wird nicht gerechnet.',
   DATE_OF_BIRTH_MISSING:
@@ -143,4 +169,19 @@ export const BODY_FAT_REFUSAL_LABELS_DE: Readonly<Record<string, string>> = {
   AGE_NOT_PLAUSIBLE:
     'Das hinterlegte Geburtsdatum liegt nach dem Messtag. Aus dieser Angabe lässt sich kein Alter ableiten.',
   SITES_MISSING: 'Es fehlen noch Hautfaltenwerte.',
+  NUTRIENTS_MISSING:
+    'Die Gesamtkalorien folgen aus Eiweiß, Kohlenhydraten und Fetten. Solange eine der drei Angaben fehlt, wird nicht gerechnet — ein Tag ohne Fettangabe ist kein leichterer Tag.',
+};
+
+/**
+ * The inputs a refusal names, by catalogue key.
+ *
+ * The caliper sites and the macronutrients in one table, because a refusal says
+ * "Fehlend: …" and the reader does not care which kind of input it was.
+ */
+export const DERIVATION_INPUT_LABELS_DE: Readonly<Record<string, string>> = {
+  ...SKINFOLD_SITE_LABELS_DE,
+  protein: 'Eiweiß',
+  carbohydrates: 'Kohlenhydrate',
+  fat: 'Fette',
 };

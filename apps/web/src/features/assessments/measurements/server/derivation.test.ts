@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { derivedValues, refreshDerivedMeasurements } from './derivation';
 
 /**
- * The body-fat percentage a caliper test computes for itself.
+ * The values a test computes for itself — a body-fat percentage, an energy
+ * total.
  *
  * Three guarantees are under test, and the third is the reason this file is
  * separate from the screen that shows the number:
@@ -213,7 +214,7 @@ describe('what it writes once the sheet is complete', () => {
     const [state] = await derivedValues(db, TENANT, 'mod_1');
 
     expect(state?.outcome.ok && created[0]?.['numericValue']).toBe(
-      state?.outcome.ok ? state.outcome.value.bodyFatPercent : null,
+      state?.outcome.ok ? state.outcome.value : null,
     );
   });
 
@@ -241,7 +242,9 @@ describe('what it writes once the sheet is complete', () => {
 
     const [state] = await derivedValues(db, TENANT, 'mod_1');
 
-    expect(state?.outcome.ok && state.outcome.value.age).toBe(36);
+    // Stated in the line the screen shows beside the value — the age is one of
+    // the two inputs a coach cannot read off the folds.
+    expect(state?.outcome.ok && state.outcome.inputs).toContain('Alter 36');
   });
 });
 
@@ -260,7 +263,7 @@ describe('recomputing', () => {
     // numbers.
     const { db } = derivationDb(completeSheet());
     const [first] = await derivedValues(db, TENANT, 'mod_1');
-    const value = first?.outcome.ok ? first.outcome.value.bodyFatPercent : 0;
+    const value = first?.outcome.ok ? first.outcome.value : 0;
 
     const second = derivationDb([...completeSheet(), derived(value)]);
     await refreshDerivedMeasurements(second.db, TENANT, 'mod_1');
@@ -307,7 +310,7 @@ describe('recomputing', () => {
     const [state] = await derivedValues(db, TENANT, 'mod_1');
 
     expect(state?.measurementId).toBe('m_derived');
-    expect(state?.storedPercent).toBe(17.3);
+    expect(state?.storedValue).toBe(17.3);
     expect(state?.outcome.ok).toBe(false);
   });
 
@@ -316,7 +319,111 @@ describe('recomputing', () => {
 
     const [state] = await derivedValues(db, TENANT, 'mod_1');
 
-    expect(state?.storedPercent).toBeNull();
+    expect(state?.storedValue).toBeNull();
+  });
+});
+
+/**
+ * A day's food, through the same mechanism.
+ *
+ * The point of these is not the arithmetic — that is pinned in the domain
+ * package against the published factors — but that a second derived quantity
+ * acquires no second set of rules: the same refusal-before-writing, the same
+ * `DERIVED` measurement, the same note naming what the equation consumed.
+ */
+describe('the energy total of a nutrition test', () => {
+  const NUTRITION = {
+    measurementTypes: [
+      { measurementTypeId: 'mt_protein', role: 'required' },
+      { measurementTypeId: 'mt_carbs', role: 'required' },
+      { measurementTypeId: 'mt_fat', role: 'required' },
+      { measurementTypeId: 'mt_energy', role: 'optional' },
+    ],
+    exerciseIds: [],
+    passes: 1,
+    recordsSide: false,
+    dimensions: [],
+    derivations: [{ measurementTypeId: 'mt_energy', method: 'atwater_energy' }],
+  };
+
+  const day = (): Row[] => [
+    fold('protein', 'mt_protein', 150),
+    fold('carbohydrates', 'mt_carbs', 300),
+    fold('fat', 'mt_fat', 80),
+  ];
+
+  const nutritionDb = (rows: Row[]) => derivationDb(rows, { configuration: NUTRITION });
+
+  it('writes the total once all three macronutrients stand', async () => {
+    const { db, created } = nutritionDb(day());
+
+    await refreshDerivedMeasurements(db, TENANT, 'mod_1');
+
+    expect(created).toHaveLength(1);
+    expect(created[0]?.['numericValue']).toBe(2520);
+    expect(created[0]?.['source']).toBe('DERIVED');
+    expect(created[0]?.['assessmentModuleId']).toBe('mod_1');
+  });
+
+  it('writes nothing while one of the three is missing', async () => {
+    const { db, created } = nutritionDb([
+      fold('protein', 'mt_protein', 150),
+      fold('carbohydrates', 'mt_carbs', 300),
+    ]);
+
+    await refreshDerivedMeasurements(db, TENANT, 'mod_1');
+
+    expect(created).toEqual([]);
+  });
+
+  it('names the macronutrient it is waiting for', async () => {
+    const { db } = nutritionDb([fold('protein', 'mt_protein', 150)]);
+
+    const [state] = await derivedValues(db, TENANT, 'mod_1');
+
+    expect(state?.outcome.ok).toBe(false);
+    expect(state?.outcome.ok === false && state.outcome.refusal.missing).toEqual([
+      'carbohydrates',
+      'fat',
+    ]);
+  });
+
+  it('needs neither a sex nor a date of birth', async () => {
+    // Unlike a skinfold method — and the reason the branch exists rather than
+    // one calculation with optional inputs.
+    const { db, created } = derivationDb(day(), {
+      configuration: NUTRITION,
+      athlete: { sex: 'not_specified', dateOfBirth: null },
+    });
+
+    await refreshDerivedMeasurements(db, TENANT, 'mod_1');
+
+    expect(created).toHaveLength(1);
+  });
+
+  it('says in the note which factors produced the number', async () => {
+    const { db, created } = nutritionDb(day());
+
+    await refreshDerivedMeasurements(db, TENANT, 'mod_1');
+
+    const note = String(created[0]?.['note']);
+    expect(note).toContain('Atwater');
+    expect(note).toContain('Eiweiß 150 g × 4');
+    expect(note).toContain('Fette 80 g × 9');
+  });
+
+  it('leaves fibre and fluid out of the total', async () => {
+    // Both are optional, so counting them would make the same three-macro day
+    // come out at two different energies depending on an unrelated field.
+    const { db, created } = nutritionDb([
+      ...day(),
+      fold('fibre', 'mt_fibre', 40),
+      fold('fluid_intake', 'mt_fluid', 3),
+    ]);
+
+    await refreshDerivedMeasurements(db, TENANT, 'mod_1');
+
+    expect(created[0]?.['numericValue']).toBe(2520);
   });
 });
 

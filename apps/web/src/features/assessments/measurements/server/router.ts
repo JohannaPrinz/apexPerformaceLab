@@ -180,13 +180,13 @@ export const measurementsRouter = createTRPCRouter({
         measurementTypeId: state.measurementTypeId,
         method: state.method,
         // Flattened for the client: a discriminated union survives the wire,
-        // but the screen only ever needs these three.
-        percent: state.outcome.ok ? state.outcome.value.bodyFatPercent : null,
-        sum: state.outcome.ok ? state.outcome.value.sum : null,
-        age: state.outcome.ok ? state.outcome.value.age : null,
+        // but the screen only ever needs the value, what produced it, and the
+        // reason where there is none.
+        value: state.outcome.ok ? state.outcome.value : null,
+        inputs: state.outcome.ok ? state.outcome.inputs : null,
         refusal: state.outcome.ok ? null : state.outcome.refusal,
         // What already stands, so a refusal never hides a finding.
-        storedPercent: state.storedPercent,
+        storedValue: state.storedValue,
         measuredAt: state.measuredAt,
       }));
     }),
