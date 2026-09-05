@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  MAX_CARD_ROWS,
   MAX_TREND_CARDS,
+  readCardRows,
   readTrendCards,
   trendCardsPayload,
   TREND_CARDS_VERSION,
+  withCardRows,
   withoutTrendCard,
   withTrendCard,
 } from './trend-cards';
@@ -75,5 +78,75 @@ describe('changing the selection', () => {
 
   it('shrugs at removing something that is not there', () => {
     expect(withoutTrendCard(['weight'], 'body_fat')).toEqual(['weight']);
+  });
+});
+
+/**
+ * The rows a table card was configured with.
+ *
+ * The distinction under test throughout is between **absent** and **empty**: a
+ * coach who never touched the rows gets the card's default, one who removed
+ * every row gets none, and a reader that collapsed the two would make the second
+ * impossible to express.
+ */
+describe('a table card’s rows', () => {
+  it('answers null where the card was never configured', () => {
+    expect(readCardRows(trendCardsPayload(['biofeedback']), 'biofeedback')).toBeNull();
+  });
+
+  it('answers an empty list where every row was removed', () => {
+    const payload = trendCardsPayload(['biofeedback'], { biofeedback: [] });
+
+    expect(readCardRows(payload, 'biofeedback')).toEqual([]);
+  });
+
+  it('keeps the order the coach arranged', () => {
+    const payload = trendCardsPayload(['biofeedback'], {
+      biofeedback: ['stress', 'sleep_duration', 'hunger'],
+    });
+
+    expect(readCardRows(payload, 'biofeedback')).toEqual(['stress', 'sleep_duration', 'hunger']);
+  });
+
+  it('answers null for a card the payload says nothing about', () => {
+    const payload = trendCardsPayload(['biofeedback', 'nutrition'], { biofeedback: ['stress'] });
+
+    expect(readCardRows(payload, 'nutrition')).toBeNull();
+  });
+
+  it('changes one card’s rows and leaves the others alone', () => {
+    const before = { biofeedback: ['stress'], nutrition: ['protein'] };
+
+    expect(withCardRows(before, 'biofeedback', ['hunger'])).toEqual({
+      biofeedback: ['hunger'],
+      nutrition: ['protein'],
+    });
+  });
+
+  it('caps a row list rather than storing an unbounded one', () => {
+    const many = Array.from({ length: MAX_CARD_ROWS + 5 }, (_, index) => `q_${String(index)}`);
+
+    expect(withCardRows({}, 'biofeedback', many)['biofeedback']).toHaveLength(MAX_CARD_ROWS);
+  });
+});
+
+describe('a payload written before rows existed', () => {
+  const first = { version: 1, keys: ['weight', 'cycle'] };
+
+  it('is still read as the selection it is', () => {
+    // A coach who arranged their profile before this existed keeps the
+    // arrangement. Discarding it would clear their screen on deploy.
+    expect(readTrendCards(first)).toEqual(['weight', 'cycle']);
+  });
+
+  it('carries no row selection, which is the truth about it', () => {
+    expect(readCardRows(first, 'biofeedback')).toBeNull();
+  });
+
+  it('is still refused where it is not readable at all', () => {
+    for (const payload of [null, undefined, 42, { version: 9, keys: [] }, { keys: ['weight'] }]) {
+      expect(readTrendCards(payload)).toEqual([]);
+      expect(readCardRows(payload, 'biofeedback')).toBeNull();
+    }
   });
 });

@@ -26,7 +26,16 @@ import {
   viewerOf,
   visibleToViewer,
 } from './access';
+import {
+  addBiofeedbackQuantity,
+  biofeedbackWeek,
+  clearBiofeedbackValue,
+  setBiofeedbackNote,
+  setBiofeedbackRows,
+  setBiofeedbackValue,
+} from './biofeedback';
 import { movementProfilesFor } from './movement-profiles';
+import { clearNutritionValue, nutritionWeek, setNutritionValue } from './nutrition';
 import {
   countAthletes,
   countAthletesMatching,
@@ -42,8 +51,8 @@ import {
   deleteTrackingEntry,
   recordTrackingEntry,
   setTrendCard,
+  setTrendCardOrder,
   trackingEntriesFor,
-  trendCardsFor,
 } from './tracking';
 import { athleteTrend, athleteTrendOptions } from './trends';
 
@@ -234,25 +243,32 @@ export const athletesRouter = createTRPCRouter({
       // with the read rather than being looked up a second time.
       const subject = { id: athlete.id, sex: athlete.sex };
 
-      const stored = await trendCardsFor(ctx.db, ctx.tenant, athlete.id);
+      // The selection came along on the athlete row — it is a column on it, and
+      // reading it again was a second round trip for something already in hand.
+      const stored = athlete.trendCards;
 
       /**
        * What to draw.
        *
        * The address bar wins where it says something — that is how one
        * particular view gets linked. Otherwise the profile opens with what the
-       * coach chose. Resolved here rather than on the page so the charts and the
-       * selection come from one read instead of two round trips.
+       * coach chose.
        */
       const slots =
         input.slots.length > 0
           ? input.slots
           : stored.map((key) => ({ key, exerciseIds: [] as string[] }));
 
-      const options = await athleteTrendOptions(ctx.db, ctx.tenant, subject);
-      const charts = await Promise.all(
-        slots.map((slot) => athleteTrend(ctx.db, ctx.tenant, subject, slot)),
-      );
+      /**
+       * The list of what could be drawn and the drawings themselves are
+       * independent: the slots are known, so the charts do not wait on the
+       * options. They used to, which put the whole depth of one read in front of
+       * the other for no reason.
+       */
+      const [options, charts] = await Promise.all([
+        athleteTrendOptions(ctx.db, ctx.tenant, subject),
+        Promise.all(slots.map((slot) => athleteTrend(ctx.db, ctx.tenant, subject, slot))),
+      ]);
 
       return { options, charts, cards: stored, slots };
     }),
@@ -316,6 +332,248 @@ export const athletesRouter = createTRPCRouter({
       if (!result.ok) throw notFound();
 
       return result;
+    }),
+
+  /**
+   * One athlete's nutrition week.
+   *
+   * Its own procedure rather than a shape inside `trends`, because it answers a
+   * different question: the trend charts draw a quantity over time, this is a
+   * table of one week that is written into. They share the measurement types
+   * and nothing else.
+   */
+  nutritionWeek: withPermission('athlete:read')
+    .input(z.object({ athleteId: z.string().min(1).max(64), weekStart: z.date() }))
+    .query(async ({ ctx, input }) => {
+      const week = await nutritionWeek(ctx.db, ctx.tenant, input.athleteId, input.weekStart);
+      if (week === null) throw notFound();
+
+      return week;
+    }),
+
+  /**
+   * Sets one cell of that table.
+   *
+   * `withCoachPermission` for the same reason `recordTracking` uses it: the
+   * entry records who put it there, and a value with no author would lose the
+   * distinction between a coach's note and an athlete's self-report (§13).
+   *
+   * **The athlete's own writing is not here.** The model carries
+   * `recordedBy: ATHLETE` and the table shows it, but an athlete has no account
+   * to write through — the portal is §21 and is not built. Accepting a claimed
+   * author from this procedure would be inventing that authorization path.
+   */
+  setNutritionValue: withCoachPermission('athlete:write')
+    .input(
+      z.object({
+        athleteId: z.string().min(1).max(64),
+        measurementTypeKey: z
+          .string()
+          .trim()
+          .min(1)
+          .max(40)
+          .regex(/^[a-z0-9_]+$/),
+        day: z.date(),
+        value: z.number().finite().min(0).max(100000),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const result = await setNutritionValue(
+        ctx.db,
+        ctx.tenant,
+        { by: 'COACH', coachId: ctx.coach.id },
+        input,
+      );
+
+      if (!result.ok) throw notFound();
+
+      return result;
+    }),
+
+  /**
+   * The order the cards sit in.
+   *
+   * A whole list rather than a move-by-one, because a drag is a move to an
+   * arbitrary position and expressing it as a sequence of swaps would make the
+   * stored order depend on how many round trips survived.
+   */
+  setTrendCardOrder: withPermission('athlete:write')
+    .input(
+      z.object({
+        athleteId: z.string().min(1).max(64),
+        keys: z
+          .array(
+            z
+              .string()
+              .trim()
+              .min(1)
+              .max(40)
+              .regex(/^[a-z0-9_]+$/),
+          )
+          .max(12),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const ok = await setTrendCardOrder(ctx.db, ctx.tenant, input.athleteId, input.keys);
+      if (!ok) throw notFound();
+
+      return { ok: true };
+    }),
+
+  /**
+   * One athlete's biofeedback week.
+   *
+   * Its own procedure for the same reason the nutrition week has one: the trend
+   * charts draw a quantity over time, this is a table of one week that is
+   * written into.
+   */
+  biofeedbackWeek: withPermission('athlete:read')
+    .input(z.object({ athleteId: z.string().min(1).max(64), weekStart: z.date() }))
+    .query(async ({ ctx, input }) => {
+      const week = await biofeedbackWeek(ctx.db, ctx.tenant, input.athleteId, input.weekStart);
+      if (week === null) throw notFound();
+
+      return week;
+    }),
+
+  /**
+   * Sets one cell of that table.
+   *
+   * `withCoachPermission` because the entry records who put it there (§13).
+   * **The athlete's own writing is not here**: the model carries
+   * `recordedBy: ATHLETE` and the table shows it, but an athlete has no account
+   * to write through — the portal is §21 and is not built. Accepting a claimed
+   * author from this procedure would be inventing that authorization path.
+   */
+  setBiofeedbackValue: withCoachPermission('athlete:write')
+    .input(
+      z.object({
+        athleteId: z.string().min(1).max(64),
+        measurementTypeKey: z
+          .string()
+          .trim()
+          .min(1)
+          .max(40)
+          .regex(/^[a-z0-9_]+$/),
+        day: z.date(),
+        value: z.number().finite().min(0).max(1000),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const result = await setBiofeedbackValue(
+        ctx.db,
+        ctx.tenant,
+        { by: 'COACH', coachId: ctx.coach.id },
+        input,
+      );
+
+      if (!result.ok) {
+        if (result.refusal === 'OUT_OF_SCALE') {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Der Wert liegt außerhalb der Skala dieser Messgröße.',
+          });
+        }
+
+        throw notFound();
+      }
+
+      return result;
+    }),
+
+  /** The remark on one entry — why the value is what it is. */
+  setBiofeedbackNote: withPermission('athlete:write')
+    .input(
+      z.object({
+        entryId: z.string().min(1).max(64),
+        note: z.string().trim().max(500).nullable(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const ok = await setBiofeedbackNote(ctx.db, ctx.tenant, input.entryId, input.note);
+      if (!ok) throw notFound();
+
+      return { ok: true };
+    }),
+
+  /** Empties one cell of the biofeedback table. */
+  clearBiofeedbackValue: withPermission('athlete:write')
+    .input(z.object({ entryId: z.string().min(1).max(64) }))
+    .mutation(async ({ ctx, input }) => {
+      const ok = await clearBiofeedbackValue(ctx.db, ctx.tenant, input.entryId);
+      if (!ok) throw notFound();
+
+      return { ok: true };
+    }),
+
+  /** Which rows this athlete's biofeedback card shows, in the coach's order. */
+  setBiofeedbackRows: withPermission('athlete:write')
+    .input(
+      z.object({
+        athleteId: z.string().min(1).max(64),
+        keys: z
+          .array(
+            z
+              .string()
+              .trim()
+              .min(1)
+              .max(40)
+              .regex(/^[a-z0-9_]+$/),
+          )
+          .max(20),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const result = await setBiofeedbackRows(ctx.db, ctx.tenant, input.athleteId, input.keys);
+      if (!result.ok) throw notFound();
+
+      return result;
+    }),
+
+  /**
+   * Adds a quantity of the workspace's own and puts it on the card.
+   *
+   * `withCoachPermission`: it writes to the workspace catalogue, which is a
+   * decision about the practice and not about one athlete.
+   */
+  addBiofeedbackQuantity: withCoachPermission('athlete:write')
+    .input(
+      z.object({
+        athleteId: z.string().min(1).max(64),
+        name: z.string().trim().min(1).max(60),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const result = await addBiofeedbackQuantity(ctx.db, ctx.tenant, input.athleteId, input.name);
+
+      if (!result.ok) {
+        if (result.refusal === 'NAME_UNUSABLE') {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Dieser Name ergibt keine Messgröße. Bitte Buchstaben oder Ziffern verwenden.',
+          });
+        }
+        if (result.refusal === 'TOO_MANY_ROWS') {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Diese Tabelle fasst nicht mehr Zeilen.',
+          });
+        }
+
+        throw notFound();
+      }
+
+      return result;
+    }),
+
+  /** Empties one cell. Deleted, never superseded — see §13. */
+  clearNutritionValue: withPermission('athlete:write')
+    .input(z.object({ entryId: z.string().min(1).max(64) }))
+    .mutation(async ({ ctx, input }) => {
+      const ok = await clearNutritionValue(ctx.db, ctx.tenant, input.entryId);
+      if (!ok) throw notFound();
+
+      return { ok: true };
     }),
 
   /** Removes one reading. Deleted, never superseded — see §13. */

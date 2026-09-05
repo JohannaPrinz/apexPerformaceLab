@@ -5,6 +5,8 @@ import { scoped } from '@apex/database/tenant';
 import { comparisonKey, contextOf, type AthleteSex } from '@apex/domain';
 import type { TenantContext } from '@apex/types';
 
+import { BIOFEEDBACK_TREND_KEY } from './biofeedback';
+
 /**
  * One athlete's record over time.
  *
@@ -42,8 +44,28 @@ type TrendDb = Pick<
   'measurement' | 'measurementType' | 'bleedingEpisode' | 'exercise' | 'trackingEntry'
 >;
 
-/** The one card that is not a measurement type. */
+/** The cards that are not a measurement type. */
 export const CYCLE_TREND_KEY = 'cycle';
+
+/**
+ * The nutrition week.
+ *
+ * A card in the same list and the same stored selection as every other, so a
+ * coach adds and removes it the same way — but a **table**, not a curve, and
+ * therefore rendered outside the two-column grid. What it holds is five
+ * quantities at once over seven days, which no chart of one quantity can say.
+ */
+export const NUTRITION_TREND_KEY = 'nutrition';
+
+/**
+ * The biofeedback week.
+ *
+ * The second table card, and the one whose rows the coach chooses. Same shape
+ * of thing as the nutrition week — several quantities across seven days, read
+ * per week — so it takes the same route: a card in the ordinary list, rendered
+ * outside the two-column chart grid.
+ */
+export { BIOFEEDBACK_TREND_KEY };
 
 /**
  * The quantities a coach documents over time, offered whether or not anything
@@ -57,9 +79,9 @@ const DOCUMENTATION_KEYS = ['weight', 'body_fat'] as const;
 
 /** A card this athlete may be given, and what it would draw. */
 export interface TrendOption {
-  /** A measurement type's catalogue key, or `cycle`. */
+  /** A measurement type's catalogue key, or one of the table cards. */
   readonly key: string;
-  readonly kind: 'measurement' | 'cycle';
+  readonly kind: 'measurement' | 'cycle' | 'nutrition' | 'biofeedback';
   readonly name: string;
   readonly unit: string;
   /**
@@ -110,7 +132,7 @@ export interface TrendEpisode {
 
 export interface TrendChart {
   readonly key: string;
-  readonly kind: 'measurement' | 'cycle';
+  readonly kind: 'measurement' | 'cycle' | 'nutrition' | 'biofeedback';
   readonly title: string;
   readonly unit: string;
   readonly series: readonly TrendSeries[];
@@ -261,20 +283,62 @@ export async function athleteTrendOptions(
     }
   }
 
-  // The documentation cards, added where they are not already there.
+  /**
+   * Everything else this function needs, asked for at once.
+   *
+   * It used to be five awaits in a row — a `findFirst` per documentation key, a
+   * bleeding count, and a `count` for each of the two table cards — each one
+   * waiting for the last. They depend on nothing but the tenant, so the only
+   * thing the sequence bought was latency: five round trips to Supabase before
+   * the first option could be built.
+   *
+   * The documentation keys are one `findMany` rather than one query per key,
+   * for the same reason.
+   */
+  const missing = DOCUMENTATION_KEYS.filter((key) => !byKey.has(key));
+
+  const [documentation, bleedings, tableTypes] = await Promise.all([
+    missing.length === 0
+      ? Promise.resolve([])
+      : db.measurementType.findMany({
+          where: {
+            key: { in: [...missing] },
+            archivedAt: null,
+            OR: [{ organizationId: tenant.organizationId }, { organizationId: null }],
+          },
+          select: { key: true, name: true, unit: true, organizationId: true },
+        }),
+    db.bleedingEpisode.count({ where: scoped(tenant, { athleteId: athlete.id }) }),
+    // Which table cards the catalogue can hold at all — one grouped read
+    // instead of a `count` per card.
+    db.measurementType.groupBy({
+      by: ['category'],
+      where: {
+        category: { in: ['nutrition', 'biofeedback'] },
+        archivedAt: null,
+        OR: [{ organizationId: tenant.organizationId }, { organizationId: null }],
+      },
+      _count: { _all: true },
+    }),
+  ]);
+
+  // The documentation cards, added where they are not already there. A
+  // workspace whose catalogue has not been seeded cannot offer one, and
+  // inventing a name for a type that does not exist would be worse.
   for (const key of DOCUMENTATION_KEYS) {
     if (byKey.has(key)) continue;
 
-    const type = await db.measurementType.findFirst({
-      where: typeWhere(tenant, key),
-      select: { name: true, unit: true },
-    });
+    const found = documentation
+      .filter((type) => type.key === key)
+      // The workspace's own definition wins over the system one.
+      .sort(
+        (left, right) =>
+          (left.organizationId === null ? 1 : 0) - (right.organizationId === null ? 1 : 0),
+      )[0];
 
-    // A workspace whose catalogue has not been seeded cannot offer it, and
-    // inventing a name for a type that does not exist would be worse.
-    if (!type) continue;
+    if (!found) continue;
 
-    byKey.set(key, { name: type.name, unit: type.unit, count: 0, exerciseIds: new Set() });
+    byKey.set(key, { name: found.name, unit: found.unit, count: 0, exerciseIds: new Set() });
   }
 
   const options: TrendOption[] = [...byKey.entries()].map(([key, entry]) => ({
@@ -292,10 +356,53 @@ export async function athleteTrendOptions(
 
   options.sort((left, right) => left.name.localeCompare(right.name, 'de'));
 
-  const bleedings = await db.bleedingEpisode.count({
-    where: scoped(tenant, { athleteId: athlete.id }),
-  });
   const offersCycle = athlete.sex === 'female' || bleedings > 0;
+  const held = (category: string): number =>
+    tableTypes.find((row) => row.category === category)?._count._all ?? 0;
+
+  /**
+   * The nutrition week is offered before anything has been eaten, but not
+   * before the catalogue can hold it.
+   *
+   * The first half is the documentation-card reasoning: a table that only
+   * appeared once something had been written down would be a table nobody could
+   * use to start writing one. The second half is the rule one line above — a
+   * workspace whose catalogue was never seeded has no nutrition types, and a
+   * card offered there would open onto columns that cannot be written to.
+   *
+   * `count: 0` because the figure beside an option counts readings of one
+   * quantity, and this card holds five; a number there would answer a different
+   * question than the one it is placed under.
+   */
+  const nutrition: readonly TrendOption[] =
+    held('nutrition') === 0
+      ? []
+      : [
+          {
+            key: NUTRITION_TREND_KEY,
+            kind: 'nutrition' as const,
+            name: 'Ernährung',
+            unit: '',
+            exercises: [],
+            count: 0,
+          },
+        ];
+
+  // The biofeedback table, on the same two conditions: offered before anything
+  // has been written down, and not before the catalogue can hold it.
+  const biofeedback: readonly TrendOption[] =
+    held('biofeedback') === 0
+      ? []
+      : [
+          {
+            key: BIOFEEDBACK_TREND_KEY,
+            kind: 'biofeedback' as const,
+            name: 'Biofeedback',
+            unit: '',
+            exercises: [],
+            count: 0,
+          },
+        ];
 
   return offersCycle
     ? [
@@ -307,9 +414,11 @@ export async function athleteTrendOptions(
           exercises: [],
           count: bleedings,
         },
+        ...biofeedback,
+        ...nutrition,
         ...options,
       ]
-    : options;
+    : [...biofeedback, ...nutrition, ...options];
 }
 
 /** What one card was asked to show. */
@@ -334,20 +443,56 @@ export async function athleteTrend(
 ): Promise<TrendChart | null> {
   if (selection.key === '') return null;
 
+  /**
+   * The cycle card carries no series and, since it became a calendar, no
+   * episodes either.
+   *
+   * It used to read every documented bleeding here so the card could list them.
+   * The month view replaced that list and loads its own month, so the read was
+   * left doing work nothing displayed — on a record with years of entries, all
+   * of them, on every render of the profile.
+   */
   if (selection.key === CYCLE_TREND_KEY) {
-    const episodes = await db.bleedingEpisode.findMany({
-      where: scoped(tenant, { athleteId: athlete.id }),
-      select: { id: true, startedOn: true, endedOn: true, note: true, recordedBy: true },
-      orderBy: [{ startedOn: 'desc' }],
-    });
-
     return {
       key: CYCLE_TREND_KEY,
       kind: 'cycle',
       title: 'Zyklus',
       unit: '',
       series: [],
-      episodes,
+      episodes: [],
+      exercises: [],
+      exerciseIds: [],
+    };
+  }
+
+  /**
+   * The nutrition card carries no series.
+   *
+   * Its data is a week, it is loaded per week, and the week is not part of a
+   * selection that says nothing about time. So this returns the card's identity
+   * and nothing else; the table beside it does the reading.
+   */
+  if (selection.key === NUTRITION_TREND_KEY) {
+    return {
+      key: NUTRITION_TREND_KEY,
+      kind: 'nutrition',
+      title: 'Ernährung',
+      unit: '',
+      series: [],
+      episodes: [],
+      exercises: [],
+      exerciseIds: [],
+    };
+  }
+
+  if (selection.key === BIOFEEDBACK_TREND_KEY) {
+    return {
+      key: BIOFEEDBACK_TREND_KEY,
+      kind: 'biofeedback',
+      title: 'Biofeedback',
+      unit: '',
+      series: [],
+      episodes: [],
       exercises: [],
       exerciseIds: [],
     };

@@ -242,6 +242,146 @@ export async function recordTrackingAction(
 }
 
 /**
+ * The order the coach dragged the cards into.
+ *
+ * Persisted beside the address bar, not instead of it: the URL is how one
+ * particular view is linked, the record is what the profile opens with.
+ */
+export async function setTrendCardOrderAction(
+  athleteId: string,
+  keys: readonly string[],
+): Promise<{ message?: string }> {
+  try {
+    await api.athletes.setTrendCardOrder({ athleteId, keys: [...keys] });
+    revalidatePath(`/athletes/${athleteId}`);
+
+    return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
+/**
+ * The biofeedback week: one cell, its remark, the rows, a quantity of one's own.
+ *
+ * Thin callers of the procedures, which is where every check lives — the
+ * athlete must be one the caller may see, the quantity must be a biofeedback
+ * one, and the figure must sit on the scale that quantity declares. None of
+ * that is decided here.
+ */
+export async function setBiofeedbackValueAction(
+  athleteId: string,
+  measurementTypeKey: string,
+  day: Date,
+  value: number,
+): Promise<{ message?: string }> {
+  try {
+    await api.athletes.setBiofeedbackValue({ athleteId, measurementTypeKey, day, value });
+    revalidatePath(`/athletes/${athleteId}`);
+
+    return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
+/** `null` removes the remark; the value it explains stays. */
+export async function setBiofeedbackNoteAction(
+  athleteId: string,
+  entryId: string,
+  note: string | null,
+): Promise<{ message?: string }> {
+  try {
+    await api.athletes.setBiofeedbackNote({ entryId, note });
+    revalidatePath(`/athletes/${athleteId}`);
+
+    return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
+export async function clearBiofeedbackValueAction(
+  athleteId: string,
+  entryId: string,
+): Promise<{ message?: string }> {
+  try {
+    await api.athletes.clearBiofeedbackValue({ entryId });
+    revalidatePath(`/athletes/${athleteId}`);
+
+    return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
+export async function setBiofeedbackRowsAction(
+  athleteId: string,
+  keys: readonly string[],
+): Promise<{ message?: string }> {
+  try {
+    await api.athletes.setBiofeedbackRows({ athleteId, keys: [...keys] });
+    revalidatePath(`/athletes/${athleteId}`);
+
+    return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
+export async function addBiofeedbackQuantityAction(
+  athleteId: string,
+  name: string,
+): Promise<{ message?: string }> {
+  try {
+    await api.athletes.addBiofeedbackQuantity({ athleteId, name });
+    revalidatePath(`/athletes/${athleteId}`);
+
+    return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
+/**
+ * Sets one cell of the nutrition week.
+ *
+ * `null` empties it, which is a different operation from writing a zero: a day
+ * with no protein figure is a day nobody wrote down, and a day with 0 g is a
+ * statement about what was eaten.
+ */
+export async function setNutritionValueAction(
+  athleteId: string,
+  measurementTypeKey: string,
+  day: Date,
+  value: number,
+): Promise<{ message?: string }> {
+  try {
+    await api.athletes.setNutritionValue({ athleteId, measurementTypeKey, day, value });
+    revalidatePath(`/athletes/${athleteId}`);
+
+    return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
+/** Empties one cell. */
+export async function clearNutritionValueAction(
+  athleteId: string,
+  entryId: string,
+): Promise<{ message?: string }> {
+  try {
+    await api.athletes.clearNutritionValue({ entryId });
+    revalidatePath(`/athletes/${athleteId}`);
+
+    return {};
+  } catch (error) {
+    return { message: toMessage(error) };
+  }
+}
+
+/**
  * Offering, confirming and withdrawing access to an athlete.
  *
  * Thin callers of the procedures, which is where every check lives: the athlete

@@ -75,6 +75,51 @@ function trendDb(
 
       return Promise.resolve({ name: `Katalog ${args.where.key}`, unit: 'kg' });
     }),
+    /** The documentation keys, in one read rather than one query per key. */
+    findMany: vi.fn((args: { where: { key?: { in: string[] } } }) => {
+      const known = options.knownKeys;
+      const wanted = args.where.key?.in ?? [];
+
+      return Promise.resolve(
+        wanted
+          .filter((key) => known === undefined || known === null || known.includes(key))
+          .map((key) => ({
+            key,
+            name: `Katalog ${key}`,
+            unit: 'kg',
+            organizationId: null,
+          })),
+      );
+    }),
+    /** Which table cards the catalogue can hold, grouped by category. */
+    groupBy: vi.fn(() => {
+      const known = options.knownKeys;
+
+      return Promise.resolve(
+        known === undefined || known === null
+          ? [
+              { category: 'nutrition', _count: { _all: 5 } },
+              { category: 'biofeedback', _count: { _all: 8 } },
+            ]
+          : [],
+      );
+    }),
+    // How many types of a table card's kind the catalogue holds. Those cards are
+    // offered only where at least one exists, so an unseeded workspace gets no
+    // card — the same rule every other option here follows. Asked either by an
+    // explicit key list (nutrition) or by category (biofeedback).
+    count: vi.fn((args: { where: { key?: { in: string[] }; category?: string } }) => {
+      const known = options.knownKeys;
+      if (known !== undefined && known !== null) {
+        const wanted = args.where.key?.in;
+
+        return Promise.resolve(
+          wanted === undefined ? 0 : wanted.filter((key) => known.includes(key)).length,
+        );
+      }
+
+      return Promise.resolve(args.where.key?.in.length ?? 1);
+    }),
   };
 
   // Self-reported readings share the axis. The fake answers with none unless a
@@ -122,7 +167,10 @@ describe('which cards an athlete may be given', () => {
     // could use to start tracking one.
     const options = await athleteTrendOptions(trendDb({ rows: [] }).db, TENANT, MALE);
 
-    expect([...keysOf(options)].sort()).toEqual(['body_fat', 'weight']);
+    // The two table cards are offered on the same reasoning and for the same
+    // reason: nobody can start writing a week down against a card that is not
+    // there.
+    expect([...keysOf(options)].sort()).toEqual(['biofeedback', 'body_fat', 'nutrition', 'weight']);
     expect(options.every((option) => option.count === 0)).toBe(true);
   });
 
@@ -370,7 +418,11 @@ describe('the points behind one card', () => {
 describe('the documented bleedings', () => {
   const cycle = { key: CYCLE_TREND_KEY, exerciseIds: [] };
 
-  it('returns what was written down, newest first', async () => {
+  it('is a card, and carries nothing else', async () => {
+    // Since the cycle card became a calendar it loads its own month, so the
+    // chart is the card's identity and nothing more. It used to read every
+    // documented bleeding here — all of them, on every render of the profile —
+    // for a list the card no longer draws.
     const { db, bleedingEpisode } = trendDb({
       episodes: [
         { id: 'ep_1', startedOn: day('2026-03-04'), endedOn: null },
@@ -381,8 +433,9 @@ describe('the documented bleedings', () => {
     const chart = await athleteTrend(db, TENANT, ATHLETE, cycle);
 
     expect(chart?.kind).toBe('cycle');
-    expect(chart?.episodes).toHaveLength(2);
-    expect(argsOf(bleedingEpisode.findMany).orderBy).toEqual([{ startedOn: 'desc' }]);
+    expect(chart?.title).toBe('Zyklus');
+    expect(chart?.episodes).toEqual([]);
+    expect(bleedingEpisode.findMany).not.toHaveBeenCalled();
   });
 
   it('is a card that says so where nothing is documented', async () => {
@@ -403,7 +456,8 @@ describe('the documented bleedings', () => {
     const chart = await athleteTrend(db, TENANT, ATHLETE, cycle);
 
     expect(chart?.series).toEqual([]);
-    expect(Object.keys(chart?.episodes[0] ?? {}).sort()).toEqual(['endedOn', 'id', 'startedOn']);
+    // What the calendar shows is asserted against the month read, in
+    // `features/cycle/server/month.test.ts`, where the days actually come from.
   });
 
   it('reads no measurement at all for it', async () => {
@@ -437,14 +491,18 @@ describe('the workspace boundary', () => {
     expect(argsOf(measurement.findMany).where).toMatchObject({ organizationId: 'org_b' });
   });
 
-  it('scopes the bleedings read', async () => {
+  it('scopes the bleedings count that decides whether the cycle is offered', async () => {
+    // The chart no longer reads episodes — the calendar loads its own month,
+    // and `features/cycle/server/month.test.ts` holds the boundary for that
+    // read. What is left here is the count behind the offer, and it carries
+    // the tenant like everything else.
     const { db, bleedingEpisode } = trendDb({
       episodes: [{ id: 'ep_1', startedOn: day('2026-03-04'), endedOn: null }],
     });
 
-    await athleteTrend(db, OTHER, ATHLETE, { key: CYCLE_TREND_KEY, exerciseIds: [] });
+    await athleteTrendOptions(db, OTHER, MALE);
 
-    expect(argsOf(bleedingEpisode.findMany).where).toMatchObject({
+    expect(argsOf(bleedingEpisode.count).where).toMatchObject({
       organizationId: 'org_b',
       athleteId: 'ath_1',
     });
