@@ -1,15 +1,23 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * The mail transport.
  *
- * What is pinned here is the restraint: without a key and a verified sender it
- * sends nothing and says which one is missing, it never throws at a caller that
- * has already granted access, and a message meant to wait carries the moment it
- * is due rather than being held in this process.
+ * What is pinned here is the restraint: without a mailbox to sign in to it
+ * sends nothing and names the setting that is missing, and it never throws at a
+ * caller that has already granted access — a report that is published and
+ * shared must not report itself as failed because a mailbox bounced.
  */
 
-const settings = { RESEND_API_KEY: 'rk_test', EMAIL_FROM: 'Coach <coach@example.test>' };
+const settings: Record<string, string> = {
+  SMTP_HOST: 'mail.example.test',
+  SMTP_PORT: '587',
+  SMTP_USER: 'coach@example.test',
+  SMTP_PASSWORD: 'secret',
+  EMAIL_FROM: 'Coach <coach@example.test>',
+};
+
+const sendMail = vi.fn();
 
 vi.mock('@/env', () => ({
   get env() {
@@ -17,62 +25,57 @@ vi.mock('@/env', () => ({
   },
 }));
 
+vi.mock('nodemailer', () => ({
+  default: { createTransport: () => ({ sendMail }) },
+}));
+
 const { emailReady, missingSetting, sendEmail } = await import('./index');
 
-const ok = (body: unknown = { id: 'msg_1' }) =>
-  vi.fn<typeof fetch>().mockResolvedValue(
-    new Response(JSON.stringify(body), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    }),
-  );
+const FULL = { ...settings };
 
-/** The JSON body of the one request that was recorded. */
-const bodyOf = (fetchMock: ReturnType<typeof ok>): Record<string, unknown> => {
-  const raw = fetchMock.mock.calls[0]?.[1]?.body;
-
-  return typeof raw === 'string' ? (JSON.parse(raw) as Record<string, unknown>) : {};
-};
-
-afterEach(() => {
-  settings.RESEND_API_KEY = 'rk_test';
-  settings.EMAIL_FROM = 'Coach <coach@example.test>';
-  vi.unstubAllGlobals();
+beforeEach(() => {
+  Object.assign(settings, FULL);
+  sendMail.mockReset();
+  sendMail.mockResolvedValue({ messageId: '<abc@example.test>' });
 });
 
-describe('refusing without configuration', () => {
-  it('names the missing key rather than saying "not configured"', async () => {
-    settings.RESEND_API_KEY = '';
+afterEach(() => {
+  vi.clearAllMocks();
+});
+
+describe('refusing without a mailbox', () => {
+  it('names the missing setting rather than saying "not configured"', async () => {
+    settings['SMTP_PASSWORD'] = '';
 
     expect(emailReady()).toBe(false);
-    expect(missingSetting()).toBe('RESEND_API_KEY');
+    expect(missingSetting()).toBe('SMTP_PASSWORD');
     await expect(
       sendEmail({ to: 'a@example.test', subject: 'x', text: 'y' }),
     ).resolves.toMatchObject({ ok: false, reason: 'not_configured' });
   });
 
-  it('names the missing sender', () => {
-    settings.EMAIL_FROM = '';
+  it('names the sender when that is what is missing', () => {
+    settings['EMAIL_FROM'] = '';
 
     expect(missingSetting()).toBe('EMAIL_FROM');
   });
 
-  it('sends nothing at all while either is missing', async () => {
-    settings.EMAIL_FROM = '';
-    const fetchMock = ok();
-    vi.stubGlobal('fetch', fetchMock);
+  it('sends nothing at all while a setting is missing', async () => {
+    settings['SMTP_HOST'] = '';
 
     await sendEmail({ to: 'a@example.test', subject: 'x', text: 'y' });
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(sendMail).not.toHaveBeenCalled();
+  });
+
+  it('is ready when every setting is there', () => {
+    expect(missingSetting()).toBeNull();
+    expect(emailReady()).toBe(true);
   });
 });
 
 describe('sending', () => {
-  it('posts the message and reports the id', async () => {
-    const fetchMock = ok();
-    vi.stubGlobal('fetch', fetchMock);
-
+  it('hands the message over and reports the id the server gave it', async () => {
     const result = await sendEmail({
       to: 'athlet@example.test',
       subject: 'Deine Auswertung ist fertig',
@@ -80,62 +83,39 @@ describe('sending', () => {
       html: '<p>Hallo</p>',
     });
 
-    expect(result).toEqual({ ok: true, id: 'msg_1' });
-
-    expect(bodyOf(fetchMock)).toMatchObject({
+    expect(result).toEqual({ ok: true, id: '<abc@example.test>' });
+    expect(sendMail).toHaveBeenCalledWith({
       from: 'Coach <coach@example.test>',
-      to: ['athlet@example.test'],
+      to: 'athlet@example.test',
       subject: 'Deine Auswertung ist fertig',
+      text: 'Hallo',
       html: '<p>Hallo</p>',
     });
   });
 
-  it('carries the moment a delayed message is due', async () => {
-    const fetchMock = ok();
-    vi.stubGlobal('fetch', fetchMock);
-    const due = new Date('2026-09-01T10:15:00.000Z');
-
-    await sendEmail({ to: 'a@example.test', subject: 'x', text: 'y', sendAt: due });
-
-    expect(bodyOf(fetchMock)['scheduled_at']).toBe(due.toISOString());
-  });
-
-  it('omits the schedule where none was asked for', async () => {
-    const fetchMock = ok();
-    vi.stubGlobal('fetch', fetchMock);
-
+  it('leaves the html out where none was given', async () => {
     await sendEmail({ to: 'a@example.test', subject: 'x', text: 'y' });
 
-    expect(bodyOf(fetchMock)).not.toHaveProperty('scheduled_at');
+    expect(sendMail.mock.calls[0]?.[0]).not.toHaveProperty('html');
   });
 });
 
 describe('failing without throwing', () => {
-  it("passes the provider's own wording back", async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi
-        .fn<typeof fetch>()
-        .mockResolvedValue(new Response('domain is not verified', { status: 403 })),
-    );
+  it("passes the server's own wording back", async () => {
+    sendMail.mockRejectedValue(new Error('550 mailbox unavailable'));
 
-    await expect(
-      sendEmail({ to: 'a@example.test', subject: 'x', text: 'y' }),
-    ).resolves.toMatchObject({ ok: false, reason: 'refused' });
+    await expect(sendEmail({ to: 'a@example.test', subject: 'x', text: 'y' })).resolves.toEqual({
+      ok: false,
+      reason: 'refused',
+      message: '550 mailbox unavailable',
+    });
   });
 
-  it('survives a network that is simply not there', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn<typeof fetch>().mockRejectedValue(new Error('getaddrinfo ENOTFOUND')),
-    );
+  it('survives a server that is simply not there', async () => {
+    sendMail.mockRejectedValue(new Error('getaddrinfo ENOTFOUND'));
 
     const result = await sendEmail({ to: 'a@example.test', subject: 'x', text: 'y' });
 
-    expect(result).toEqual({
-      ok: false,
-      reason: 'refused',
-      message: 'getaddrinfo ENOTFOUND',
-    });
+    expect(result).toMatchObject({ ok: false, reason: 'refused' });
   });
 });

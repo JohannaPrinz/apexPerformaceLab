@@ -15,12 +15,12 @@ instead of breaking a request.
 
 ## Planned
 
-| Directory    | Provider         | Purpose                                    |
-| ------------ | ---------------- | ------------------------------------------ |
-| `storage/`   | Supabase Storage | File upload, private reads through the app |
-| `email/`     | Resend           | Transactional email + React templates      |
-| `analytics/` | PostHog          | Product analytics, feature flags           |
-| `jobs/`      | Trigger.dev      | Background and scheduled tasks             |
+| Directory    | Provider          | Purpose                                      |
+| ------------ | ----------------- | -------------------------------------------- |
+| `storage/`   | Supabase Storage  | File upload, private reads through the app   |
+| `email/`     | SMTP (nodemailer) | Transactional email from the coach's mailbox |
+| `analytics/` | PostHog           | Product analytics, feature flags             |
+| `jobs/`      | Trigger.dev       | Background and scheduled tasks               |
 
 Credentials come from `src/env.ts` only — never `process.env` directly, so a
 missing key fails at build time.

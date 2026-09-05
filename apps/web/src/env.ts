@@ -54,7 +54,18 @@ export const env = createEnv({
      */
     CRON_SECRET: z.string().optional(),
 
-    RESEND_API_KEY: z.string().optional(),
+    /**
+     * The mailbox the product sends from.
+     *
+     * A mailbox signed in to, not a service sending on somebody's behalf: the
+     * sender is then real and nothing has to be verified. Optional as a group —
+     * without them the product runs, simply without sending, and every screen
+     * that would send says so.
+     */
+    SMTP_HOST: z.string().optional(),
+    SMTP_PORT: z.string().optional(),
+    SMTP_USER: z.string().optional(),
+    SMTP_PASSWORD: z.string().optional(),
     EMAIL_FROM: z.string().optional(),
 
     TRIGGER_SECRET_KEY: z.string().optional(),
@@ -90,7 +101,10 @@ export const env = createEnv({
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
     SUPABASE_STORAGE_BUCKET: process.env.SUPABASE_STORAGE_BUCKET,
     CRON_SECRET: process.env.CRON_SECRET,
-    RESEND_API_KEY: process.env.RESEND_API_KEY,
+    SMTP_HOST: process.env.SMTP_HOST,
+    SMTP_PORT: process.env.SMTP_PORT,
+    SMTP_USER: process.env.SMTP_USER,
+    SMTP_PASSWORD: process.env.SMTP_PASSWORD,
     EMAIL_FROM: process.env.EMAIL_FROM,
     TRIGGER_SECRET_KEY: process.env.TRIGGER_SECRET_KEY,
     TRIGGER_PROJECT_ID: process.env.TRIGGER_PROJECT_ID,

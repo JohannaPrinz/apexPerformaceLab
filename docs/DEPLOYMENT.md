@@ -25,7 +25,7 @@
 | Database        | Managed PostgreSQL — Neon, Supabase or Vercel Postgres |
 | Object storage  | Supabase Storage (private bucket)                      |
 | Background jobs | Trigger.dev                                            |
-| Email           | Resend                                                 |
+| Email           | SMTP — the coach's own mailbox                         |
 | Analytics       | PostHog (EU cloud)                                     |
 
 `fra1` is the default region because the initial market is European and it
@@ -103,7 +103,9 @@ Validation schema: [`apps/web/src/env.ts`](../apps/web/src/env.ts).
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | ➖       | Server | Omit and the product runs without pictures   |
 | `SUPABASE_STORAGE_BUCKET`                   | ➖       | Server | Defaults to `apex-os`                        |
 | `CRON_SECRET`                               | ➖       | Server | Without it the sweep schedule refuses to run |
-| `RESEND_API_KEY`, `EMAIL_FROM`              | ➖       | Server | Required once email ships                    |
+| `SMTP_HOST`, `SMTP_PORT`                    | ➖       | Server | 587 is submission with STARTTLS              |
+| `SMTP_USER`, `SMTP_PASSWORD`                | ➖       | Server | An app password, so it can be revoked alone  |
+| `EMAIL_FROM`                                | ➖       | Server | Must be the mailbox above, or it is rejected |
 | `TRIGGER_SECRET_KEY`, `TRIGGER_PROJECT_ID`  | ➖       | Server | Required once jobs ship                      |
 | `NEXT_PUBLIC_POSTHOG_KEY` / `_HOST`         | ➖       | Client | Project key is public by design              |
 
@@ -153,12 +155,12 @@ drop old column in a later release) is the only safe sequence.
 
 ## 8. Third-party services
 
-| Service          | Setup                                                                                                                                                                                               |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Supabase Storage | Create a **private** bucket; set `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_STORAGE_BUCKET`. Never serve it publicly — every read goes through the app, which decides who is asking. |
-| Resend           | Verify the sending domain (SPF/DKIM) before sending; set `EMAIL_FROM` to that domain.                                                                                                               |
-| Trigger.dev      | Create the project, set the secret key, deploy jobs separately from the web app.                                                                                                                    |
-| PostHog          | EU cloud by default (`https://eu.i.posthog.com`) — relevant for GDPR.                                                                                                                               |
+| Service          | Setup                                                                                                                                                                                                                 |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Supabase Storage | Create a **private** bucket; set `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_STORAGE_BUCKET`. Never serve it publicly — every read goes through the app, which decides who is asking.                   |
+| Mailbox          | Enable SMTP access with the mail provider and set the five variables above. Signing in to a real mailbox needs no domain verification; the trade is the provider's daily send limit and no way to schedule a message. |
+| Trigger.dev      | Create the project, set the secret key, deploy jobs separately from the web app.                                                                                                                                      |
+| PostHog          | EU cloud by default (`https://eu.i.posthog.com`) — relevant for GDPR.                                                                                                                                                 |
 
 ## 9. Rollback
 

@@ -40,7 +40,7 @@
 - [ ] Athlete CRUD and profiles
 - [ ] Settings surfaces (profile, organization, members)
 - [ ] File uploads to R2
-- [ ] Transactional email via Resend
+- [x] Transactional email over SMTP
 
 ## Phase 2 — Coaching workflows
 
