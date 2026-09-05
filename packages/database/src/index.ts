@@ -97,6 +97,7 @@ export {
   // Athlete
   AthleteSex,
   RecordedBy,
+  BleedingIntensity,
 
   // Case
   CaseType,

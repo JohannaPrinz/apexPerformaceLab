@@ -174,6 +174,9 @@ describe('reading the log', () => {
     expect(Object.keys(select).sort()).toEqual([
       'endedOn',
       'id',
+      // How strong it was, which is an observation like the dates — not
+      // something derived from them.
+      'intensity',
       'note',
       'recordedBy',
       'recordedByCoachId',

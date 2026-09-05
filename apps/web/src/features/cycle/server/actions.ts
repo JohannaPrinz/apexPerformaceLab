@@ -2,6 +2,8 @@
 
 import { revalidatePath } from 'next/cache';
 
+import type { BleedingIntensity } from '@apex/domain';
+
 import { api } from '@/trpc/server';
 
 import { recordBleedingSchema, removeBleedingSchema } from '../schemas';
@@ -75,4 +77,28 @@ export async function removeBleedingAction(
   revalidatePath(`/athletes/${athleteId}`);
 
   return { status: 'saved' };
+}
+
+/**
+ * Marks one day of the calendar, or clears it.
+ *
+ * A plain argument list rather than a `FormData` action: the calendar is a grid
+ * of buttons, not a form, and building a `FormData` per click would be
+ * ceremony around three values.
+ */
+export async function setBleedingDayAction(
+  athleteId: string,
+  day: string,
+  intensity: BleedingIntensity | null,
+): Promise<{ message?: string }> {
+  try {
+    await api.cycle.setDay({ athleteId, day, intensity });
+    revalidatePath(`/athletes/${athleteId}`);
+
+    return {};
+  } catch (error) {
+    return {
+      message: error instanceof Error ? error.message : 'Der Tag konnte nicht gespeichert werden.',
+    };
+  }
 }

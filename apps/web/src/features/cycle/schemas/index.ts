@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { bleedingIntensitySchema } from '@apex/domain';
+
 /**
  * The cycle slice's input contract.
  *
@@ -68,3 +70,29 @@ export const removeBleedingSchema = z.object({
 });
 
 export type RemoveBleedingInput = z.infer<typeof removeBleedingSchema>;
+
+/**
+ * One day of the calendar, marked or cleared.
+ *
+ * A day rather than a range, because that is what the calendar records: the
+ * unique index on (athlete, first day) makes one row per day, and a marked day
+ * is a first day that is also the last.
+ *
+ * `intensity: null` clears the day. The same control that made a mark removes
+ * it, so a mistaken click needs no second gesture.
+ */
+export const setBleedingDaySchema = z.object({
+  athleteId: z.string().min(1),
+  day: calendarDay,
+  intensity: bleedingIntensitySchema.nullable(),
+});
+
+export type SetBleedingDayInput = z.infer<typeof setBleedingDaySchema>;
+
+/** One month of it. The day names the month; only its year and month are read. */
+export const bleedingMonthSchema = z.object({
+  athleteId: z.string().min(1),
+  month: calendarDay,
+});
+
+export type BleedingMonthInput = z.infer<typeof bleedingMonthSchema>;

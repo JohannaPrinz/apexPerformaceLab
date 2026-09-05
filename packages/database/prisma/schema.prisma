@@ -493,6 +493,22 @@ model Athlete {
 /// everything else, and it is the obvious first candidate for per-category
 /// consent and field encryption — neither of which exists yet, which is stated
 /// here rather than assumed.
+/// How strong a bleeding was on the day it was recorded.
+///
+/// Four steps, named the way the person recording them would say it. Ordered
+/// weakest to strongest so a reader of the enum can see the ramp; nothing in
+/// the code depends on the declaration order, which is read from the domain.
+///
+/// **Optional on the record**, because every entry written before this existed
+/// has no answer to the question and inventing one would put a strength in a
+/// health record that nobody observed.
+enum BleedingIntensity {
+  SPOTTING
+  LIGHT
+  MEDIUM
+  HEAVY
+}
+
 model BleedingEpisode {
   id        String    @id @default(cuid(2))
   /// The first day of bleeding. A date, not a timestamp: nobody records a
@@ -503,6 +519,19 @@ model BleedingEpisode {
   /// is the one people actually track, and demanding an end would make the
   /// common entry the awkward one.
   endedOn   DateTime? @db.Date
+
+  /// How strong it was, where that was recorded.
+  ///
+  /// Null on every entry made before the calendar existed, and on any entry
+  /// that only names the days. Not a default: "unspecified" and "spotting" are
+  /// different observations, and a column that guessed would make the two
+  /// indistinguishable in the record.
+  ///
+  /// The calendar records **one row per day**, which the unique constraint
+  /// below already enforces — it reads "one episode per athlete per first day",
+  /// and a day-marked entry is a first day that is also the last. Ranges
+  /// entered before the calendar keep working and keep their `endedOn`.
+  intensity BleedingIntensity?
 
   note      String?
   createdAt DateTime @default(now())

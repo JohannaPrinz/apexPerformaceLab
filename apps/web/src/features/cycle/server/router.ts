@@ -4,9 +4,21 @@ import { TRPCError } from '@trpc/server';
 
 import { createTRPCRouter, withCoachPermission, withPermission } from '@/server/api/trpc';
 
-import { listBleedingSchema, recordBleedingSchema, removeBleedingSchema } from '../schemas';
+import {
+  bleedingMonthSchema,
+  listBleedingSchema,
+  recordBleedingSchema,
+  removeBleedingSchema,
+  setBleedingDaySchema,
+} from '../schemas';
 
-import { listBleeding, recordBleeding, removeBleeding } from './service';
+import {
+  bleedingMonth,
+  listBleeding,
+  recordBleeding,
+  removeBleeding,
+  setBleedingDay,
+} from './service';
 
 /**
  * Cycle tracking.
@@ -75,6 +87,60 @@ export const cycleRouter = createTRPCRouter({
       }
 
       return result.episode;
+    }),
+
+  /**
+   * One month, every day of it.
+   *
+   * A grid needs every cell, not only the ones with something in them, so this
+   * answers with all of them and says per day whether anything was documented.
+   */
+  month: withPermission('athlete:read')
+    .input(bleedingMonthSchema)
+    .query(async ({ ctx, input }) => {
+      const month = await bleedingMonth(
+        ctx.db,
+        ctx.tenant,
+        input.athleteId,
+        new Date(`${input.month}T00:00:00.000Z`),
+      );
+
+      if (month === null) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Athlet nicht gefunden.' });
+      }
+
+      return month;
+    }),
+
+  /**
+   * Marks one day, or clears it.
+   *
+   * `withCoachPermission` because authorship is stored: the coach is taken from
+   * the session, never from the request. **The athlete's own marking is not
+   * here** — the model carries `recordedBy: ATHLETE` and the calendar shows it,
+   * but the portal has no authorization path yet (§21), and a procedure that
+   * trusted a client-supplied author would be the hole that path exists to
+   * close.
+   */
+  setDay: withCoachPermission('athlete:write')
+    .input(setBleedingDaySchema)
+    .mutation(async ({ ctx, input }) => {
+      const result = await setBleedingDay(ctx.db, ctx.tenant, input, {
+        recordedBy: 'COACH',
+        coachId: ctx.coach.id,
+      });
+
+      if (!result.ok) {
+        throw new TRPCError({
+          code: result.reason === 'ATHLETE_NOT_FOUND' ? 'NOT_FOUND' : 'CONFLICT',
+          message:
+            result.reason === 'ATHLETE_NOT_FOUND'
+              ? 'Athlet nicht gefunden.'
+              : 'Dieser Tag gehört zu einem mehrtägigen Eintrag. Der Eintrag lässt sich nur im Ganzen entfernen.',
+        });
+      }
+
+      return { ok: true };
     }),
 
   /**
