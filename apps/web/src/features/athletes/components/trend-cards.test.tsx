@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TrendCards, type TrendChartView, type TrendOptionView } from './trend-cards';
 
+import type { CycleMonthView } from './cycle-month';
+
 /**
  * The actions are stubbed, not exercised.
  *
@@ -14,6 +16,11 @@ import { TrendCards, type TrendChartView, type TrendOptionView } from './trend-c
  */
 vi.mock('../server/actions', () => ({
   setTrendCardAction: vi.fn(() => Promise.resolve({})),
+  setTrendCardOrderAction: vi.fn((_athleteId: string, keys: readonly string[]) => {
+    mocks.ordered.push([...keys]);
+
+    return Promise.resolve({});
+  }),
   recordTrackingAction: vi.fn(() => Promise.resolve({})),
 }));
 
@@ -32,6 +39,8 @@ const mocks = vi.hoisted(() => ({
   replaced: [] as string[],
   recorded: [] as string[],
   removed: [] as string[],
+  ordered: [] as string[][],
+  markedDays: [] as [string, string | null][],
 }));
 
 vi.mock('next/navigation', () => ({
@@ -44,11 +53,10 @@ vi.mock('next/navigation', () => ({
 }));
 
 vi.mock('@/features/cycle/server/actions', () => ({
-  recordBleedingAction: (_state: unknown, form: FormData) => {
-    const value = form.get('startedOn');
-    mocks.recorded.push(typeof value === 'string' ? value : '');
+  setBleedingDayAction: (_athleteId: string, day: string, intensity: string | null) => {
+    mocks.markedDays.push([day, intensity]);
 
-    return Promise.resolve({ status: 'idle' });
+    return Promise.resolve({});
   },
   removeBleedingAction: (_athleteId: string, _state: unknown, form: FormData) => {
     const value = form.get('episodeId');
@@ -95,12 +103,26 @@ const renderCards = (
   options: TrendOptionView[] = [option()],
   charts: (TrendChartView | null)[] = [],
   cards: { key: string; exerciseIds: string[] }[] = [],
-) => render(<TrendCards athleteId="ath_1" options={options} charts={charts} cards={cards} />);
+  cycle: CycleMonthView | null = null,
+) =>
+  render(
+    <TrendCards
+      athleteId="ath_1"
+      options={options}
+      charts={charts}
+      cards={cards}
+      nutrition={null}
+      biofeedback={null}
+      cycle={cycle}
+    />,
+  );
 
 beforeEach(() => {
   mocks.replaced.length = 0;
   mocks.recorded.length = 0;
   mocks.removed.length = 0;
+  mocks.ordered.length = 0;
+  mocks.markedDays.length = 0;
 });
 
 describe('what the area shows before anything is asked for', () => {
@@ -358,7 +380,9 @@ describe('what a card draws', () => {
       [{ key: 'external_load', exerciseIds: [] }],
     );
 
-    const swatches = [...document.querySelectorAll('li span[aria-hidden]')].map((node) =>
+    // Scoped to the chart's own legend: every card now carries a drag handle,
+    // which is also an `aria-hidden` span inside a list item.
+    const swatches = [...document.querySelectorAll('figure li span[aria-hidden]')].map((node) =>
       node.className.replace(/bg-chart-\d/g, ''),
     );
 
@@ -378,93 +402,170 @@ describe('what a card draws', () => {
 });
 
 /**
- * The cycle card is where a bleeding is recorded, not only where it is read.
- * A log and the entry that feeds it are one thing.
+ * The cycle card is a month, and marking a day is how a bleeding is recorded.
+ *
+ * The rule under test throughout is the one the design system states and this
+ * card is the hardest case for: **colour never carries meaning alone**. Four
+ * strengths drawn as one red at four opacities collapse into one mark in
+ * greyscale, so each step has to differ in shape as well, and the legend has to
+ * name every one of them in words.
  */
 describe('the cycle card', () => {
-  const cycle = (episodes: TrendChartView['episodes'] = []) =>
+  const march = (days: CycleMonthView['days']) =>
     renderCards(
       [option({ key: 'cycle', kind: 'cycle', name: 'Zyklus', unit: '' })],
-      [chart({ key: 'cycle', kind: 'cycle', title: 'Zyklus', unit: '', series: [], episodes })],
+      [chart({ key: 'cycle', kind: 'cycle', title: 'Zyklus', unit: '', series: [], episodes: [] })],
       [{ key: 'cycle', exerciseIds: [] }],
+      { month: day('2026-03-01'), days },
     );
 
-  const episode = {
-    id: 'ep_1',
-    startedOn: day('2026-02-02'),
-    endedOn: day('2026-02-06'),
+  const blank = (iso: string): CycleMonthView['days'][number] => ({
+    date: day(iso),
+    marked: false,
+    intensity: null,
+    episodeId: null,
+    partOfRange: false,
     note: null,
-    recordedBy: 'COACH' as const,
-  };
-
-  it('asks for the first day and nothing more', () => {
-    cycle();
-
-    expect(screen.getByLabelText(/Erster Tag/)).toBeRequired();
-    expect(screen.getByLabelText(/Letzter Tag/)).not.toBeRequired();
+    recordedBy: null,
   });
 
-  it('records what was entered', async () => {
+  const wholeMarch = () =>
+    Array.from({ length: 31 }, (_, index) =>
+      blank(`2026-03-${String(index + 1).padStart(2, '0')}`),
+    );
+
+  it('lays out every day of the month', () => {
+    march(wholeMarch());
+
+    // A grid needs every cell, not only the ones with something in them.
+    // Exact names, because `/4. März/` also matches the 14th and the 24th.
+    const named = screen
+      .getAllByRole('button')
+      .map((node) => node.getAttribute('aria-label') ?? '')
+      .filter((label) => label.includes('März 2026'));
+
+    expect(named).toHaveLength(31);
+    expect(named[0]).toBe('1. März 2026 — nichts dokumentiert');
+    expect(named[30]).toBe('31. März 2026 — nichts dokumentiert');
+  });
+
+  it('says in words what each day holds, not only in colour', () => {
+    const days = wholeMarch();
+    days[3] = { ...blank('2026-03-04'), marked: true, intensity: 'HEAVY', episodeId: 'ep_1' };
+    march(days);
+
+    // A screen reader cannot see how full a circle is.
+    expect(screen.getByRole('button', { name: '4. März 2026 — Stark' })).toBeVisible();
+    expect(
+      screen.getByRole('button', { name: '5. März 2026 — nichts dokumentiert' }),
+    ).toBeVisible();
+  });
+
+  it('names all four strengths in a legend', () => {
+    march(wholeMarch());
+
+    for (const label of ['Schmierblutung', 'Leicht', 'Mittel', 'Stark']) {
+      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+    }
+  });
+
+  it('offers the four strengths when a day is opened', async () => {
     const user = userEvent.setup();
-    cycle();
+    march(wholeMarch());
 
-    await user.type(screen.getByLabelText(/Erster Tag/), '2026-03-04');
-    await user.click(screen.getByRole('button', { name: 'Blutung dokumentieren' }));
+    await user.click(screen.getByRole('button', { name: '4. März 2026 — nichts dokumentiert' }));
 
-    expect(mocks.recorded).toEqual(['2026-03-04']);
+    expect(screen.getByRole('group', { name: 'Stärke für 4. März 2026' })).toBeVisible();
   });
 
-  it('says plainly when nothing has been documented', () => {
-    cycle();
-
-    expect(screen.getByText('Noch nichts dokumentiert.')).toBeVisible();
-  });
-
-  it('lists what was written down', () => {
-    cycle([episode]);
-
-    expect(screen.getByText('02.02.2026')).toBeVisible();
-    expect(screen.getByText(/bis 06\.02\.2026/)).toBeVisible();
-  });
-
-  it('says when no end was documented rather than inventing one', () => {
-    cycle([{ ...episode, endedOn: null }]);
-
-    expect(screen.getByText('Ende nicht dokumentiert')).toBeVisible();
-  });
-
-  it('says who recorded it', () => {
-    cycle([{ ...episode, recordedBy: 'ATHLETE' }]);
-
-    expect(screen.getByText('Vom Athleten')).toBeVisible();
-  });
-
-  it('lets an entry be removed', async () => {
+  it('records the strength that was chosen', async () => {
     const user = userEvent.setup();
-    cycle([episode]);
+    march(wholeMarch());
 
-    await user.click(screen.getByRole('button', { name: 'Entfernen' }));
+    await user.click(screen.getByRole('button', { name: '4. März 2026 — nichts dokumentiert' }));
+    const picker = screen.getByRole('group', { name: 'Stärke für 4. März 2026' });
+    await user.click(within(picker).getByRole('button', { name: 'Mittel' }));
 
-    expect(mocks.removed).toEqual(['ep_1']);
+    expect(mocks.markedDays).toEqual([['2026-03-04', 'MEDIUM']]);
+  });
+
+  it('clears a day with the same control that marked it', async () => {
+    const user = userEvent.setup();
+    const days = wholeMarch();
+    days[3] = { ...blank('2026-03-04'), marked: true, intensity: 'LIGHT', episodeId: 'ep_1' };
+    march(days);
+
+    await user.click(screen.getByRole('button', { name: '4. März 2026 — Leicht' }));
+    const picker = screen.getByRole('group', { name: 'Stärke für 4. März 2026' });
+    await user.click(within(picker).getByRole('button', { name: 'Nichts' }));
+
+    expect(mocks.markedDays).toEqual([['2026-03-04', null]]);
+  });
+
+  it('refuses to split an entry that covers several days', async () => {
+    // Splitting one would mean inventing a strength for the days nobody
+    // touched. It offers the operation that does exist instead.
+    const user = userEvent.setup();
+    const days = wholeMarch();
+    days[3] = {
+      ...blank('2026-03-04'),
+      marked: true,
+      intensity: null,
+      episodeId: 'ep_range',
+      partOfRange: true,
+    };
+    march(days);
+
+    await user.click(
+      screen.getByRole('button', { name: '4. März 2026 — dokumentiert, ohne Stärke' }),
+    );
+
+    expect(screen.queryByRole('group', { name: /Stärke für/ })).toBeNull();
+    expect(screen.getByText(/mehrtägigen Eintrag/)).toBeVisible();
+
+    await user.click(screen.getByRole('button', { name: 'Ganzen Eintrag entfernen' }));
+    expect(mocks.removed).toEqual(['ep_range']);
+  });
+
+  it('says who documented a day', () => {
+    const days = wholeMarch();
+    days[3] = {
+      ...blank('2026-03-04'),
+      marked: true,
+      intensity: 'MEDIUM',
+      episodeId: 'ep_1',
+      recordedBy: 'ATHLETE',
+    };
+    march(days);
+
+    // The strength reaches a screen reader through the day's own name; who
+    // documented it is stated in the panel the day opens.
+    expect(screen.getByRole('button', { name: '4. März 2026 — Mittel' })).toBeVisible();
   });
 
   it('computes no phase, length or prediction', () => {
-    cycle([episode, { ...episode, id: 'ep_2', startedOn: day('2026-03-04'), endedOn: null }]);
+    const days = wholeMarch();
+    days[3] = { ...blank('2026-03-04'), marked: true, intensity: 'HEAVY', episodeId: 'ep_1' };
+    march(days);
 
-    const lists = screen.getAllByRole('list');
-    const text = within(lists[lists.length - 1]!)
-      .queryAllByRole('listitem')
-      .map((node) => node.textContent ?? '')
+    // Scoped to what the card *states about the athlete* — the name of every
+    // day. A body-wide scan would fail on the very sentence that promises
+    // nothing is computed ("weder eine Zyklusphase noch …").
+    const stated = screen
+      .getAllByRole('button')
+      .map((node) => node.getAttribute('aria-label') ?? '')
+      .filter((label) => label.includes('März 2026'))
       .join(' ')
       .toLowerCase();
 
+    expect(stated).toContain('stark');
     for (const word of ['phase', 'zykluslänge', 'eisprung', 'voraussichtlich', 'fruchtbar']) {
-      expect(text, word).not.toContain(word);
+      expect(stated, word).not.toContain(word);
     }
   });
 
   it('says outright that nothing is derived from the entries', () => {
-    cycle();
+    march(wholeMarch());
 
     expect(screen.getByText(/nichts daraus abgeleitet/)).toBeVisible();
   });

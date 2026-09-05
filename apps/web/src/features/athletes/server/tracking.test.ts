@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { deleteTrackingEntry, recordTrackingEntry, setTrendCard, trendCardsFor } from './tracking';
+import { readCardRows, TREND_CARDS_VERSION } from '@apex/domain';
+
+import {
+  deleteTrackingEntry,
+  recordTrackingEntry,
+  setTrendCard,
+  setTrendCardOrder,
+} from './tracking';
 
 /**
  * Values recorded outside an examination.
@@ -188,21 +195,17 @@ describe('removing a reading', () => {
 });
 
 describe('which cards a profile shows', () => {
-  it('is empty until the coach chooses', async () => {
-    const { db } = trackingDb();
-
-    expect(await trendCardsFor(db, TENANT, 'ath_1')).toEqual([]);
-  });
-
   it('adds a card without disturbing the ones already there', async () => {
     const { db, updated } = trackingDb({
+      // A version-1 payload on purpose: what is stored today, and it has to
+      // keep working after the shape gained per-card rows.
       trendCards: { version: 1, keys: ['weight', 'body_fat'] },
     });
 
     await setTrendCard(db, TENANT, 'ath_1', 'grip_strength', true);
 
     expect(updated[0]?.['trendCards']).toEqual({
-      version: 1,
+      version: TREND_CARDS_VERSION,
       keys: ['weight', 'body_fat', 'grip_strength'],
     });
   });
@@ -215,7 +218,7 @@ describe('which cards a profile shows', () => {
     await setTrendCard(db, TENANT, 'ath_1', 'body_fat', false);
 
     expect(updated[0]?.['trendCards']).toEqual({
-      version: 1,
+      version: TREND_CARDS_VERSION,
       keys: ['weight', 'grip_strength'],
     });
   });
@@ -233,5 +236,84 @@ describe('which cards a profile shows', () => {
 
     expect(await setTrendCard(db, TENANT, 'ath_1', 'weight', true)).toBe(false);
     expect(updated).toHaveLength(0);
+  });
+});
+
+/**
+ * The order the coach dragged the cards into.
+ *
+ * A reorder must not become a delete, and it must not lose the row selections
+ * that live in the same payload. Both are silent failures: the screen would
+ * look right and the record would be short.
+ */
+describe('reordering the cards', () => {
+  it('stores the new order', async () => {
+    const { db, updated } = trackingDb({
+      trendCards: { version: 2, keys: ['weight', 'cycle', 'nutrition'] },
+    });
+
+    await setTrendCardOrder(db, TENANT, 'ath_1', ['nutrition', 'weight', 'cycle']);
+
+    expect((updated[0]?.['trendCards'] as { keys: string[] }).keys).toEqual([
+      'nutrition',
+      'weight',
+      'cycle',
+    ]);
+  });
+
+  it('drops a key the athlete does not have', async () => {
+    // A stale screen must not add a card by naming one.
+    const { db, updated } = trackingDb({ trendCards: { version: 2, keys: ['weight'] } });
+
+    await setTrendCardOrder(db, TENANT, 'ath_1', ['erfunden', 'weight']);
+
+    expect((updated[0]?.['trendCards'] as { keys: string[] }).keys).toEqual(['weight']);
+  });
+
+  it('keeps a card the caller left out rather than removing it', async () => {
+    // Removing is a different operation with its own control. A stale screen
+    // that omitted a card must not delete it.
+    const { db, updated } = trackingDb({
+      trendCards: { version: 2, keys: ['weight', 'cycle', 'nutrition'] },
+    });
+
+    await setTrendCardOrder(db, TENANT, 'ath_1', ['nutrition']);
+
+    expect((updated[0]?.['trendCards'] as { keys: string[] }).keys).toEqual([
+      'nutrition',
+      'weight',
+      'cycle',
+    ]);
+  });
+
+  it('carries the row selections through untouched', async () => {
+    const { db, updated } = trackingDb({
+      trendCards: {
+        version: 2,
+        keys: ['biofeedback', 'weight'],
+        rows: { biofeedback: ['stress', 'hunger'] },
+      },
+    });
+
+    await setTrendCardOrder(db, TENANT, 'ath_1', ['weight', 'biofeedback']);
+
+    expect(readCardRows(updated[0]?.['trendCards'], 'biofeedback')).toEqual(['stress', 'hunger']);
+  });
+
+  it('scopes the write to the workspace', async () => {
+    const { db, athlete } = trackingDb({ trendCards: { version: 2, keys: ['weight'] } });
+
+    await setTrendCardOrder(db, TENANT, 'ath_1', ['weight']);
+
+    expect(argsOf(athlete.updateMany).where).toMatchObject({
+      id: 'ath_1',
+      organizationId: 'org_a',
+    });
+  });
+
+  it('answers false for an athlete of another workspace', async () => {
+    const { db } = trackingDb({ athleteFound: false });
+
+    expect(await setTrendCardOrder(db, TENANT, 'ath_1', ['weight'])).toBe(false);
   });
 });

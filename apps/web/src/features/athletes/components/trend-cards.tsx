@@ -1,18 +1,25 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useRef, useState, useTransition } from 'react';
 
 import { useRouter, useSearchParams } from 'next/navigation';
 
-import { Plus, X } from 'lucide-react';
+import { ChevronDown, GripVertical, Plus, X } from 'lucide-react';
 
-import { Badge, Button } from '@apex/ui';
+import { Button } from '@apex/ui';
 
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_FIELD, TOUCH_TARGET } from '@/components/common/touch';
-import { recordBleedingAction, removeBleedingAction } from '@/features/cycle/server/actions';
 
-import { recordTrackingAction, setTrendCardAction } from '../server/actions';
+import {
+  recordTrackingAction,
+  setTrendCardAction,
+  setTrendCardOrderAction,
+} from '../server/actions';
 import { encodeTrendCards, type TrendCardSelection } from '../trend-slots';
+
+import { BiofeedbackWeek, type BiofeedbackWeekView } from './biofeedback-week';
+import { CycleMonth, type CycleMonthView } from './cycle-month';
+import { NutritionWeek, type NutritionWeekView } from './nutrition-week';
 
 /**
  * The trends of one athlete, as many as the coach wants.
@@ -41,7 +48,7 @@ import { encodeTrendCards, type TrendCardSelection } from '../trend-slots';
 
 export interface TrendOptionView {
   readonly key: string;
-  readonly kind: 'measurement' | 'cycle';
+  readonly kind: 'measurement' | 'cycle' | 'nutrition' | 'biofeedback';
   readonly name: string;
   readonly unit: string;
   readonly exercises: readonly { readonly id: string; readonly name: string }[];
@@ -58,7 +65,7 @@ export interface TrendEpisodeView {
 
 export interface TrendChartView {
   readonly key: string;
-  readonly kind: 'measurement' | 'cycle';
+  readonly kind: 'measurement' | 'cycle' | 'nutrition' | 'biofeedback';
   readonly title: string;
   readonly unit: string;
   readonly series: readonly {
@@ -71,11 +78,22 @@ export interface TrendChartView {
   readonly exerciseIds: readonly string[];
 }
 
+/**
+ * The table cards' keys.
+ *
+ * Repeated rather than imported from the server slice: this file is
+ * `'use client'`, and `trends.ts` is `server-only`. The strings are the
+ * contract between them, and `trend-cards.test.tsx` is where the two are held
+ * together.
+ */
+const NUTRITION_CARD_KEY = 'nutrition';
+const BIOFEEDBACK_CARD_KEY = 'biofeedback';
+
+/** The cards that are tables, and therefore not part of the chart grid. */
+const TABLE_CARD_KEYS = new Set([NUTRITION_CARD_KEY, BIOFEEDBACK_CARD_KEY]);
+
 const day = (value: Date): string =>
   new Intl.DateTimeFormat('de-DE', { dateStyle: 'short', timeZone: 'UTC' }).format(value);
-
-const longDay = (value: Date): string =>
-  new Intl.DateTimeFormat('de-DE', { dateStyle: 'medium', timeZone: 'UTC' }).format(value);
 
 const decimal = (value: number): string =>
   new Intl.NumberFormat('de-DE', { maximumFractionDigits: 2 }).format(value);
@@ -85,16 +103,61 @@ export function TrendCards({
   options,
   charts,
   cards,
+  nutrition,
+  biofeedback,
+  cycle,
 }: {
   athleteId: string;
   options: readonly TrendOptionView[];
   /** One entry per card, in the same order. */
   charts: readonly (TrendChartView | null)[];
   cards: readonly TrendCardSelection[];
+  /**
+   * The table cards, each loaded only where it is on screen.
+   *
+   * They sit beside the charts rather than among them because each is several
+   * quantities across seven days: half of a two-column grid is not a width
+   * either can be read at.
+   */
+  nutrition: NutritionWeekView | null;
+  biofeedback: BiofeedbackWeekView | null;
+  /** The cycle month, loaded only where that card is on screen. */
+  cycle: CycleMonthView | null;
 }) {
   const router = useRouter();
   const search = useSearchParams();
   const [adding, setAdding] = useState(false);
+  /** The card being dragged, and the one it is over. */
+  const [dragging, setDragging] = useState<number | null>(null);
+  const [over, setOver] = useState<number | null>(null);
+  /**
+   * Whether the pointer went down on a drag handle.
+   *
+   * A **ref**, not state, and that is the whole point. The browser reads
+   * `draggable` and decides whether a drag may begin during the very gesture
+   * that would set the state — so arming it with `useState` leaves the
+   * attribute one render behind, and the drag either fails or works by luck
+   * depending on when React flushed. A browser run found exactly that: a real
+   * press-and-move on the handle started no drag at all.
+   *
+   * So every card stays draggable and `onDragStart` cancels the ones that did
+   * not begin on a handle. A ref is readable in the same tick, which is what
+   * makes that check correct rather than lucky — and it keeps text selection
+   * inside the tables' input fields working, because dragging text never arms
+   * it.
+   */
+  const armed = useRef(false);
+  /**
+   * Which card is being dragged, readable in the same tick.
+   *
+   * The state below drives the highlight; this drives the *decision*. A drag
+   * can produce a single `dragover` immediately followed by a `drop`, and a
+   * handler that read the index from state would see `null` in both — so
+   * `dragover` would never call `preventDefault`, the drop would be refused,
+   * and the card would spring back. A browser run found precisely that: every
+   * drag event fired and nothing moved.
+   */
+  const dragFrom = useRef<number | null>(null);
 
   const write = (next: readonly TrendCardSelection[]) => {
     const params = new URLSearchParams(search.toString());
@@ -126,87 +189,268 @@ export function TrendCards({
   /** What is not on screen yet. The same card twice would be one card twice. */
   const available = options.filter((option) => !cards.some((card) => card.key === option.key));
 
+  /**
+   * Moving a card to a new position.
+   *
+   * Writes twice, like adding and removing: the address bar changes at once so
+   * the screen responds without a round trip, and the athlete's stored order
+   * follows so the arrangement survives leaving the page.
+   */
+  const moveTo = (from: number, to: number) => {
+    if (from === to || to < 0 || to >= cards.length) return;
+
+    const next = [...cards];
+    const [moved] = next.splice(from, 1);
+    if (moved === undefined) return;
+    next.splice(to, 0, moved);
+
+    write(next);
+    void setTrendCardOrderAction(
+      athleteId,
+      next.map((card) => card.key),
+    );
+  };
+
   return (
     <section aria-labelledby="trends" className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
-        <div className="flex min-w-0 flex-col gap-1">
+      {/* Collapsible, and **open** to begin with — the opposite of the master
+          data above, because this is what a coach comes back to the profile
+          for. `<details>` rather than state, so the browser keeps whichever way
+          they leave it.
+
+          The heading alone is the summary: a button inside a `<summary>` is a
+          control inside a control, and clicking it would toggle the section as
+          well as fire. "Karte hinzufügen" therefore sits in the body. */}
+      <details open className="group">
+        <summary
+          className={`${TOUCH_TARGET} ${FOCUS_RING} flex w-fit cursor-pointer list-none items-center gap-2 rounded [&::-webkit-details-marker]:hidden`}
+        >
+          <ChevronDown
+            aria-hidden="true"
+            className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180"
+          />
           <h2 id="trends" className="text-lg font-semibold">
             Verlauf
           </h2>
-          <p className="text-sm text-muted-foreground">
-            Dargestellt wird, was erfasst wurde — es findet keine fachliche Bewertung statt.
-          </p>
-        </div>
+          <span className="text-xs text-muted-foreground group-open:hidden">einblenden</span>
+          <span className="hidden text-xs text-muted-foreground group-open:inline">ausblenden</span>
+        </summary>
 
-        {available.length === 0 ? null : (
-          <Button
-            type="button"
-            variant="accent"
-            className={TOUCH_BUTTON}
-            onClick={() => {
-              setAdding((open) => !open);
-            }}
-          >
-            <Plus aria-hidden="true" />
-            Karte hinzufügen
-          </Button>
-        )}
-      </div>
+        {/* The body in its own column rather than flex on the `<details>`
+            itself — the same shape the master-data block above uses, so the two
+            disclosures on this page behave identically. `min-w-0` because what
+            follows holds two tables that scroll horizontally inside
+            themselves, and a flex item that will not shrink below its content
+            would take the page sideways with them. */}
+        <div className="mt-4 flex min-w-0 flex-col gap-4">
+          <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
+            <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+              Dargestellt wird, was erfasst wurde — es findet keine fachliche Bewertung statt.
+            </p>
 
-      {!adding ? null : (
-        <ul className="flex flex-wrap gap-2 rounded-md border border-border bg-card p-3">
-          {available.map((option) => (
-            <li key={option.key}>
-              <button
+            {available.length === 0 ? null : (
+              <Button
                 type="button"
+                variant="accent"
+                className={TOUCH_BUTTON}
                 onClick={() => {
-                  add(option.key);
+                  setAdding((open) => !open);
                 }}
-                className={`${FOCUS_RING} ${TOUCH_TARGET} flex items-center gap-2 rounded-md border border-border px-3 text-sm hover:bg-muted`}
               >
-                {option.name}
-                {option.unit === '' ? null : (
-                  <span className="text-xs text-muted-foreground">{option.unit}</span>
-                )}
-                {option.count === 0 ? (
-                  <span className="text-xs text-muted-foreground">noch nichts erfasst</span>
-                ) : null}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+                <Plus aria-hidden="true" />
+                Karte hinzufügen
+              </Button>
+            )}
+          </div>
 
-      {cards.length === 0 ? (
-        <p className="rounded-md border border-dashed border-border px-3 py-8 text-center text-sm text-muted-foreground">
-          {options.length === 0
-            ? 'Für diesen Athleten lässt sich noch nichts über die Zeit darstellen.'
-            : 'Noch keine Karte. Über „Karte hinzufügen" einen Verlauf aufnehmen.'}
-        </p>
-      ) : (
-        /* One column on a phone, two from `md`: two charts sharing a 375px row
-           would be two illegible charts. */
-        <div className="grid gap-4 md:grid-cols-2">
-          {cards.map((card, index) => (
-            <TrendCard
-              key={`${card.key}-${String(index)}`}
-              athleteId={athleteId}
-              chart={charts[index] ?? null}
-              cardKey={card.key}
-              onRemove={() => {
-                remove(card.key);
-              }}
-              onNarrow={(exerciseIds) => {
-                write(
-                  cards.map((entry, position) =>
-                    position === index ? { ...entry, exerciseIds } : entry,
-                  ),
+          {!adding ? null : (
+            <ul className="flex flex-wrap gap-2 rounded-md border border-border bg-card p-3">
+              {available.map((option) => (
+                <li key={option.key}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      add(option.key);
+                    }}
+                    className={`${FOCUS_RING} ${TOUCH_TARGET} flex items-center gap-2 rounded-md border border-border px-3 text-sm hover:bg-muted`}
+                  >
+                    {option.name}
+                    {option.unit === '' ? null : (
+                      <span className="text-xs text-muted-foreground">{option.unit}</span>
+                    )}
+                    {option.count === 0 ? (
+                      <span className="text-xs text-muted-foreground">noch nichts erfasst</span>
+                    ) : null}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {cards.length === 0 ? (
+            <p className="rounded-md border border-dashed border-border px-3 py-8 text-center text-sm text-muted-foreground">
+              {options.length === 0
+                ? 'Für diesen Athleten lässt sich noch nichts über die Zeit darstellen.'
+                : 'Noch keine Karte. Über „Karte hinzufügen" einen Verlauf aufnehmen.'}
+            </p>
+          ) : (
+            /* One list, in the order the coach arranged, rather than the tables
+               above a grid of charts. Reordering only means something if what
+               is reordered is what is drawn — and the tables span both columns,
+               because a week of five quantities is not readable in half a row.
+
+               One column on a phone, two from `md`: two charts sharing a 375px
+               row would be two illegible charts. */
+            <ul className="grid gap-4 md:grid-cols-2">
+              {cards.map((card, index) => {
+                const table = TABLE_CARD_KEYS.has(card.key);
+                const title =
+                  charts[index]?.title ??
+                  options.find((option) => option.key === card.key)?.name ??
+                  card.key;
+
+                return (
+                  <li
+                    key={`${card.key}-${String(index)}`}
+                    className={`flex min-w-0 flex-col gap-1 ${table ? 'md:col-span-2' : ''} ${
+                      dragging === index ? 'opacity-50' : ''
+                    } ${over === index && dragging !== index ? 'rounded-md ring-2 ring-accent ring-offset-2 ring-offset-background' : ''}`}
+                    draggable
+                    // Capture, so this runs before the handle's own handler and
+                    // a press anywhere else disarms the drag.
+                    onMouseDownCapture={() => {
+                      armed.current = false;
+                    }}
+                    onDragStart={(event) => {
+                      // Not from a handle: a text selection inside one of the
+                      // tables, which must not pick the card up.
+                      if (!armed.current) {
+                        event.preventDefault();
+
+                        return;
+                      }
+
+                      dragFrom.current = index;
+                      setDragging(index);
+                      event.dataTransfer.effectAllowed = 'move';
+                      // Firefox starts no drag without data on the transfer.
+                      event.dataTransfer.setData('text/plain', card.key);
+                    }}
+                    onDragOver={(event) => {
+                      if (dragFrom.current === null) return;
+                      // Without this the drop is refused and the card springs
+                      // back, however convincing the drag looked.
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = 'move';
+                      setOver(index);
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const from = dragFrom.current;
+                      if (from !== null) moveTo(from, index);
+                      dragFrom.current = null;
+                      setDragging(null);
+                      setOver(null);
+                      armed.current = false;
+                    }}
+                    onDragEnd={() => {
+                      dragFrom.current = null;
+                      setDragging(null);
+                      setOver(null);
+                      armed.current = false;
+                    }}
+                  >
+                    {/* Drag for a mouse, buttons for everything else. Native
+                        drag-and-drop does not fire on touch at all, and it is
+                        unreachable from the keyboard — so the buttons are not a
+                        fallback, they are the accessible path. */}
+                    <div className="flex items-center gap-0.5">
+                      <span
+                        aria-hidden="true"
+                        onMouseDown={() => {
+                          armed.current = true;
+                        }}
+                        onMouseUp={() => {
+                          armed.current = false;
+                        }}
+                        className="flex cursor-grab items-center rounded px-1 py-0.5 text-muted-foreground/60 hover:text-foreground active:cursor-grabbing"
+                      >
+                        <GripVertical className="size-4" />
+                      </span>
+
+                      <button
+                        type="button"
+                        aria-label={`${title} nach vorn`}
+                        disabled={index === 0}
+                        onClick={() => {
+                          moveTo(index, index - 1);
+                        }}
+                        className={`${FOCUS_RING} ${TOUCH_TARGET} rounded px-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-30`}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`${title} nach hinten`}
+                        disabled={index === cards.length - 1}
+                        onClick={() => {
+                          moveTo(index, index + 1);
+                        }}
+                        className={`${FOCUS_RING} ${TOUCH_TARGET} rounded px-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-30`}
+                      >
+                        ↓
+                      </button>
+
+                      <span className="text-[10px] text-muted-foreground" data-numeric>
+                        {index + 1}/{cards.length}
+                      </span>
+                    </div>
+
+                    {card.key === BIOFEEDBACK_CARD_KEY ? (
+                      biofeedback === null ? null : (
+                        <BiofeedbackWeek
+                          athleteId={athleteId}
+                          week={biofeedback}
+                          onRemove={() => {
+                            remove(BIOFEEDBACK_CARD_KEY);
+                          }}
+                        />
+                      )
+                    ) : card.key === NUTRITION_CARD_KEY ? (
+                      nutrition === null ? null : (
+                        <NutritionWeek
+                          athleteId={athleteId}
+                          week={nutrition}
+                          onRemove={() => {
+                            remove(NUTRITION_CARD_KEY);
+                          }}
+                        />
+                      )
+                    ) : (
+                      <TrendCard
+                        athleteId={athleteId}
+                        chart={charts[index] ?? null}
+                        cardKey={card.key}
+                        cycle={cycle}
+                        onRemove={() => {
+                          remove(card.key);
+                        }}
+                        onNarrow={(exerciseIds) => {
+                          write(
+                            cards.map((entry, position) =>
+                              position === index ? { ...entry, exerciseIds } : entry,
+                            ),
+                          );
+                        }}
+                      />
+                    )}
+                  </li>
                 );
-              }}
-            />
-          ))}
+              })}
+            </ul>
+          )}
         </div>
-      )}
+      </details>
     </section>
   );
 }
@@ -350,12 +594,14 @@ function TrendCard({
   athleteId,
   chart,
   cardKey,
+  cycle,
   onRemove,
   onNarrow,
 }: {
   athleteId: string;
   chart: TrendChartView | null;
   cardKey: string;
+  cycle: CycleMonthView | null;
   onRemove: () => void;
   onNarrow: (exerciseIds: readonly string[]) => void;
 }) {
@@ -385,7 +631,7 @@ function TrendCard({
           Diese Messgröße gibt es in diesem Arbeitsbereich nicht.
         </p>
       ) : chart.kind === 'cycle' ? (
-        <CycleCard athleteId={athleteId} chart={chart} />
+        <CycleCard athleteId={athleteId} month={cycle} />
       ) : (
         <>
           {chart.exercises.length === 0 ? null : (
@@ -540,162 +786,25 @@ function ValueChart({ chart }: { chart: TrendChartView }) {
 }
 
 /**
- * Documented bleeding: the list, and the way to add to it.
+ * Documented bleeding, as a month.
  *
- * Recording lives **in** the card rather than in a section of its own, because
- * a log and the entry that feeds it are one thing. What it does not hold is any
+ * The calendar and the log it feeds are one thing, so recording lives in the
+ * card rather than in a section of its own. What the card does not hold is any
  * inference: no cycle length, no phase, no fertile window, no prediction. What
  * was written down is what is shown.
+ *
+ * The month itself is drawn by `CycleMonth`; this is the wrapper that says what
+ * to do when there is no month loaded — which happens only where the card was
+ * asked for in an address the page did not read a month from.
  */
-function CycleCard({ athleteId, chart }: { athleteId: string; chart: TrendChartView }) {
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  const [startedOn, setStartedOn] = useState('');
-  const [endedOn, setEndedOn] = useState('');
-  const [note, setNote] = useState('');
-
-  const run = (work: () => Promise<{ message?: string }>, clear = false) => {
-    setError(null);
-    startTransition(async () => {
-      const result = await work();
-      if (result.message) {
-        setError(result.message);
-
-        return;
-      }
-
-      if (clear) {
-        setStartedOn('');
-        setEndedOn('');
-        setNote('');
-      }
-
-      router.refresh();
-    });
-  };
-
-  return (
-    <div className="flex flex-col gap-3">
-      <p className="text-xs text-muted-foreground">
-        Dokumentierte Blutungen. Der erste Tag genügt; Ende und Notiz sind optional. Es wird nichts
-        daraus abgeleitet — weder eine Zyklusphase noch eine Aussage zur Leistung.
+function CycleCard({ month, athleteId }: { month: CycleMonthView | null; athleteId: string }) {
+  if (month === null) {
+    return (
+      <p className="rounded-md border border-dashed border-border px-3 py-8 text-center text-xs text-muted-foreground">
+        Der Monat konnte nicht geladen werden.
       </p>
+    );
+  }
 
-      <form
-        aria-label="Blutung dokumentieren"
-        className="flex flex-col gap-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          const form = new FormData();
-          form.set('athleteId', athleteId);
-          form.set('startedOn', startedOn);
-          form.set('endedOn', endedOn);
-          form.set('note', note);
-
-          run(() => recordBleedingAction({ status: 'idle' }, form), true);
-        }}
-      >
-        <div className="grid gap-2 sm:grid-cols-2">
-          <label className="flex flex-col gap-1 text-xs font-medium">
-            Erster Tag
-            <input
-              type="date"
-              required
-              value={startedOn}
-              onChange={(event) => {
-                setStartedOn(event.target.value);
-              }}
-              className={`${TOUCH_FIELD} ${FOCUS_RING} w-full rounded-md border border-input bg-background px-2 text-sm`}
-            />
-          </label>
-
-          <label className="flex flex-col gap-1 text-xs font-medium">
-            Letzter Tag <span className="font-normal text-muted-foreground">· optional</span>
-            <input
-              type="date"
-              value={endedOn}
-              onChange={(event) => {
-                setEndedOn(event.target.value);
-              }}
-              className={`${TOUCH_FIELD} ${FOCUS_RING} w-full rounded-md border border-input bg-background px-2 text-sm`}
-            />
-          </label>
-        </div>
-
-        <label className="flex flex-col gap-1 text-xs font-medium">
-          Notiz <span className="font-normal text-muted-foreground">· optional</span>
-          <input
-            type="text"
-            maxLength={1000}
-            value={note}
-            onChange={(event) => {
-              setNote(event.target.value);
-            }}
-            className={`${TOUCH_FIELD} ${FOCUS_RING} w-full rounded-md border border-input bg-background px-2 text-sm`}
-          />
-        </label>
-
-        {error === null ? null : (
-          <p role="alert" className="text-xs text-destructive">
-            {error}
-          </p>
-        )}
-
-        <div className="flex justify-end">
-          <Button type="submit" disabled={pending} className={TOUCH_BUTTON}>
-            {pending ? 'Wird gespeichert …' : 'Blutung dokumentieren'}
-          </Button>
-        </div>
-      </form>
-
-      {chart.episodes.length === 0 ? (
-        <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
-          Noch nichts dokumentiert.
-        </p>
-      ) : (
-        <ul className="flex flex-col gap-1">
-          {chart.episodes.map((episode) => (
-            <li
-              key={episode.id}
-              className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border p-2 text-xs"
-            >
-              <span className="font-medium">{longDay(episode.startedOn)}</span>
-              <span className="text-muted-foreground">
-                {episode.endedOn === null
-                  ? 'Ende nicht dokumentiert'
-                  : `bis ${longDay(episode.endedOn)}`}
-              </span>
-              <Badge variant="secondary">
-                {episode.recordedBy === 'ATHLETE' ? 'Vom Athleten' : 'Vom Coach'}
-              </Badge>
-
-              {episode.note === null ? null : (
-                <span className="min-w-0 basis-full break-words text-muted-foreground">
-                  {episode.note}
-                </span>
-              )}
-
-              {/* Removable, unlike a measurement: a date entered on the wrong
-                  day is a slip, not a finding that has to survive in a
-                  supersede chain. */}
-              <button
-                type="button"
-                disabled={pending}
-                onClick={() => {
-                  const form = new FormData();
-                  form.set('episodeId', episode.id);
-
-                  run(() => removeBleedingAction(athleteId, { status: 'idle' }, form));
-                }}
-                className={`${FOCUS_RING} ${TOUCH_TARGET} ml-auto rounded px-2 text-muted-foreground hover:text-foreground`}
-              >
-                Entfernen
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
+  return <CycleMonth athleteId={athleteId} month={month} />;
 }
