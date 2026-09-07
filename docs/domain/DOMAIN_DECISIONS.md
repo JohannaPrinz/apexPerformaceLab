@@ -399,6 +399,12 @@ without contact details (§21 Shared Access). A uniqueness constraint on optiona
 columns would not apply in exactly that case — Postgres treats missing values as
 distinct — and would create false confidence.
 
+Optional on the record does not mean optional forever. Activating the portal
+requires an e-mail address, because that is where the access link and the
+published analysis go (§21). The requirement lives at that step, not on the
+column: an athlete entered during a first consultation must still be storable
+with nothing but a name.
+
 The rule is therefore enforced where it can actually work: when a Coach creates
 an Athlete, the domain layer looks for likely duplicates and warns. Duplicates
 arise from accidental re-entry, not from intent, so a warning at the point of
@@ -1532,6 +1538,216 @@ Videos support
 Both Coaches and Athletes may upload videos — the Athlete through the portal
 (§21). Under Shared Access there is no upload.
 
+### Photos are Documents
+
+A photo is stored as `Asset.kind = DOCUMENT`, a video as `Asset.kind = VIDEO`.
+There is no third kind and no separate photo model: a photo of a blood panel and
+a photo of a squat differ in what they show, not in what the system does with
+them, and the list above already names images among the examples.
+
+Everything the `Asset` model already carries stays as it is — file name, MIME
+type, size, storage key, video duration, and the context ladder above.
+`uploadedByCoachId = null` continues to mean the Athlete uploaded it.
+
+### Folders
+
+Files are filed in **folders**, and a folder is a plain shelf: an
+`organizationId`, an `athleteId`, a name, who created it, and timestamps.
+`Asset.folderId` is optional, so a file may simply be loose.
+
+**Flat, with no sub-folders.** The case a folder answers is "Formcheck am
+05.09.2026" — a session, a topic, a date. A tree would add navigation to a
+handful of files and would compete with the context ladder above, which is the
+_clinical_ placement and is a different question from where somebody filed
+something.
+
+A folder can be renamed. A folder can be deleted, and **deleting it does not
+delete what is in it**: emptying a shelf is not the same decision as destroying
+its contents, and a rule that conflated them would lose a video to a tidy-up.
+
+### Storage
+
+Supabase Storage is the only object store, in one private bucket. Every read is
+decided by the application first, which is why the bucket is private and the
+service role key never reaches a browser.
+
+The MVP runs deliberately on the free plan:
+
+|                        |                                                          |
+| ---------------------- | -------------------------------------------------------- |
+| Total storage          | 1 GB — **for the whole installation**, not per Workspace |
+| Maximum file size      | 50 MB, enforced in the application _and_ by the store    |
+| Standard upload        | up to 6 MB                                               |
+| Resumable upload (TUS) | above 6 MB                                               |
+
+**No per-Workspace quota is invented.** The intention is a small, actively kept
+media set rather than a permanent archive — which is why deleting is a first-
+class action below rather than an afterthought. Moving to a paid plan later must
+change a number, never the architecture.
+
+The path is the lifetime. `analysis-temp/` holds working files of an analysis
+screen and is swept after 14 days; `reports/<reportId>/` holds what a published
+document was frozen with; `athletes/<athleteId>/` holds the Athlete's own media.
+None of the three quietly becomes another.
+
+### Who may reach a file
+
+A Coach manages the Assets of the Athletes in their own Workspace. An Athlete
+manages **their own, and only their own** — a Workspace holds other Athletes,
+so the tenant scope that is sufficient for a Coach is not sufficient here.
+
+The Athlete's access runs through their authenticated session and
+`athleteProcedure` (§21). An `athleteId` arriving in a request is never on its
+own a reason to answer it, and neither is a `storageKey`: an object is served
+because the record behind it belongs to the caller, not because they named its
+path.
+
+An Athlete can therefore not read, download, change or delete another Athlete's
+file — not through a page, not through the API, and not through the store.
+
+### Upload
+
+Both may upload: the Athlete their own files through the portal, the Coach for
+any Athlete of their Workspace.
+
+The bytes go **straight to storage**, not through a Server Action. A request
+body is the wrong place for a video, and a resumable upload is the only kind
+that survives a phone changing network mid-way. Files up to 6 MB take the
+ordinary path; larger ones use TUS. The person watching sees progress, because
+an upload with no feedback is an upload people cancel.
+
+Authorisation happens on the server **before** any of that: the target athlete
+is resolved and approved first, and only then is an upload permitted. A
+`storageKey` supplied by a client is never on its own a reason to read or write
+an object.
+
+### Videos are compressed before they are stored
+
+The Athlete does not compress anything. The application does it for them, in the
+browser, **before** the upload — and the original is never stored alongside.
+
+Target profile for a form-check video:
+
+- at most 1280 × 720
+- at most 30 fps
+- H.264/MP4 where the platform supports it
+- no audio
+- target size ≤ 30 MB, hard limit 50 MB
+
+A moderate pass runs first; if the result is still above 30 MB a stronger pass
+follows. If it is still above 50 MB after that, **the upload is abandoned** and
+the Athlete is told plainly that the video is too long, not shown a technical
+failure. The uncompressed original is never uploaded as a fallback — that is the
+one thing this whole rule exists to prevent.
+
+A browser that cannot compress at all is treated the same way: a clean stop and
+a sentence a person understands, never a large original slipping through
+unchecked.
+
+The work is visible while it happens — "Video wird optimiert …", then
+"Upload …" — because a phone that appears to be doing nothing for forty seconds
+reads as broken.
+
+### Deleting is allowed, and is the point
+
+A file that is no longer needed should go, and go for good. On a 1 GB plan that
+is not tidiness, it is how the plan keeps working.
+
+- The Athlete may permanently delete their own files.
+- The Coach may permanently delete files of their Athletes, **including files
+  the Athlete uploaded** — for instance a form-check video, once they have
+  watched it and taken from it what they needed.
+
+**What deletion may never do is break something that is still running.** Before
+a file goes, its dependencies are checked:
+
+- A **video analysis in progress** protects its video. When the analysis is
+  finished or abandoned, the video may go like anything else.
+- A **published Report** is never at risk, because its pictures were copied into
+  `reports/<reportId>/` at publication (§16). Deleting the upload they came from
+  cannot reach the frozen document.
+- Temporary analysis files are not Assets and are not governed by this rule;
+  they keep their own 14-day sweep.
+
+### Evidence for an Insight
+
+An `InsightAsset` is an Asset a Coach **deliberately linked** as evidence for an
+Insight (§14). Being filed against an assessment, a case or an athlete does not
+make a file evidence; the link does.
+
+**Evidence does not mean the original must be kept forever.** What has to
+survive is the professional finding, not necessarily the 40 MB it was noticed
+in. So before an Asset that carries such a link is permanently deleted, the
+question asked is whether the evidence already exists in a smaller, permanent
+form:
+
+- a still frozen into a published Report
+- a saved analysis screenshot
+- stored measurement or analysis values
+- any other permanent report or analysis artefact
+
+Where it does, the original may go. Where it does not, **the Asset is not
+deleted** — an Insight whose evidence has quietly vanished is worse than a
+megabyte saved.
+
+The database link cascades when the Asset row goes, and that is the _mechanism_,
+never the _policy_. The check above runs first, in the application; a foreign
+key cannot tell whether a finding still stands on its own.
+
+Where the answer cannot be established mechanically, the deletion is refused
+rather than guessed. Refusing costs storage; guessing costs a record.
+
+### Annotations follow their video
+
+A `VideoAnnotation` is a remark at a timestamp of one video. When the video is
+permanently deleted its annotations go with it: a comment at 00:14 of a
+recording nobody can watch has no standing on its own.
+
+### Archiving an Assessment is not a storage backup
+
+Archiving takes an assessment out of the working view. It does **not** promise
+that every original file behind it is kept.
+
+Kept:
+
+- the Assessment and its results
+- Insights and Recommendations
+- published, frozen Reports
+- the report media frozen with them
+- whatever permanent evidence the rule above requires
+
+Released: original videos nobody needs any more, temporary analysis media, and
+any other Asset with no dependency on it.
+
+### Deleting an Assessment clears its storage
+
+A permanent deletion removes the objects from Supabase Storage as well — an
+orphaned file is invisible in the product and still counts against 1 GB.
+
+The dependencies decide, file by file:
+
+| Dependency                                    | What happens                                       |
+| --------------------------------------------- | -------------------------------------------------- |
+| A video analysis in progress                  | deletion is blocked                                |
+| Report media frozen into a published document | kept, independent of the original                  |
+| Linked as evidence for an Insight             | deleted only where the evidence survives elsewhere |
+| Annotations on the video                      | removed with it                                    |
+| Nothing depends on it                         | permanently deleted                                |
+
+The aim throughout is a **small active footprint**, so the MVP lives on the free
+plan as long as possible. Storage that is never released is the one way this
+model fails quietly.
+
+### Videos as a source for the analysis
+
+A stored video should be usable by the existing video analysis: the Coach
+assigns it to a Module through the context ladder above, and the analysis reads
+it from there.
+
+**This is a separate step.** The first version of the Asset feature does not
+depend on it, and analysing a video chosen from the coach's own computer must
+keep working exactly as it does today.
+
 ---
 
 ## 19. Programs
@@ -1636,6 +1852,7 @@ The Athlete cannot:
 
 - upload files
 - write Notes
+- record Tracking Entries
 - edit information
 - update the status of assigned Recommendations
 - access non-shared content
@@ -1650,19 +1867,101 @@ No new Athlete is created.
 
 The existing Athlete simply receives a linked user account.
 
-The Athlete can:
+#### Activation always runs through the Coach
+
+There is no public registration, no "create your profile" and no self-service
+onboarding. An Athlete record is only ever created by a Coach (§7). The portal
+opens access to that existing record; it never produces a second one.
+
+1. The Coach creates the Athlete in the Workspace, as before.
+2. The Coach generates a personal access link for that existing Athlete.
+3. The link is bound to exactly this Athlete and to no other.
+4. The Athlete opens it and sets their own password.
+5. From then on they sign in normally.
+6. After signing in they see exactly the one record the Coach created.
+
+**The link is an activation credential, not a session.** It does one thing —
+set the first password and link the user account to the Athlete — and is spent
+in doing it. Everything after that is an ordinary authenticated session. The
+link expires, it can be reissued, and a link that has been used is dead.
+
+**It is not a Share.** A Share (§17) shows one document to whoever holds the
+link and is deliberately independent of portal access; this one creates an
+account. Two mechanisms, no overlap, no shared code.
+
+**Activation requires an e-mail address on the Athlete.** That is where the
+access link goes, and where a published analysis goes. The address stays
+optional on the record itself (§7) — the default case is still an athlete
+about whom little is known — and becomes a precondition at the moment of
+activation. It is checked there, not by the column.
+
+#### What the Athlete can do
 
 - view shared Reports
 - view shared Documents
 - view shared Videos
 - view shared Programs
 - view shared Notes
-- upload Documents
-- upload Videos
+- record and correct their own Tracking Entries — Nutrition, Biofeedback,
+  Cycle (§13)
+- upload Documents, photos and Videos to their own area
 - write Notes on their own record
 - view Recommendations
 - update the status of assigned Recommendations
 - view Appointments
+
+#### What the Athlete cannot do
+
+- create an Athlete, or open any Athlete but their own
+- edit their master data — name, date of birth, sex, height, weight, contact
+  details
+- edit Measurements, Insights, Recommendations or Reports
+- see anything the Coach has not shared
+
+**Master data belongs to the Coach's documentation.** Height, weight, sex and
+date of birth are inputs to the body-density equations and the strength
+standards (§12), so a value the Athlete could change on their own would move
+the ground under findings the Coach has signed. The Athlete reports a weight
+the way they report everything else — as a Tracking Entry, marked as
+self-reported, which never becomes a Measurement (§13). A change of name or
+address goes through the Coach.
+
+The password is the one exception, and it is not master data: credentials
+belong to the account, and the account is the Athlete's.
+
+#### The Athlete's own area
+
+Everything the Athlete uploads lands on the **Athlete level of the context
+ladder** (§18): attached to them, to no Case, Assessment or Module. That is the
+"own area" — not a separate store, a position on a ladder that already exists.
+
+The Coach sees it, and that is the point of it. An Athlete films a set at home
+and files it; the Coach picks it up, attaches it to a Case, an Assessment or a
+Module, annotates it and uses it for the video analysis exactly like a video
+they recorded themselves (§18). Uploading is the Athlete's act. Assigning
+context is the Coach's.
+
+Photos are Documents, not a third kind. §18 already lists images among the
+examples: a photo of a blood panel and a photo of a squat differ in what they
+show, not in what the system does with them.
+
+Who uploaded a file is recorded on the file and never inferred — a coach
+upload carries the Coach, an athlete upload carries none.
+
+#### Enforcement
+
+Every portal procedure resolves the Athlete from the **session**, through the
+user account linked to the record. An `athleteId` arriving in the request is
+never on its own a reason to answer it: an Athlete sits inside a Workspace that
+holds other Athletes, so the tenant scope that is sufficient for a Coach is not
+sufficient here. Both narrowings apply — the Workspace, and the one Athlete.
+
+This is a server rule. It lives in the procedures, beside the read-only check
+below, and not in the interface: hiding a control is an affordance, not a
+boundary (docs/SECURITY.md).
+
+**The Coach keeps every right they have today.** Nothing in the portal narrows
+what a Coach may see, record or correct.
 
 The Athlete contributes to an Assessment. The Coach owns it.
 The Athlete never edits Measurements, Insights, Recommendations or Reports.
