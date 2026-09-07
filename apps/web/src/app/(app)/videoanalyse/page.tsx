@@ -1,4 +1,5 @@
-import { VideoAnalysis } from '@/features/movement';
+import { StoredVideoAnalysis } from '@/features/athletes/components/stored-video-analysis';
+import { VideoAnalysis, type AnalysisTarget } from '@/features/movement';
 import { objectStoreReady } from '@/integrations/object-store';
 import { api } from '@/trpc/server';
 
@@ -23,6 +24,13 @@ export const metadata: Metadata = {
  * module are optional. Filing happens after the analysis, and only then does
  * the server find or open the test the values belong in.
  *
+ * ## Two ways in, one screen
+ *
+ * A coach either picks a file here, or arrives from an athlete's file shelf
+ * with a stored video already chosen (`?athlete=…&asset=…`). The analysis
+ * itself is the same either way — what differs is only where the `File` comes
+ * from, and that difference is one procedure and one fetch.
+ *
  * ## Why the athlete list is loaded here
  *
  * A Server Component asks once, scoped by the session's workspace. Letting the
@@ -32,9 +40,9 @@ export const metadata: Metadata = {
 export default async function StandaloneVideoAnalysisPage({
   searchParams,
 }: {
-  searchParams: Promise<{ athlete?: string }>;
+  searchParams: Promise<{ athlete?: string; asset?: string }>;
 }) {
-  const { athlete } = await searchParams;
+  const { athlete, asset } = await searchParams;
 
   // 100 is the cap `paginationInputSchema` enforces, so it is the honest
   // maximum rather than a number chosen here. A workspace with more athletes
@@ -52,6 +60,43 @@ export default async function StandaloneVideoAnalysisPage({
     api.assessments.selectable(),
   ]);
 
+  /**
+   * A video the workspace already holds, where the coach arrived from the shelf.
+   *
+   * Resolved by a procedure that checks the workspace, the athlete, that the
+   * asset is a **video** and that its object is really in the store (§18). It
+   * only reads: the hold that stops anyone deleting the video is taken by the
+   * screen itself, when it fetches the bytes, because a render must not change
+   * anything. The storage key never comes back; the browser is given a name.
+   *
+   * A refusal leaves this null and the ordinary picker in place. A coach who
+   * followed a stale link should land on a working screen, not an error page.
+   */
+  const source =
+    asset === undefined || athlete === undefined
+      ? null
+      : await api.athletes.analysisSource({ athleteId: athlete, assetId: asset }).catch(() => null);
+
+  const target: AnalysisTarget = {
+    kind: 'standalone',
+    suggestedAthleteId: athlete,
+    athletes: athletes.items.map((entry) => ({
+      id: entry.id,
+      name: `${entry.lastName}, ${entry.firstName}`,
+    })),
+    assessments: assessments.map((entry) => ({
+      id: entry.id,
+      athleteId: entry.athleteId,
+      question: entry.question,
+      performedAt: entry.performedAt,
+    })),
+    exercises: exercises.map((entry) => ({
+      id: entry.id,
+      key: entry.key,
+      name: entry.name,
+    })),
+  };
+
   return (
     <main className="mx-auto flex w-full max-w-content flex-col gap-8 px-6 py-12">
       <header className="flex flex-col gap-2">
@@ -64,28 +109,18 @@ export default async function StandaloneVideoAnalysisPage({
         </p>
       </header>
 
-      <VideoAnalysis
-        stillsKept={objectStoreReady()}
-        target={{
-          kind: 'standalone',
-          suggestedAthleteId: athlete,
-          athletes: athletes.items.map((entry) => ({
-            id: entry.id,
-            name: `${entry.lastName}, ${entry.firstName}`,
-          })),
-          assessments: assessments.map((entry) => ({
-            id: entry.id,
-            athleteId: entry.athleteId,
-            question: entry.question,
-            performedAt: entry.performedAt,
-          })),
-          exercises: exercises.map((entry) => ({
-            id: entry.id,
-            key: entry.key,
-            name: entry.name,
-          })),
-        }}
-      />
+      {source === null || athlete === undefined ? (
+        <VideoAnalysis stillsKept={objectStoreReady()} target={target} />
+      ) : (
+        <StoredVideoAnalysis
+          stillsKept={objectStoreReady()}
+          target={target}
+          athleteId={athlete}
+          assetId={source.assetId}
+          fileName={source.fileName}
+          mimeType={source.mimeType}
+        />
+      )}
     </main>
   );
 }

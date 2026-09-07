@@ -61,12 +61,17 @@ import type { PoseLandmarker } from '@mediapipe/tasks-vision';
  * video first would mean measuring things the coach did not want and hiding them
  * afterwards.
  *
- * ## The recording never leaves the device
+ * ## Where the recording comes from, and where it goes
  *
- * The file goes into a `<video>` element by object URL and is read frame by
- * frame in this tab. Nothing is uploaded, and nothing about the video is stored
- * — not the file, not a still, not the landmarks. What can be saved is the
- * handful of derived numbers, and only when the coach presses save.
+ * Two sources, one pipeline. A file the coach picks goes into a `<video>`
+ * element by object URL and is read frame by frame in this tab — nothing is
+ * uploaded and nothing about it is stored. A **stored** video (§18) is fetched
+ * from a route addressed by its asset id, and from the `File` onwards it takes
+ * exactly the same path: same model, same frames, same angles, same saving.
+ *
+ * What is saved either way is the handful of derived numbers, and only when the
+ * coach presses save. The difference is only that the second source was already
+ * in the workspace before this screen opened — see `StoredVideoSource`.
  */
 
 /** An exercise the coach can analyse — one with a movement profile. */
@@ -95,6 +100,51 @@ export type AnalysisTarget =
       readonly suggestedAthleteId?: string | undefined;
       readonly exercises: readonly AnalysableExercise[];
     };
+
+/**
+ * A video the workspace already holds, opened instead of a picked file (§18).
+ *
+ * ## What is *not* here
+ *
+ * A storage key. The server resolved which object this is from the asset id and
+ * kept the path to itself; the browser fetches it from a route addressed by the
+ * asset, which authorises the request on its own terms.
+ *
+ * ## Why the callbacks
+ *
+ * While an analysis holds a stored video, that video must not be deleted.
+ * `load` is where the hold is taken — it is the moment the analysis really
+ * begins — and `release` is how it comes off, on every way out. `remove` is the
+ * offer made afterwards: a
+ * form-check recording usually has no reason to survive its own analysis, and
+ * the plan this product runs on is 1 GB.
+ *
+ * Both arrive bound, from the slice that owns the athlete — this component
+ * knows about a video, not about whose it is.
+ */
+export interface StoredVideoSource {
+  readonly assetId: string;
+  readonly fileName: string;
+  /** Fetches the bytes. Injected, so this component makes no assumption about
+   *  where an authorised video comes from. */
+  readonly load: () => Promise<File>;
+  /**
+   * Lets the video go, whatever happened. Called once per analysis.
+   *
+   * The outcome is passed on rather than swallowed: an analysis that failed is
+   * worth recording, and neither outcome protects the file any longer (§18).
+   */
+  readonly release: (outcome: 'FINISHED' | 'FAILED') => Promise<void>;
+  /**
+   * Says the analysis is still running.
+   *
+   * The hold expires on its own so a closed tab cannot lock a file for ever;
+   * this is what keeps it alive while the screen is genuinely open.
+   */
+  readonly heartbeat: () => Promise<void>;
+  /** Deletes the stored video, if the coach says so afterwards. */
+  readonly remove: () => Promise<{ message?: string }>;
+}
 
 type Phase =
   | { readonly kind: 'empty' }
@@ -125,10 +175,19 @@ const SECONDS = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 });
 export function VideoAnalysis({
   target,
   stillsKept = false,
+  source,
 }: {
   readonly target: AnalysisTarget;
   /** Whether an object store is configured, so saving also keeps the stills. */
   readonly stillsKept?: boolean;
+  /**
+   * A stored video to analyse instead of one the coach picks.
+   *
+   * The pipeline below does not change: this only decides where the `File`
+   * comes from. Everything after `choose` — the model, the frames, the angles,
+   * the saving, the stills — is the path that already existed (§18).
+   */
+  readonly source?: StoredVideoSource | undefined;
 }) {
   const [phase, setPhase] = useState<Phase>({ kind: 'empty' });
   const [model, setModel] = useState<PoseModelName>('lite');
@@ -179,6 +238,111 @@ export function VideoAnalysis({
   // second analysis working and the tab being killed.
   useEffect(() => release, [release]);
 
+  /**
+   * Whether the coach has waved the deletion offer away.
+   *
+   * The offer itself is **derived** from the phase rather than stored: it is on
+   * screen exactly while there is a finished analysis of a stored video that
+   * nobody has answered about yet. A second piece of state saying the same
+   * thing would be a second thing that can disagree with the first.
+   */
+  const [offerDismissed, setOfferDismissed] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [removed, setRemoved] = useState(false);
+  const [removalError, setRemovalError] = useState<string | null>(null);
+  /** Guards against a second release when React runs an effect twice. */
+  const releasedRef = useRef(false);
+
+  /**
+   * Lets a stored video go.
+   *
+   * Called on every ending — finished, refused, failed — and once more when the
+   * screen unmounts, which covers a coach who navigates away inside the app
+   * mid-analysis. Idempotent, so the two cannot double up.
+   *
+   * What it does **not** cover: a closed tab, a reload, or an address typed
+   * into the bar. The document is gone before an effect can run, so nothing is
+   * sent. That is what the lease is for — it expires, and the sweep clears it
+   * (§18) — and it is why the hold has an end date rather than being a flag.
+   */
+  const releaseSource = useCallback(
+    (outcome: 'FINISHED' | 'FAILED' = 'FINISHED') => {
+      if (source === undefined || releasedRef.current) return;
+      releasedRef.current = true;
+      void source.release(outcome);
+    },
+    [source],
+  );
+
+  useEffect(() => releaseSource, [releaseSource]);
+
+  /**
+   * The analysis is over, one way or another.
+   *
+   * Three endings, and all three let the video go: a finished run, a refusal the
+   * domain made, and a failure. Nothing else happens here — whether to offer the
+   * deletion is read off the phase below, not written down a second time.
+   */
+  useEffect(() => {
+    if (source === undefined) return;
+    if (phase.kind !== 'done' && phase.kind !== 'error' && phase.kind !== 'refused') return;
+
+    // A refusal or a failure is recorded as one; a finished run as finished.
+    releaseSource(phase.kind === 'done' ? 'FINISHED' : 'FAILED');
+  }, [phase.kind, source, releaseSource]);
+
+  /**
+   * Keeps the hold alive while this screen is open.
+   *
+   * Every five minutes against a lease measured in hours — often enough that a
+   * long analysis never loses its hold, rare enough to be invisible. It stops
+   * as soon as the video has been let go, so a finished analysis does not go on
+   * renewing a hold nobody has.
+   */
+  useEffect(() => {
+    if (source === undefined) return;
+
+    const timer = setInterval(
+      () => {
+        if (!releasedRef.current) void source.heartbeat();
+      },
+      5 * 60 * 1000,
+    );
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [source]);
+
+  const removeStoredVideo = () => {
+    if (source === undefined) return;
+
+    setRemoving(true);
+    setRemovalError(null);
+
+    void source.remove().then(
+      (result) => {
+        setRemoving(false);
+        if (result.message) setRemovalError(result.message);
+        else setRemoved(true);
+      },
+      () => {
+        setRemoving(false);
+        setRemovalError('Das Video konnte nicht gelöscht werden.');
+      },
+    );
+  };
+
+  /**
+   * `choose`, reachable from an effect without being one of its dependencies.
+   *
+   * It is redefined on every render, so depending on it would reload the video
+   * each time anything else changed. Kept in a ref that is refreshed after each
+   * render rather than during one — a ref written while rendering is a value
+   * that can disagree with the render that produced it.
+   */
+  const chooseRef = useRef<((file: File | undefined) => Promise<void>) | null>(null);
+
   const choose = async (file: File | undefined) => {
     release();
     setPhase({ kind: 'preparing', step: 'Video wird geöffnet' });
@@ -213,6 +377,46 @@ export function VideoAnalysis({
       });
     }
   };
+
+  // Refreshed after every render, and declared before the effect below so it is
+  // already in place the first time that one runs.
+  useEffect(() => {
+    chooseRef.current = choose;
+  });
+
+  /**
+   * Opens the stored video the page was pointed at.
+   *
+   * Once, on arrival. What comes back is an ordinary `File`, so it goes through
+   * exactly the same `choose` a picked file does — there is one pipeline, and
+   * this is the only line that differs (§18).
+   */
+  useEffect(() => {
+    if (source === undefined) return;
+
+    let cancelled = false;
+
+    void (async () => {
+      setPhase({ kind: 'preparing', step: 'Video wird geladen' });
+
+      try {
+        const file = await source.load();
+        if (!cancelled) await chooseRef.current?.(file);
+      } catch (error) {
+        if (cancelled) return;
+        setPhase({
+          kind: 'error',
+          message:
+            error instanceof Error ? error.message : 'Dieses Video konnte nicht geladen werden.',
+        });
+        releaseSource('FAILED');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [source, releaseSource]);
 
   const analyse = async (file: File, video: LoadedVideo) => {
     if (profile === null) return;
@@ -352,15 +556,81 @@ export function VideoAnalysis({
 
   const configuring = phase.kind === 'empty' || phase.kind === 'chosen';
 
+  /**
+   * What to do with the recording now that its numbers are safe.
+   *
+   * Offered rather than done: the analysis is stored independently of the video
+   * it came from, so deleting costs nothing — but it is still the coach's file
+   * and their decision. **Only the video.** The stills the analysis produced
+   * have their own lifecycle and are not touched (§18).
+   */
+  const removalOffer =
+    source === undefined || phase.kind !== 'done' || offerDismissed || removed ? null : (
+      <div
+        role="dialog"
+        aria-label="Video löschen?"
+        className="flex flex-col gap-3 rounded-md border border-accent bg-accent-soft p-4 text-accent-soft-foreground"
+      >
+        <div className="flex flex-col gap-1">
+          <h3 className="text-sm font-medium">Video jetzt löschen?</h3>
+          <p className="max-w-prose text-xs text-pretty">
+            Die Auswertung ist gespeichert und bleibt erhalten, auch ohne das Video. Die Standbilder
+            werden nicht gelöscht. Wenn Sie die Aufnahme nicht mehr brauchen, hält das Löschen den
+            Speicher klein.
+          </p>
+        </div>
+
+        {removalError === null ? null : (
+          <p role="alert" className="text-xs text-destructive">
+            {removalError}
+          </p>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            className={TOUCH_BUTTON}
+            disabled={removing}
+            onClick={removeStoredVideo}
+          >
+            {removing ? 'Wird gelöscht …' : 'Video löschen'}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            className={TOUCH_BUTTON}
+            onClick={() => {
+              setOfferDismissed(true);
+            }}
+          >
+            Video behalten
+          </Button>
+        </div>
+      </div>
+    );
+
   return (
     <div className="flex flex-col gap-8">
+      {/* The promise this banner makes has to stay true. A picked file really
+          never leaves the device; a stored one is already in the workspace, and
+          saying otherwise would be a comfortable lie (§18). */}
       <p className="flex max-w-prose items-start gap-2 rounded-md bg-muted px-3 py-2 text-sm text-pretty">
         <ShieldCheck aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
         <span>
-          Das Video wird ausschließlich auf diesem Gerät ausgewertet. Es wird nicht hochgeladen und
-          nicht gespeichert. Gespeichert werden nur die berechneten Werte, wenn Sie sie übernehmen.
+          {source === undefined
+            ? 'Das Video wird ausschließlich auf diesem Gerät ausgewertet. Es wird nicht hochgeladen und nicht gespeichert. Gespeichert werden nur die berechneten Werte, wenn Sie sie übernehmen.'
+            : 'Das Video liegt bereits in der Ablage dieses Athleten und wird hier nur gelesen. Die Auswertung läuft auf diesem Gerät; gespeichert werden die berechneten Werte, wenn Sie sie übernehmen.'}
         </span>
       </p>
+
+      {removed ? (
+        <p className="rounded-md border border-border bg-muted px-4 py-3 text-sm text-muted-foreground">
+          Das Video wurde gelöscht. Die Auswertung bleibt erhalten.
+        </p>
+      ) : (
+        removalOffer
+      )}
 
       {configuring ? (
         <>
@@ -525,18 +795,28 @@ export function VideoAnalysis({
         <section aria-label="Video wählen" className="flex flex-col gap-4">
           <h2 className="text-sm font-medium">Video</h2>
 
-          <label
-            className={`${TOUCH_TARGET} ${FOCUS_RING} flex w-fit cursor-pointer items-center gap-2 rounded-md border border-input bg-background px-4 text-sm font-medium hover:bg-muted`}
-          >
-            <FileVideo aria-hidden="true" className="size-4 shrink-0" />
-            <span>{phase.kind === 'chosen' ? 'Anderes Video wählen' : 'Video auswählen'}</span>
-            <input
-              type="file"
-              accept="video/*"
-              className="sr-only"
-              onChange={(event) => void choose(event.target.files?.[0])}
-            />
-          </label>
+          {/* A stored video was decided before this screen opened, so there is
+              nothing to pick. Offering the picker anyway would invite somebody
+              to swap the file and quietly leave the claim on the other one. */}
+          {source !== undefined ? (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <FileVideo aria-hidden="true" className="size-4 shrink-0" />
+              Aus der Ablage: <span className="font-medium">{source.fileName}</span>
+            </p>
+          ) : (
+            <label
+              className={`${TOUCH_TARGET} ${FOCUS_RING} flex w-fit cursor-pointer items-center gap-2 rounded-md border border-input bg-background px-4 text-sm font-medium hover:bg-muted`}
+            >
+              <FileVideo aria-hidden="true" className="size-4 shrink-0" />
+              <span>{phase.kind === 'chosen' ? 'Anderes Video wählen' : 'Video auswählen'}</span>
+              <input
+                type="file"
+                accept="video/*"
+                className="sr-only"
+                onChange={(event) => void choose(event.target.files?.[0])}
+              />
+            </label>
+          )}
 
           {phase.kind === 'chosen' ? (
             <>

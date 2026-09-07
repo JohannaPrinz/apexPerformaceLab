@@ -11,7 +11,11 @@
  * `measurements.recordMany`, and a second entry point would be a second
  * authorization path.
  */
-export { VideoAnalysis, type AnalysisTarget } from './components/video-analysis';
+export {
+  VideoAnalysis,
+  type AnalysisTarget,
+  type StoredVideoSource,
+} from './components/video-analysis';
 export {
   analyseClip,
   aspectRatioOf,

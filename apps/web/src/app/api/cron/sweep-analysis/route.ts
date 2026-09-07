@@ -1,5 +1,8 @@
+import { db } from '@apex/database';
+
 import { env } from '@/env';
 import { sweepAllAnalysisStills } from '@/features/reports/server/media';
+import { sweepExpiredAnalysisLeases } from '@/services/assets/analysis-lease';
 
 /**
  * Clears the working files of analyses nobody came back to.
@@ -48,5 +51,15 @@ async function run(request: Request): Promise<Response> {
 
   const removed = await sweepAllAnalysisStills();
 
-  return Response.json({ removed });
+  /**
+   * Holds whose lease ran out (§18).
+   *
+   * Not required for correctness — an expired lease already protects nothing —
+   * but a row that says `RUNNING` about an analysis nobody is running is a lie
+   * the next reader has to decode. Swept here rather than on its own schedule:
+   * it is the same caretaking, over the same abandoned screens.
+   */
+  const leases = await sweepExpiredAnalysisLeases(db);
+
+  return Response.json({ removed, leases });
 }
