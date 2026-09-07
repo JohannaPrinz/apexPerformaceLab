@@ -4,6 +4,7 @@ import { authRouter } from '@/features/auth/server/router';
 import { casesRouter } from '@/features/cases/server/router';
 import { cycleRouter } from '@/features/cycle/server/router';
 import { exercisesRouter } from '@/features/exercises/server/router';
+import { portalRouter } from '@/features/portal/server/router';
 import { reportsRouter } from '@/features/reports/server/router';
 
 import { healthRouter } from './routers/health';
@@ -27,6 +28,9 @@ export const appRouter = createTRPCRouter({
   cycle: cycleRouter,
   assessments: assessmentsRouter,
   exercises: exercisesRouter,
+  // The athlete-facing surface. Its redemption procedure is deliberately
+  // public — the token is the credential (§21).
+  portal: portalRouter,
   reports: reportsRouter,
 });
 

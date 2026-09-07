@@ -82,7 +82,7 @@ export async function verifySharePassword(password: string, stored: string): Pro
   return timingSafeEqual(derived, expected);
 }
 
-type ShareDb = Pick<PrismaClientInstance, 'share' | 'report'>;
+type ShareDb = Pick<PrismaClientInstance, 'share' | 'report' | 'athlete'>;
 
 export interface CreatedShare {
   readonly id: string;
@@ -116,6 +116,14 @@ export async function createReportShare(
    * see below — so nothing about that changes.
    */
   password: string,
+  /**
+   * An address for an athlete who has none on file.
+   *
+   * The ordinary athlete is entered during a first consultation, about whom
+   * little is known and often not an address (§7). The moment one is needed is
+   * this one — and it is also the moment the coach knows it.
+   */
+  email?: string,
 ): Promise<CreatedShare | null> {
   const report = await db.report.findFirst({
     where: scoped(tenant, { id: reportId, status: 'PUBLISHED' as const }),
@@ -128,11 +136,35 @@ export async function createReportShare(
        * address they have since changed is still the address they read. One is
        * a record, the other is a destination.
        */
-      assessment: { select: { case: { select: { athlete: { select: { email: true } } } } } },
+      assessment: {
+        select: { case: { select: { athlete: { select: { id: true, email: true } } } } },
+      },
     },
   });
 
   if (!report) return null;
+
+  /**
+   * An address typed here is kept, not spent.
+   *
+   * Using it for this one message and forgetting it would mean asking for it
+   * again to activate the portal, where it is the precondition (§21). So it is
+   * written to the record — and only ever filled in, never overwritten: a
+   * stored address is the athlete's own, and a slip in this box must not
+   * replace it. `updateMany` with the tenant and `email: null` in the filter
+   * makes both of those a condition of the write rather than a check before it.
+   */
+  const athlete = report.assessment?.case.athlete ?? null;
+  let recipient = athlete?.email ?? null;
+
+  if (recipient === null && athlete !== null && email !== undefined) {
+    const { count } = await db.athlete.updateMany({
+      where: scoped(tenant, { id: athlete.id, email: null }),
+      data: { email },
+    });
+
+    if (count > 0) recipient = email;
+  }
 
   const token = newShareToken();
   const expiresAt = shareExpiryFrom(days);
@@ -153,7 +185,7 @@ export async function createReportShare(
     token,
     password,
     expiresAt,
-    recipient: report.assessment?.case.athlete.email ?? null,
+    recipient,
   };
 }
 

@@ -163,6 +163,13 @@ export async function createShareAction(
   days: number,
   /** The password the coach chose. Only its hash is stored. */
   password: string,
+  /**
+   * An address, where the athlete has none on file.
+   *
+   * Empty in the ordinary case. Supplied it is stored on the record, so the
+   * coach is asked once rather than once per document (§7, §21).
+   */
+  email?: string,
 ): Promise<ShareCreated> {
   try {
     /**
@@ -174,7 +181,12 @@ export async function createShareAction(
      * with the document the link opens.
      */
     const [share, snapshot] = await Promise.all([
-      api.reports.createShare({ reportId, days, password }),
+      api.reports.createShare({
+        reportId,
+        days,
+        password,
+        ...(email === undefined || email.trim() === '' ? {} : { email: email.trim() }),
+      }),
       api.reports.publishedSnapshot({ assessmentId }),
     ]);
 

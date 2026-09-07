@@ -212,6 +212,58 @@ export const coachProcedure = organizationProcedure.use(async ({ ctx, next }) =>
   return next({ ctx: { ...ctx, coach } });
 });
 
+/**
+ * Requires a signed-in user **who is an athlete**, and resolves which one.
+ *
+ * The counterpart to `coachProcedure`, and the whole of the portal's
+ * authorization (§21).
+ *
+ * ## Why the athlete is never an input
+ *
+ * A coach procedure takes an `athleteId` and narrows by workspace, which is
+ * correct: a coach may reach every athlete of their workspace. For an athlete
+ * that narrowing is **not enough** — the workspace holds other athletes, so an
+ * id from the request would let one read another. The id therefore comes from
+ * the account: `Athlete.userId` is globally unique, so a session resolves to at
+ * most one record and there is no parameter to tamper with.
+ *
+ * Procedures built on this rung must take no athlete in their input at all.
+ * Accepting one "for convenience" and then comparing it would put the check in
+ * a place somebody can forget; not accepting one means there is nothing to
+ * compare.
+ *
+ * ## Why the tenant comes from the record
+ *
+ * `organizationProcedure` has already established the session's workspace and
+ * the membership in it, so `ctx.tenant` is sound. The athlete is then read
+ * *within* that scope — both narrowings apply, and a record whose workspace
+ * does not match the session is simply not found.
+ *
+ * ## Deactivation
+ *
+ * An archived athlete keeps portal access, read-only (§21). That is not decided
+ * here: this rung answers "who is asking", and the read-only rule belongs on
+ * the writes. `archivedAt` is carried through so they can apply it.
+ */
+export const athleteProcedure = organizationProcedure.use(async ({ ctx, next }) => {
+  const athlete = await ctx.perRequest(`athlete:${ctx.session.user.id}`, () =>
+    ctx.db.athlete.findFirst({
+      where: { userId: ctx.session.user.id, organizationId: ctx.tenant.organizationId },
+      select: { id: true, archivedAt: true },
+    }),
+  );
+
+  if (!athlete) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'This action requires an athlete portal account.',
+      cause: AppError.forbidden('This action requires an athlete portal account.'),
+    });
+  }
+
+  return next({ ctx: { ...ctx, athlete } });
+});
+
 /** Shared by the two permission-gated builders below. */
 const requirePermission = (permission: Permission) =>
   t.middleware(({ ctx, next }) => {

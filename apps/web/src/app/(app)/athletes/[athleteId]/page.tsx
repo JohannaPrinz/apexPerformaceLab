@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { TRPCError } from '@trpc/server';
-import { ArrowLeft, ChevronDown, Video } from 'lucide-react';
+import { ArrowLeft, ChevronDown, FolderOpen, Video } from 'lucide-react';
 
 import { ageAt } from '@apex/domain';
 import { Badge, Button } from '@apex/ui';
@@ -15,6 +15,8 @@ import { MONTH_PARAM, parseMonth, startOfMonth } from '@/features/athletes/month
 import { parseTrendCards, TREND_CARD_PARAM } from '@/features/athletes/trend-slots';
 import { parseWeek, startOfWeek, WEEK_PARAM } from '@/features/athletes/week';
 import { CaseDialog, CaseSection, NoCases, type CaseAssessment } from '@/features/cases';
+import { PortalAccess } from '@/features/portal/components/portal-access';
+import { emailReady } from '@/integrations/email';
 import { api } from '@/trpc/server';
 
 import type { Metadata } from 'next';
@@ -136,6 +138,7 @@ export default async function AthletePage({
     nutrition,
     biofeedback,
     cycle,
+    standingActivation,
   ] = await Promise.all([
     // The status filter exists in the schema already; only the interface was
     // missing. `OPEN` alone is the working view.
@@ -164,6 +167,9 @@ export default async function AthletePage({
     onScreen.has('cycle')
       ? api.cycle.month({ athleteId, month: month.toISOString().slice(0, 10) })
       : Promise.resolve(null),
+    // Only meaningful while there is no account yet; skipped once there is one,
+    // so the ordinary page of a portal athlete does not pay for it.
+    athlete.userId === null ? api.portal.standing({ athleteId }) : Promise.resolve(null),
   ]);
 
   /**
@@ -325,14 +331,32 @@ export default async function AthletePage({
             </Fact>
           </dl>
 
-          {athlete.userId ? null : (
-            <p className="text-xs text-pretty text-muted-foreground">
-              Ein Athlet braucht kein Benutzerkonto (§21). Die Aktivierung kommt mit dem
-              Athletenportal.
-            </p>
-          )}
+          {/* Under the master data because that is where the address is, and
+              the address is what the link needs. A coach who reads "kein
+              Benutzerkonto verknüpft" above should find the remedy in the same
+              breath rather than on another screen. */}
+          <div className="mt-4">
+            <PortalAccess
+              athleteId={athleteId}
+              email={athlete.email}
+              hasAccount={athlete.userId !== null}
+              archived={athlete.archivedAt !== null}
+              standing={standingActivation}
+              mailReady={emailReady()}
+            />
+          </div>
         </details>
       </section>
+
+      {/* Its own route rather than a section here: filing is a task somebody
+          comes to do, and this page already carries nine of them. */}
+      <Link
+        href={`/athletes/${athleteId}/dateien`}
+        className={`${FOCUS_RING} ${TOUCH_TARGET} flex w-fit items-center gap-2 rounded-md border border-border px-4 py-2 text-sm hover:bg-muted`}
+      >
+        <FolderOpen aria-hidden="true" className="size-4 text-muted-foreground" />
+        Dateien
+      </Link>
 
       {/* Under the master data, because it is the first thing a coach reads
           about an athlete after who they are. The cycle is one of the cards

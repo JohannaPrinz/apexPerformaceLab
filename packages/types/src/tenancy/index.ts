@@ -103,8 +103,19 @@ export const PERMISSIONS: Readonly<Record<OrganizationRole, readonly Permission[
     'report:read',
     'report:write',
   ],
-  // Narrow while the athlete portal is unbuilt: the resources it will read —
-  // reports, recommendations, programs — arrive with that slice (§21).
+  /**
+   * Narrow **on purpose**, and it stays narrow now that the portal exists.
+   *
+   * The portal does not run on this matrix. `athleteProcedure` resolves the one
+   * record the account is linked to, and every portal procedure is scoped to
+   * that record rather than to a permission over "athletes" (§21). Granting
+   * `athlete:read` here would be exactly the wrong move: it means "every
+   * athlete of this workspace", which is a coach's reach, not an athlete's.
+   *
+   * `organization:read` is what a membership needs to establish a tenant scope
+   * at all. Anything the portal gains later belongs on the same rung — one
+   * athlete, resolved from the session — not in this row.
+   */
   athlete: ['organization:read'],
 } as const;
 

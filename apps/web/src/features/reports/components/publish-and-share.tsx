@@ -86,7 +86,24 @@ export function PublishAndShare({
   const [created, setCreated] = useState<NonNullable<ShareCreated['share']> | null>(null);
   const [days, setDays] = useState(DEFAULT_SHARE_DAYS);
   const [password, setPassword] = useState('');
+  /**
+   * Only ever used where the record has no address.
+   *
+   * Not an override: an athlete who has one is sent to it, and correcting it is
+   * a change to their record, which belongs on their record — not in a send box
+   * where a slip would go unnoticed.
+   */
+  const [email, setEmail] = useState('');
   const [copied, setCopied] = useState<string | null>(null);
+
+  /**
+   * Whether there is somewhere to send to.
+   *
+   * A shape check, not a validation: `z.email` on the procedure is what decides,
+   * and repeating its rules here would only produce a second opinion to keep in
+   * step. This exists so the button says "not yet" instead of the send failing.
+   */
+  const addressed = recipient !== null || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
   const copy = (what: string, value: string) => {
     void navigator.clipboard.writeText(value).then(
@@ -110,7 +127,7 @@ export function PublishAndShare({
   const share = () => {
     setError(null);
     startTransition(async () => {
-      const result = await createShareAction(assessmentId, reportId, days, password);
+      const result = await createShareAction(assessmentId, reportId, days, password, email);
       if (result.message) setError(result.message);
       else {
         setCreated(result.share ?? null);
@@ -224,6 +241,23 @@ export function PublishAndShare({
                 </select>
               </label>
 
+              {recipient === null ? (
+                <label className="flex min-w-64 flex-1 flex-col gap-1.5 text-sm">
+                  <span>E-Mail-Adresse des Athleten</span>
+                  <input
+                    type="email"
+                    value={email}
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="name@beispiel.de"
+                    onChange={(event) => {
+                      setEmail(event.target.value);
+                    }}
+                    className={`${TOUCH_FIELD} ${FOCUS_RING} rounded-md border border-input bg-background px-3 text-base lg:text-sm`}
+                  />
+                </label>
+              ) : null}
+
               <label className="flex min-w-56 flex-1 flex-col gap-1.5 text-sm">
                 <span>Passwort</span>
                 <input
@@ -245,7 +279,7 @@ export function PublishAndShare({
                 className={TOUCH_BUTTON}
                 disabled={
                   pending ||
-                  recipient === null ||
+                  !addressed ||
                   !mailReady ||
                   password.trim().length < MIN_SHARE_PASSWORD_LENGTH
                 }
@@ -258,9 +292,10 @@ export function PublishAndShare({
             {/* Every refusal names itself. "Nicht möglich" sends somebody
                 hunting through three screens for the reason. */}
             {recipient === null ? (
-              <p className="text-xs text-pretty text-destructive">
-                Für diesen Athleten ist keine E-Mail-Adresse hinterlegt. Tragen Sie eine im
-                Athletendatensatz ein, dann lässt sich die Auswertung senden.
+              <p className="max-w-prose text-xs text-pretty text-muted-foreground">
+                Für diesen Athleten ist noch keine E-Mail-Adresse hinterlegt. Die hier eingetragene
+                Adresse wird im Athletendatensatz gespeichert und ist danach auch die Adresse für
+                den Zugang zum Athletenportal.
               </p>
             ) : mailReady ? (
               <p className="max-w-prose text-xs text-pretty text-muted-foreground">

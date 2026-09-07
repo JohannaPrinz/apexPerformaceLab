@@ -209,6 +209,46 @@ export async function resolveInitialOrganizationId(
 }
 
 /**
+ * The workspace a session starts in, for anybody — coach or athlete.
+ *
+ * ## Why athletes are answered first, and separately
+ *
+ * `ensureActiveOrganizationId` provisions. That is right for a coach and wrong
+ * for an athlete: a portal account must never receive a coach profile or a
+ * personal workspace of its own (§21). The athlete already belongs somewhere —
+ * to the Workspace that holds their record — so the answer is read off the
+ * record rather than derived, and provisioning is never reached.
+ *
+ * That also makes it the **authoritative** answer rather than a lucky one.
+ * Activation writes a `Membership` too, so the coach path would usually resolve
+ * the same id; usually is not a guarantee, and an athlete whose membership row
+ * were missing would otherwise be handed a freshly provisioned workspace of
+ * their own — a coach profile for somebody who is not a coach.
+ *
+ * ## Why the gate is a fact rather than a flag
+ *
+ * "Is this user linked to an Athlete" is checked in the database instead of a
+ * registration intent carried through the sign-up flow. There is nothing to
+ * keep in step, and it stays true for every sign-in the account ever makes.
+ *
+ * The cost is one indexed lookup on `Athlete.userId` — which is unique — and
+ * only when a session is created, not per request.
+ */
+export async function activeOrganizationForSession(
+  db: PrismaClientInstance,
+  userId: string,
+): Promise<string | null> {
+  const athlete = await db.athlete.findUnique({
+    where: { userId },
+    select: { organizationId: true },
+  });
+
+  if (athlete) return athlete.organizationId;
+
+  return ensureActiveOrganizationId(db, userId);
+}
+
+/**
  * The organization a session should start in, provisioning one if it is missing.
  *
  * ## Why this exists

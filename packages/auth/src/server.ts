@@ -6,7 +6,7 @@ import { organization } from 'better-auth/plugins';
 import { db } from '@apex/database';
 
 import { accessControl, roles } from './permissions';
-import { ensureActiveOrganizationId, provisionPersonalWorkspace } from './provisioning';
+import { activeOrganizationForSession, provisionPersonalWorkspace } from './provisioning';
 
 /**
  * Better Auth server instance — the single source of truth for identity.
@@ -93,13 +93,12 @@ export const auth = betterAuth({
          * Idempotent, so a retried registration cannot produce a second
          * workspace.
          *
-         * **Constraint to respect when athlete portal accounts arrive (§21):**
-         * this fires for every user Better Auth creates, and an athlete must
-         * not receive a coach profile. Portal activation is a coach-initiated
-         * server-side action and will create that `User` directly, bypassing
-         * Better Auth's public sign-up — so this hook never sees it. If that
-         * ever changes, gate this on the registration intent rather than
-         * removing it.
+         * **Athlete portal accounts never reach this hook (§21),** and that is
+         * load-bearing: an athlete must not receive a coach profile. Activation
+         * writes the `User` and its credential row directly — see
+         * `features/portal/server/activation.ts` — so Better Auth's public
+         * sign-up is not on that path at all. If that ever changes, gate this
+         * on whether the user is linked to an Athlete rather than removing it.
          */
         after: async (user) => {
           await provisionPersonalWorkspace(db, {
@@ -129,34 +128,35 @@ export const auth = betterAuth({
          *
          * ## The MVP assumption, stated here on purpose
          *
-         * **Everyone who registers through Better Auth is a coach**, and every
+         * **Everyone who *registers* through Better Auth is a coach**, and every
          * coach gets exactly one personal workspace they own alone. No
-         * multi-coach organizations, no invitations, no shared athletes — see
-         * §5 and §25. That assumption is what makes provisioning at sign-in
-         * correct rather than presumptuous.
+         * multi-coach organizations, no shared athletes — see §5 and §25. That
+         * assumption is what makes provisioning at sign-in correct rather than
+         * presumptuous.
          *
          * `null` is therefore **no longer expected on a normal sign-in.** It
          * now means the user row is gone — a deleted account or a stale
          * session — and `organizationProcedure` refusing it is right.
          *
-         * ## Where the gate moves when athletes arrive (§21)
+         * ## The athlete gate (§21)
          *
-         * **This is the place to change.** Athlete portal accounts are created
-         * server-side by a coach, bypassing public sign-up, so the user hook
-         * never sees them — but this hook fires on *every* sign-in, theirs
-         * included. Provisioning would hand an athlete a coach profile and a
-         * workspace.
+         * This hook fires on *every* sign-in, and an athlete portal account
+         * signs in here like anybody else — so provisioning would hand them a
+         * coach profile and a workspace of their own. That is what
+         * `activeOrganizationForSession` prevents: an account linked to an
+         * Athlete is answered from that Athlete's Workspace and never reaches
+         * provisioning.
          *
-         * So when portal accounts land, gate the call below on the registration
-         * intent. Do not push that gate down into `ensureActiveOrganizationId`:
-         * it is a policy about who deserves a workspace, and it belongs at the
-         * auth boundary where it can be read in one place. The function keeps
-         * only the low-level guard that a user with no row provisions nothing.
+         * The gate stays at this boundary rather than inside
+         * `ensureActiveOrganizationId`: it is a policy about who deserves a
+         * workspace, and it should be readable in one place. That function
+         * keeps only the low-level guard that a user with no row provisions
+         * nothing.
          */
         before: async (session) => ({
           data: {
             ...session,
-            activeOrganizationId: await ensureActiveOrganizationId(db, session.userId),
+            activeOrganizationId: await activeOrganizationForSession(db, session.userId),
           },
         }),
       },

@@ -340,6 +340,7 @@ export const reportsRouter = createTRPCRouter({
         input.reportId,
         input.days,
         input.password,
+        input.email,
       );
 
       if (!share) throw notFound('Analysis');

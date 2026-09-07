@@ -29,10 +29,18 @@ export const metadata: Metadata = {
 export default async function StartPage() {
   const [workspaces, coach] = await Promise.all([api.auth.myWorkspaces(), api.auth.coachProfile()]);
 
-  // A signed-in user without a coach profile is not a coach — an athlete portal
-  // account will land here eventually and nothing on this page is meant for
-  // them.
-  if (!coach) redirect('/');
+  /**
+   * A signed-in user without a coach profile is not a coach.
+   *
+   * That is an athlete portal account, and `/portal` is where it belongs (§21).
+   * Sending them on rather than showing an empty personal overview: nothing on
+   * this page — workspaces, a coach profile — exists for them.
+   *
+   * The redirect is a convenience, not the boundary. Every procedure this page
+   * calls would refuse them anyway, and the portal's own procedures resolve the
+   * athlete from the session rather than from anything here.
+   */
+  if (!coach) redirect('/portal');
 
   const name = coach.displayName ?? 'Coach';
 

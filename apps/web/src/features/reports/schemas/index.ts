@@ -112,6 +112,13 @@ export const createShareSchema = reportIdSchema.extend({
   days: shareDaysSchema,
   /** Chosen by the coach; only its hash is ever stored. */
   password: z.string().min(MIN_SHARE_PASSWORD_LENGTH).max(200),
+  /**
+   * An address for an athlete who has none on file.
+   *
+   * Optional, because the ordinary case already has one. Where it is supplied
+   * it is stored on the athlete rather than used once — see `createReportShare`.
+   */
+  email: z.email('Bitte eine gültige E-Mail-Adresse eingeben.').optional(),
 });
 export type CreateShareInput = z.infer<typeof createShareSchema>;
 
