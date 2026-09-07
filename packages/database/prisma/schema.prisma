@@ -173,30 +173,32 @@ model Organization {
   ///
   /// `Coach` is deliberately absent: a coach profile is organisation-independent
   /// (§6). Affiliation runs through `Membership` above.
-  athletes         Athlete[]
-  athleteAccesses  AthleteAccess[]
-  moduleTemplates  ModuleTemplate[]
-  cases            PerformanceCase[]
-  goals            Goal[]
-  assessments      Assessment[]
-  modules          AssessmentModule[]
-  measurementTypes MeasurementType[]
-  exercises        Exercise[]
-  exerciseVariants ExerciseVariant[]
-  measurements     Measurement[]
-  insights         Insight[]
-  recommendations  Recommendation[]
-  reports          Report[]
-  reportModules    ReportModule[]
-  shares           Share[]
-  assets           Asset[]
-  videoAnnotations VideoAnnotation[]
-  programs         Program[]
-  notes            Note[]
-  appointments     Appointment[]
-  timelineEntries  TimelineEntry[]
-  bleedingEpisodes BleedingEpisode[]
-  trackingEntries  TrackingEntry[]
+  athletes           Athlete[]
+  athleteAccesses    AthleteAccess[]
+  athleteActivations AthleteActivation[]
+  assetFolders       AssetFolder[]
+  moduleTemplates    ModuleTemplate[]
+  cases              PerformanceCase[]
+  goals              Goal[]
+  assessments        Assessment[]
+  modules            AssessmentModule[]
+  measurementTypes   MeasurementType[]
+  exercises          Exercise[]
+  exerciseVariants   ExerciseVariant[]
+  measurements       Measurement[]
+  insights           Insight[]
+  recommendations    Recommendation[]
+  reports            Report[]
+  reportModules      ReportModule[]
+  shares             Share[]
+  assets             Asset[]
+  videoAnnotations   VideoAnnotation[]
+  programs           Program[]
+  notes              Note[]
+  appointments       Appointment[]
+  timelineEntries    TimelineEntry[]
+  bleedingEpisodes   BleedingEpisode[]
+  trackingEntries    TrackingEntry[]
 
   @@index([slug])
   @@map("organizations")
@@ -292,8 +294,8 @@ model Coach {
 
   credentials            CoachCredential[]
   athletesCreated        Athlete[]
-  athleteAccess          AthleteAccess[]    @relation("AthleteAccessGrantee")
-  athleteAccessGranted   AthleteAccess[]    @relation("AthleteAccessGrantor")
+  athleteAccess          AthleteAccess[]     @relation("AthleteAccessGrantee")
+  athleteAccessGranted   AthleteAccess[]     @relation("AthleteAccessGrantor")
   modulesCreated         AssessmentModule[]
   moduleTemplatesCreated ModuleTemplate[]
   exercisesCreated       Exercise[]
@@ -307,6 +309,8 @@ model Coach {
   sharesCreated          Share[]
   bleedingRecorded       BleedingEpisode[]
   trackingRecorded       TrackingEntry[]
+  activationsIssued      AthleteActivation[]
+  assetFoldersCreated    AssetFolder[]
 
   @@map("coaches")
 }
@@ -434,6 +438,8 @@ model Athlete {
   timelineEntries  TimelineEntry[]
   bleedingEpisodes BleedingEpisode[]
   trackingEntries  TrackingEntry[]
+  activations      AthleteActivation[]
+  assetFolders     AssetFolder[]
 
   /// Which quantities are followed as a curve on this athlete's profile.
   ///
@@ -454,6 +460,69 @@ model Athlete {
   /// backfill will need.
   @@index([createdByCoachId])
   @@map("athletes")
+}
+
+/// A one-time link that turns an existing Athlete into a portal account (§21).
+///
+/// ## Why this is neither an Invitation nor a Share
+///
+/// `Invitation` grants a role in an organisation to whoever holds an address
+/// and is unique per `(organizationId, email)` — one person invited once as a
+/// coach and once as an athlete would collide on that key. `Share` shows one
+/// document to whoever holds a link and must never create an account.
+///
+/// This binds to one **existing** Athlete row and produces exactly one account
+/// for it. No new Athlete is ever created, and the link can never be pointed at
+/// a different one (§21).
+///
+/// ## Why the token is stored as a hash
+///
+/// `Share.token` is kept in plain text because it opens nothing on its own — a
+/// password guards the document behind it. This link has no second factor:
+/// whoever holds it sets the password. So only a hash is stored, and the token
+/// itself exists once, in the message that was sent. A leaked database hands
+/// over no accounts.
+///
+/// SHA-256 rather than scrypt, and that is not an oversight: the token is 256
+/// bits from a CSPRNG, so there is no guessable input to slow an attacker down
+/// on. Password hashing is deliberately slow because passwords are weak; this
+/// is not one.
+///
+/// ## Why the address is frozen here
+///
+/// The account is created with the address the link was **sent** to. Reading
+/// the athlete's current address at redemption time would let an edit made
+/// after the link went out redirect the account to another mailbox.
+model AthleteActivation {
+  id        String    @id @default(cuid(2))
+  /// SHA-256 of the token, hex. Unique: two rows must never open on one link.
+  tokenHash String    @unique
+  /// Where it was sent, and the address the account will carry.
+  email     String
+  expiresAt DateTime
+  /// Set when the password was chosen. A spent link opens nothing.
+  usedAt    DateTime?
+  /// Set when the Coach withdrew it, and when issuing a replacement supersedes
+  /// it. Kept rather than deleted: who was offered access, and when it was
+  /// taken back, is part of the record.
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  athleteId String
+  athlete   Athlete @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+
+  /// Who issued it. `Restrict`, like every other authorship column: the record
+  /// must keep saying who granted the access.
+  issuedByCoachId String
+  issuedByCoach   Coach  @relation(fields: [issuedByCoachId], references: [id], onDelete: Restrict)
+
+  /// Serves the tenant scope alone and "the links standing for this athlete".
+  @@index([organizationId, athleteId])
+  @@index([issuedByCoachId])
+  @@map("athlete_activations")
 }
 
 // ── Performance Case & Goal ──────────────────────────────────────────────────
@@ -1595,7 +1664,12 @@ model Asset {
   fileName   String
   mimeType   String
   sizeBytes  Int
-  /// Object key in R2. Unique because two rows must never point at one object.
+  /// Object key in the private Supabase Storage bucket (§18). Unique because
+  /// two rows must never point at one object.
+  ///
+  /// The prefix carries the lifetime — `athletes/<athleteId>/…` for an
+  /// athlete's own media, separate from `reports/…` and `analysis-temp/…`. See
+  /// `packages/domain/src/assessments/report-media.ts`.
   storageKey String    @unique
   /// Video only.
   durationMs Int?
@@ -1624,6 +1698,39 @@ model Asset {
   uploadedByCoachId String?
   uploadedByCoach   Coach?  @relation(fields: [uploadedByCoachId], references: [id], onDelete: Restrict)
 
+  /// Whether a video analysis is holding this file, and until when (§18).
+  ///
+  /// ## Why the database and not a marker in the store
+  ///
+  /// This is the **source of truth** for "may this be deleted". A file in the
+  /// temporary area was tried first and is the wrong instrument: it cannot be
+  /// read in the same statement as the deletion, so a check and a delete are
+  /// two moments and a concurrent analysis can start between them. A column can
+  /// sit in the `WHERE` of the delete itself, which is what makes the two
+  /// atomic.
+  ///
+  /// ## Why a lease and not a flag
+  ///
+  /// A browser tab closed mid-analysis cannot clear a flag, and a lock nobody
+  /// can clear would block a deletion for ever. The lease is extended by a
+  /// heartbeat while the screen is open and simply runs out otherwise; an
+  /// expired one is stale and may be cleared by anybody, including the sweep.
+  ///
+  /// Both null on a file no analysis has ever touched, which is most of them.
+  analysisStatus    AssetAnalysisStatus?
+  analysisExpiresAt DateTime?
+
+  /// Where the file was filed, if anywhere (§18).
+  ///
+  /// Optional, and `SetNull` on purpose: emptying a shelf is not the same
+  /// decision as destroying its contents. Deleting a folder must leave the
+  /// files standing — loose, but standing.
+  ///
+  /// Independent of the context ladder above. `assessmentId` and its siblings
+  /// say what a file belongs to *clinically*; this says where somebody put it.
+  folderId String?
+  folder   AssetFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+
   annotations     VideoAnnotation[]
   insightEvidence InsightAsset[]
   shares          Share[]
@@ -1635,7 +1742,54 @@ model Asset {
   @@index([caseId])
   @@index([assessmentId])
   @@index([assessmentModuleId])
+  @@index([folderId])
+  /// What the stale-lease sweep walks: the running ones, oldest lease first.
+  @@index([analysisStatus, analysisExpiresAt])
   @@map("assets")
+}
+
+/// A shelf for one athlete's files (§18).
+///
+/// ## Deliberately flat
+///
+/// No parent, no tree. The case a folder answers is "Formcheck am 05.09.2026" —
+/// a session, a topic, a date — and a hierarchy would add navigation to a
+/// handful of files. It would also compete with the context ladder on `Asset`,
+/// which is the *clinical* placement and a different question from where
+/// somebody filed something.
+///
+/// ## Who made it
+///
+/// `createdByCoachId = null` means the Athlete created it, exactly as
+/// `Asset.uploadedByCoachId` does. Both sides may file (§21), so the column is
+/// nullable and the null carries the meaning rather than a second flag.
+model AssetFolder {
+  id        String   @id @default(cuid(2))
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  athleteId String
+  athlete   Athlete @relation(fields: [athleteId], references: [id], onDelete: Cascade)
+
+  /// Null where the Athlete created it. `Restrict` like every other authorship
+  /// column: a Coach row survives deletion as a tombstone, so who filed
+  /// something never silently becomes "the athlete".
+  createdByCoachId String?
+  createdByCoach   Coach?  @relation(fields: [createdByCoachId], references: [id], onDelete: Restrict)
+
+  assets Asset[]
+
+  /// One name per athlete. Two folders called "Formcheck" on one record would
+  /// be a filing system that files nothing.
+  @@unique([athleteId, name])
+  /// Serves the tenant scope alone and "this athlete's shelves".
+  @@index([organizationId, athleteId])
+  @@index([createdByCoachId])
+  @@map("asset_folders")
 }
 
 /// A timestamped comment on a Video (§18). Only valid for `kind = VIDEO`.
@@ -2044,6 +2198,17 @@ enum ReportStatus {
 enum AssetKind {
   DOCUMENT
   VIDEO
+}
+
+/// How a video analysis over one stored file ended, or that it has not (§18).
+///
+/// `RUNNING` is the only state that protects the file, and only while its lease
+/// holds. The other two are history: they say an analysis happened and record
+/// how it went, and neither of them stops anybody deleting the recording.
+enum AssetAnalysisStatus {
+  RUNNING
+  FINISHED
+  FAILED
 }
 
 enum AppointmentType {
