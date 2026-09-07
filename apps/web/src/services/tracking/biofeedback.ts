@@ -12,7 +12,7 @@ import {
 } from '@apex/domain';
 import type { TenantContext } from '@apex/types';
 
-import { weekDays } from '../week';
+import { weekDays } from '@/features/athletes/week';
 
 /**
  * What an athlete reports about their own day.
@@ -430,9 +430,24 @@ export async function setBiofeedbackNote(
   tenant: Pick<TenantContext, 'organizationId'>,
   entryId: string,
   note: string | null,
+  /**
+   * Whose entry this must be, or `null` for a caller that may reach every
+   * athlete of the workspace.
+   *
+   * **Required rather than optional on purpose.** An entry id says nothing
+   * about who it belongs to, and the workspace filter that is sufficient for a
+   * coach is not sufficient for an athlete — the workspace holds other athletes
+   * (§21). Making the parameter compulsory means every call site has to answer
+   * the question; an optional one would be answered by whoever forgot it.
+   */
+  owner: string | null,
 ): Promise<boolean> {
   const { count } = await db.trackingEntry.updateMany({
-    where: scoped(tenant, { id: entryId, measurementType: { category: 'biofeedback' } }),
+    where: scoped(tenant, {
+      id: entryId,
+      measurementType: { category: 'biofeedback' },
+      ...(owner === null ? {} : { athleteId: owner }),
+    }),
     data: { note: note === null || note.trim() === '' ? null : note.trim() },
   });
 
@@ -444,9 +459,24 @@ export async function clearBiofeedbackValue(
   db: BiofeedbackDb,
   tenant: Pick<TenantContext, 'organizationId'>,
   entryId: string,
+  /**
+   * Whose entry this must be, or `null` for a caller that may reach every
+   * athlete of the workspace.
+   *
+   * **Required rather than optional on purpose.** An entry id says nothing
+   * about who it belongs to, and the workspace filter that is sufficient for a
+   * coach is not sufficient for an athlete — the workspace holds other athletes
+   * (§21). Making the parameter compulsory means every call site has to answer
+   * the question; an optional one would be answered by whoever forgot it.
+   */
+  owner: string | null,
 ): Promise<boolean> {
   const { count } = await db.trackingEntry.deleteMany({
-    where: scoped(tenant, { id: entryId, measurementType: { category: 'biofeedback' } }),
+    where: scoped(tenant, {
+      id: entryId,
+      measurementType: { category: 'biofeedback' },
+      ...(owner === null ? {} : { athleteId: owner }),
+    }),
   });
 
   return count > 0;

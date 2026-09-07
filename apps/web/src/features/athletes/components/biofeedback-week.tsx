@@ -10,14 +10,9 @@ import { Button } from '@apex/ui';
 
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_TARGET } from '@/components/common/touch';
 
-import {
-  addBiofeedbackQuantityAction,
-  clearBiofeedbackValueAction,
-  setBiofeedbackNoteAction,
-  setBiofeedbackRowsAction,
-  setBiofeedbackValueAction,
-} from '../server/actions';
 import { formatWeek, shiftWeek, WEEK_PARAM } from '../week';
+
+import type { WriteOutcome } from './writes';
 
 /**
  * What an athlete reports about their own day, a week at a time.
@@ -52,6 +47,29 @@ import { formatWeek, shiftWeek, WEEK_PARAM } from '../week';
  * (§21) — it does not yet, and there is no athlete path here pretending
  * otherwise.
  */
+
+/**
+ * What this table writes, and what it may configure.
+ *
+ * No athlete is named anywhere in it: whoever supplies these has already
+ * decided whose record is written — the coach's page by binding an id, the
+ * portal by resolving one from the session (§21).
+ *
+ * `configure` is separate and optional because it is a different kind of act.
+ * Choosing *which* quantities an athlete follows is a coaching decision; filling
+ * them in is the athlete's. Where it is absent the controls go with it.
+ */
+export interface BiofeedbackWrites {
+  readonly setValue: (key: string, day: Date, value: number) => Promise<WriteOutcome>;
+  readonly clearValue: (entryId: string) => Promise<WriteOutcome>;
+  readonly setNote: (entryId: string, note: string | null) => Promise<WriteOutcome>;
+  readonly configure?:
+    | {
+        readonly setRows: (keys: readonly string[]) => Promise<WriteOutcome>;
+        readonly addQuantity: (name: string) => Promise<WriteOutcome>;
+      }
+    | undefined;
+}
 
 export interface BiofeedbackQuantityView {
   readonly key: string;
@@ -98,13 +116,14 @@ const forInput = (cell: BiofeedbackCellView | null): string =>
   cell === null ? '' : decimal(cell.value, 2);
 
 export function BiofeedbackWeek({
-  athleteId,
   week,
+  writes,
   onRemove,
 }: {
-  readonly athleteId: string;
   readonly week: BiofeedbackWeekView;
-  readonly onRemove: () => void;
+  readonly writes: BiofeedbackWrites;
+  /** Absent where the card cannot be taken off the page — the portal. */
+  readonly onRemove?: (() => void) | undefined;
 }) {
   const router = useRouter();
   const search = useSearchParams();
@@ -123,10 +142,13 @@ export function BiofeedbackWeek({
 
   const shown = week.rows.map((row) => row.quantity.key);
 
+  const configure = writes.configure;
+
   const setRows = (keys: readonly string[]) => {
+    if (configure === undefined) return;
     setError(null);
     startTransition(async () => {
-      const result = await setBiofeedbackRowsAction(athleteId, keys);
+      const result = await configure.setRows(keys);
       if (result.message) setError(result.message);
       else router.refresh();
     });
@@ -136,9 +158,10 @@ export function BiofeedbackWeek({
     const name = newName.trim();
     if (name === '') return;
 
+    if (configure === undefined) return;
     setError(null);
     startTransition(async () => {
-      const result = await addBiofeedbackQuantityAction(athleteId, name);
+      const result = await configure.addQuantity(name);
       if (result.message) setError(result.message);
       else {
         setNewName('');
@@ -189,15 +212,17 @@ export function BiofeedbackWeek({
           >
             <ChevronRight aria-hidden="true" className="size-4" />
           </Button>
-          <button
-            type="button"
-            aria-label="Biofeedback entfernen"
-            onClick={onRemove}
-            className={`${FOCUS_RING} ${TOUCH_TARGET} flex items-center gap-1 rounded px-2 text-xs text-muted-foreground hover:text-foreground`}
-          >
-            <X aria-hidden="true" className="size-3.5" />
-            Entfernen
-          </button>
+          {onRemove === undefined ? null : (
+            <button
+              type="button"
+              aria-label="Biofeedback entfernen"
+              onClick={onRemove}
+              className={`${FOCUS_RING} ${TOUCH_TARGET} flex items-center gap-1 rounded px-2 text-xs text-muted-foreground hover:text-foreground`}
+            >
+              <X aria-hidden="true" className="size-3.5" />
+              Entfernen
+            </button>
+          )}
         </div>
       </div>
 
@@ -261,7 +286,7 @@ export function BiofeedbackWeek({
                     return (
                       <td key={day.toISOString()} className="px-1.5 py-1">
                         <Cell
-                          athleteId={athleteId}
+                          writes={writes}
                           day={day}
                           quantity={row.quantity}
                           cell={cell}
@@ -292,17 +317,19 @@ export function BiofeedbackWeek({
                   </td>
 
                   <td className="py-1 sm:pt-3">
-                    <button
-                      type="button"
-                      aria-label={`Zeile ${row.quantity.name} entfernen`}
-                      disabled={pending}
-                      onClick={() => {
-                        setRows(shown.filter((key) => key !== row.quantity.key));
-                      }}
-                      className={`${FOCUS_RING} ${TOUCH_TARGET} rounded px-1 text-muted-foreground hover:text-destructive`}
-                    >
-                      <X aria-hidden="true" className="size-4" />
-                    </button>
+                    {configure === undefined ? null : (
+                      <button
+                        type="button"
+                        aria-label={`Zeile ${row.quantity.name} entfernen`}
+                        disabled={pending}
+                        onClick={() => {
+                          setRows(shown.filter((key) => key !== row.quantity.key));
+                        }}
+                        className={`${FOCUS_RING} ${TOUCH_TARGET} rounded px-1 text-muted-foreground hover:text-destructive`}
+                      >
+                        <X aria-hidden="true" className="size-4" />
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -314,80 +341,82 @@ export function BiofeedbackWeek({
       {/* Taking a row off never deletes what was written under it — the entries
           stay and reappear the moment the row is back. Said here, because a
           cross beside a row of numbers reads like a delete. */}
-      <div className="flex flex-wrap items-center gap-2">
-        {week.available.map((quantity) => (
-          <button
-            key={quantity.key}
-            type="button"
-            disabled={pending}
-            onClick={() => {
-              setRows([...shown, quantity.key]);
-            }}
-            className={`${FOCUS_RING} ${TOUCH_TARGET} flex items-center gap-1.5 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:opacity-50`}
-          >
-            <Plus aria-hidden="true" className="size-3.5" />
-            {quantity.name}
-          </button>
-        ))}
-
-        {adding ? (
-          <div className="flex min-w-0 flex-1 flex-wrap items-end gap-2">
-            <label className="flex min-w-48 flex-1 flex-col gap-1 text-xs">
-              <span className="font-medium">Eigene Messgröße</span>
-              <input
-                value={newName}
-                placeholder="z. B. Wohlbefinden"
-                autoFocus
-                disabled={pending}
-                onChange={(event) => {
-                  setNewName(event.target.value);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') addOwn();
-                }}
-                className={`${FOCUS_RING} h-11 w-full rounded-md border border-input bg-background px-3 text-sm`}
-              />
-            </label>
-            <Button
+      {configure === undefined ? null : (
+        <div className="flex flex-wrap items-center gap-2">
+          {week.available.map((quantity) => (
+            <button
+              key={quantity.key}
               type="button"
-              variant="accent"
-              className={TOUCH_BUTTON}
-              disabled={pending || newName.trim() === ''}
-              onClick={addOwn}
-            >
-              Hinzufügen
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              className={TOUCH_BUTTON}
+              disabled={pending}
               onClick={() => {
-                setAdding(false);
-                setNewName('');
+                setRows([...shown, quantity.key]);
               }}
+              className={`${FOCUS_RING} ${TOUCH_TARGET} flex items-center gap-1.5 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:opacity-50`}
             >
-              Abbrechen
-            </Button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => {
-              setAdding(true);
-            }}
-            className={`${FOCUS_RING} ${TOUCH_TARGET} flex items-center gap-1.5 rounded-md border border-dashed border-border px-3 text-sm text-muted-foreground hover:bg-muted hover:text-foreground`}
-          >
-            <Plus aria-hidden="true" className="size-3.5" />
-            Eigene Messgröße
-          </button>
-        )}
-      </div>
+              <Plus aria-hidden="true" className="size-3.5" />
+              {quantity.name}
+            </button>
+          ))}
+
+          {adding ? (
+            <div className="flex min-w-0 flex-1 flex-wrap items-end gap-2">
+              <label className="flex min-w-48 flex-1 flex-col gap-1 text-xs">
+                <span className="font-medium">Eigene Messgröße</span>
+                <input
+                  value={newName}
+                  placeholder="z. B. Wohlbefinden"
+                  autoFocus
+                  disabled={pending}
+                  onChange={(event) => {
+                    setNewName(event.target.value);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') addOwn();
+                  }}
+                  className={`${FOCUS_RING} h-11 w-full rounded-md border border-input bg-background px-3 text-sm`}
+                />
+              </label>
+              <Button
+                type="button"
+                variant="accent"
+                className={TOUCH_BUTTON}
+                disabled={pending || newName.trim() === ''}
+                onClick={addOwn}
+              >
+                Hinzufügen
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className={TOUCH_BUTTON}
+                onClick={() => {
+                  setAdding(false);
+                  setNewName('');
+                }}
+              >
+                Abbrechen
+              </Button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setAdding(true);
+              }}
+              className={`${FOCUS_RING} ${TOUCH_TARGET} flex items-center gap-1.5 rounded-md border border-dashed border-border px-3 text-sm text-muted-foreground hover:bg-muted hover:text-foreground`}
+            >
+              <Plus aria-hidden="true" className="size-3.5" />
+              Eigene Messgröße
+            </button>
+          )}
+        </div>
+      )}
 
       <p className="text-xs text-pretty text-muted-foreground">
-        Bewertungen von 1 bis 10, Schlaf in Stunden. Was eine 7 bedeutet, legen Sie mit dem Athleten
-        fest — es findet keine fachliche Bewertung statt. Eine entfernte Zeile löscht nichts:
-        eingetragene Werte bleiben und erscheinen wieder, sobald die Zeile zurückkommt. Eine eigene
-        Messgröße gehört danach dem Arbeitsbereich und steht auch bei anderen Athleten zur Wahl.
+        Bewertungen von 1 bis 10, Schlaf in Stunden.
+        {configure === undefined
+          ? ' Was eine 7 bedeutet, legen Sie mit Ihrem Coach fest — es findet keine fachliche Bewertung statt. Eine Bemerkung erklärt einen Wert, wenn die Zahl allein zu wenig sagt.'
+          : ' Was eine 7 bedeutet, legen Sie mit dem Athleten fest — es findet keine fachliche Bewertung statt. Eine entfernte Zeile löscht nichts: eingetragene Werte bleiben und erscheinen wieder, sobald die Zeile zurückkommt. Eine eigene Messgröße gehört danach dem Arbeitsbereich und steht auch bei anderen Athleten zur Wahl.'}
       </p>
 
       {error === null ? null : (
@@ -408,7 +437,7 @@ export function BiofeedbackWeek({
  * act from writing a zero.
  */
 function Cell({
-  athleteId,
+  writes,
   day,
   quantity,
   cell,
@@ -416,7 +445,7 @@ function Cell({
   onToggleNote,
   onError,
 }: {
-  readonly athleteId: string;
+  readonly writes: BiofeedbackWrites;
   readonly day: Date;
   readonly quantity: BiofeedbackQuantityView;
   readonly cell: BiofeedbackCellView | null;
@@ -445,7 +474,7 @@ function Cell({
       if (cell === null) return;
 
       startTransition(async () => {
-        const result = await clearBiofeedbackValueAction(athleteId, cell.entryId);
+        const result = await writes.clearValue(cell.entryId);
         if (result.message) onError(result.message);
         else setSaved('');
       });
@@ -465,7 +494,7 @@ function Cell({
     }
 
     startTransition(async () => {
-      const result = await setBiofeedbackValueAction(athleteId, quantity.key, day, parsed);
+      const result = await writes.setValue(quantity.key, day, parsed);
       if (result.message) {
         onError(result.message);
         setDraft(saved);
@@ -480,11 +509,7 @@ function Cell({
     onError(null);
 
     startTransition(async () => {
-      const result = await setBiofeedbackNoteAction(
-        athleteId,
-        cell.entryId,
-        note.trim() === '' ? null : note,
-      );
+      const result = await writes.setNote(cell.entryId, note.trim() === '' ? null : note);
 
       if (result.message) onError(result.message);
       else onToggleNote();

@@ -17,6 +17,26 @@ export { DuplicateWarning } from './components/duplicate-warning';
 export { AthleteTile, type AthleteTileData } from './components/athlete-tile';
 export { CreateAthleteDialog } from './components/create-athlete-dialog';
 export { LoadMoreAthletes } from './components/load-more-athletes';
+/**
+ * The three tracking tables, and the shape their writes take.
+ *
+ * Exported because the athlete portal renders the same tables (§21). They are
+ * safe to share in a way `server/` is not: none of them names an athlete or
+ * touches the database — the writes arrive as props, so each surface binds its
+ * own procedures and neither can reach through the other's.
+ */
+export {
+  NutritionWeek,
+  type NutritionWeekView,
+  type NutritionWrites,
+} from './components/nutrition-week';
+export {
+  BiofeedbackWeek,
+  type BiofeedbackWeekView,
+  type BiofeedbackWrites,
+} from './components/biofeedback-week';
+export { CycleMonth, type CycleMonthView, type CycleWrites } from './components/cycle-month';
+export type { WriteOutcome } from './components/writes';
 export {
   athleteIdSchema,
   createAthleteSchema,

@@ -6,6 +6,37 @@ import { z } from 'zod';
 import { AppError } from '@apex/types';
 
 import { createTRPCRouter, withCoachPermission, withPermission } from '@/server/api/trpc';
+import { issueUploadTicket, readUploadTicket } from '@/server/upload-ticket';
+import {
+  endAnalysisLease,
+  heartbeatAnalysisLease,
+  startAnalysisLease,
+} from '@/services/assets/analysis-lease';
+import { deleteAsset } from '@/services/assets/deletion';
+import {
+  analysisSourceFor,
+  assetForDownload,
+  createFolder,
+  deleteFolder,
+  listAthleteAssets,
+  listFolders,
+  prepareResumableUpload,
+  registerUploadedAsset,
+  renameFolder,
+} from '@/services/assets/files';
+import {
+  addBiofeedbackQuantity,
+  biofeedbackWeek,
+  clearBiofeedbackValue,
+  setBiofeedbackNote,
+  setBiofeedbackRows,
+  setBiofeedbackValue,
+} from '@/services/tracking/biofeedback';
+import {
+  clearNutritionValue,
+  nutritionWeek,
+  setNutritionValue,
+} from '@/services/tracking/nutrition';
 
 import {
   athleteIdSchema,
@@ -26,16 +57,7 @@ import {
   viewerOf,
   visibleToViewer,
 } from './access';
-import {
-  addBiofeedbackQuantity,
-  biofeedbackWeek,
-  clearBiofeedbackValue,
-  setBiofeedbackNote,
-  setBiofeedbackRows,
-  setBiofeedbackValue,
-} from './biofeedback';
 import { movementProfilesFor } from './movement-profiles';
-import { clearNutritionValue, nutritionWeek, setNutritionValue } from './nutrition';
 import {
   countAthletes,
   countAthletesMatching,
@@ -71,6 +93,107 @@ const notFound = () =>
  * `withCoachPermission` because the athlete records its author; the others need
  * no coach identity, so they do not pay for the lookup.
  */
+/** A folder or file id from a request. Never a path, never a storage key. */
+const assetIdSchema = z.string().min(1).max(64);
+const folderNameSchema = z.string().trim().min(1).max(80);
+
+/** Why a shelf could not be made or renamed, in the coach's language. */
+function folderRefusal(refusal: 'EMPTY_NAME' | 'NAME_TAKEN' | 'NOT_FOUND'): TRPCError {
+  if (refusal === 'NOT_FOUND') return notFound();
+
+  return new TRPCError({
+    code: refusal === 'NAME_TAKEN' ? 'CONFLICT' : 'BAD_REQUEST',
+    message:
+      refusal === 'NAME_TAKEN'
+        ? 'Ein Ordner mit diesem Namen gibt es schon.'
+        : 'Bitte einen Namen eingeben.',
+  });
+}
+
+/**
+ * Why a file stayed.
+ *
+ * Each reason is a different next step, so each gets its own sentence rather
+ * than one "geht nicht" that sends somebody hunting.
+ */
+function assetRefusal(
+  status:
+    | 'DELETE_BLOCKED_ACTIVE_ANALYSIS'
+    | 'DELETE_BLOCKED_MISSING_INSIGHT_EVIDENCE'
+    | 'STORAGE_FAILED'
+    | 'NOT_FOUND'
+    | 'DELETE_ALLOWED',
+): TRPCError {
+  if (status === 'DELETE_BLOCKED_ACTIVE_ANALYSIS') {
+    return new TRPCError({
+      code: 'CONFLICT',
+      message: 'Diese Datei wird gerade für eine Videoanalyse gebraucht.',
+    });
+  }
+
+  if (status === 'DELETE_BLOCKED_MISSING_INSIGHT_EVIDENCE') {
+    return new TRPCError({
+      code: 'CONFLICT',
+      message:
+        'Diese Datei belegt einen Befund, und der Beleg besteht nirgends dauerhaft weiter. Erst veröffentlichen, dann löschen.',
+    });
+  }
+
+  if (status === 'STORAGE_FAILED') {
+    return new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'Die Datei konnte im Speicher nicht entfernt werden. Bitte später erneut.',
+    });
+  }
+
+  return notFound();
+}
+
+/** The shape both upload doors take, minus whose record it is. */
+const UPLOAD_SHAPE = {
+  fileName: z.string().trim().min(1).max(200),
+  mimeType: z.string().trim().min(1).max(120),
+  sizeBytes: z.number().int().positive(),
+  folderId: assetIdSchema.nullable().optional(),
+} as const;
+
+/** Why a file may not be put down, in the coach's language. */
+function uploadRefusal(
+  refusal: 'TOO_LARGE' | 'UNSUPPORTED_TYPE' | 'EMPTY' | 'STORAGE_FAILED' | 'NOT_UPLOADED',
+): TRPCError {
+  const messages = {
+    TOO_LARGE: 'Die Datei ist zu groß.',
+    UNSUPPORTED_TYPE: 'Dieser Dateityp lässt sich hier nicht ablegen.',
+    EMPTY: 'Die Datei ist leer.',
+    STORAGE_FAILED: 'Der Speicher hat die Datei nicht angenommen.',
+    NOT_UPLOADED: 'Die Datei ist nicht vollständig im Speicher angekommen.',
+  } as const;
+
+  return new TRPCError({
+    code: refusal === 'NOT_UPLOADED' ? 'CONFLICT' : 'BAD_REQUEST',
+    message: messages[refusal],
+  });
+}
+
+/** Why a stored file cannot be analysed, in the coach's language. */
+function analysisRefusal(refusal: 'NOT_FOUND' | 'NOT_A_VIDEO' | 'MISSING_IN_STORAGE'): TRPCError {
+  if (refusal === 'NOT_A_VIDEO') {
+    return new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'Nur Videos lassen sich analysieren.',
+    });
+  }
+
+  if (refusal === 'MISSING_IN_STORAGE') {
+    return new TRPCError({
+      code: 'CONFLICT',
+      message: 'Zu dieser Datei liegen keine Daten mehr im Speicher.',
+    });
+  }
+
+  return notFound();
+}
+
 export const athletesRouter = createTRPCRouter({
   list: withPermission('athlete:read')
     .input(listAthletesSchema)
@@ -490,7 +613,14 @@ export const athletesRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const ok = await setBiofeedbackNote(ctx.db, ctx.tenant, input.entryId, input.note);
+      const ok = await setBiofeedbackNote(
+        ctx.db,
+        ctx.tenant,
+        input.entryId,
+        input.note,
+        // A coach reaches every athlete of their workspace (§21).
+        null,
+      );
       if (!ok) throw notFound();
 
       return { ok: true };
@@ -500,7 +630,13 @@ export const athletesRouter = createTRPCRouter({
   clearBiofeedbackValue: withPermission('athlete:write')
     .input(z.object({ entryId: z.string().min(1).max(64) }))
     .mutation(async ({ ctx, input }) => {
-      const ok = await clearBiofeedbackValue(ctx.db, ctx.tenant, input.entryId);
+      const ok = await clearBiofeedbackValue(
+        ctx.db,
+        ctx.tenant,
+        input.entryId,
+        // A coach reaches every athlete of their workspace (§21).
+        null,
+      );
       if (!ok) throw notFound();
 
       return { ok: true };
@@ -570,7 +706,13 @@ export const athletesRouter = createTRPCRouter({
   clearNutritionValue: withPermission('athlete:write')
     .input(z.object({ entryId: z.string().min(1).max(64) }))
     .mutation(async ({ ctx, input }) => {
-      const ok = await clearNutritionValue(ctx.db, ctx.tenant, input.entryId);
+      const ok = await clearNutritionValue(
+        ctx.db,
+        ctx.tenant,
+        input.entryId,
+        // A coach reaches every athlete of their workspace (§21).
+        null,
+      );
       if (!ok) throw notFound();
 
       return { ok: true };
@@ -609,6 +751,271 @@ export const athletesRouter = createTRPCRouter({
    * the answer is "here is what I found, say the word", and `confirmDuplicate`
    * is that word.
    */
+  /**
+   * One athlete's files and the shelves they sit on (§18).
+   *
+   * The coach's door onto the same services the portal uses. What differs is
+   * only the question asked first: a coach reaches every athlete of their
+   * workspace, so the athlete arrives as an input here and is resolved from the
+   * session there. Sharing the *authorisation* between the two would give one
+   * side the other's reach.
+   */
+  files: withPermission('athlete:read')
+    .input(athleteIdSchema)
+    .query(async ({ ctx, input }) => {
+      const [folders, assets] = await Promise.all([
+        listFolders(ctx.db, ctx.tenant, input.athleteId),
+        listAthleteAssets(ctx.db, ctx.tenant, input.athleteId),
+      ]);
+
+      return { folders, assets };
+    }),
+
+  /** `withCoachPermission`, because the shelf records who put it there (§18). */
+  createAssetFolder: withCoachPermission('athlete:write')
+    .input(athleteIdSchema.extend({ name: folderNameSchema }))
+    .mutation(async ({ ctx, input }) => {
+      const result = await createFolder(
+        ctx.db,
+        ctx.tenant,
+        input.athleteId,
+        input.name,
+        ctx.coach.id,
+      );
+
+      if (!result.ok) throw folderRefusal(result.refusal);
+
+      return result.value;
+    }),
+
+  renameAssetFolder: withPermission('athlete:write')
+    .input(athleteIdSchema.extend({ folderId: assetIdSchema, name: folderNameSchema }))
+    .mutation(async ({ ctx, input }) => {
+      const result = await renameFolder(
+        ctx.db,
+        ctx.tenant,
+        input.athleteId,
+        input.folderId,
+        input.name,
+      );
+
+      if (!result.ok) throw folderRefusal(result.refusal);
+
+      return { ok: true };
+    }),
+
+  /** Removes the shelf. What stood on it stays, loose (§18). */
+  deleteAssetFolder: withPermission('athlete:write')
+    .input(athleteIdSchema.extend({ folderId: assetIdSchema }))
+    .mutation(async ({ ctx, input }) => {
+      if (!(await deleteFolder(ctx.db, ctx.tenant, input.athleteId, input.folderId))) {
+        throw notFound();
+      }
+
+      return { ok: true };
+    }),
+
+  /**
+   * Deletes one file for good.
+   *
+   * Through `services/assets/deletion.ts`, never around it: whether a file may
+   * go is a question about running analyses, findings and frozen documents, and
+   * that question has one answer for both doors (§18).
+   */
+  deleteAssetFile: withPermission('athlete:write')
+    .input(athleteIdSchema.extend({ assetId: assetIdSchema }))
+    .mutation(async ({ ctx, input }) => {
+      const own = await assetForDownload(ctx.db, ctx.tenant, input.athleteId, input.assetId);
+      if (!own) throw notFound();
+
+      const result = await deleteAsset(ctx.db, ctx.tenant, input.assetId);
+
+      if (result.status === 'DELETED') return { ok: true };
+
+      throw assetRefusal(result.status);
+    }),
+
+  /**
+   * Opens a stored video as the source of a video analysis (§18).
+   *
+   * ## What this is not
+   *
+   * A second analysis. The pipeline is the one that already exists — what
+   * changes is only where the bytes come from, and this procedure is the part
+   * that must not live in a browser: **which asset, and may this coach have
+   * it.** The client names an asset id; the storage key is resolved here and
+   * never travels back.
+   *
+   * ## Why it takes no hold
+   *
+   * It is read by the page while it renders, and **a render must not change
+   * anything**. It did take the lease here once, and the browser QA showed
+   * exactly why that is wrong: every Server Action from this screen makes Next
+   * re-render the page, so the release fired, the page re-rendered, and the
+   * re-render took the hold straight back. The hold is now taken deliberately,
+   * once, by `startAnalysis` when the browser actually loads the video.
+   */
+  analysisSource: withCoachPermission('athlete:write')
+    .input(athleteIdSchema.extend({ assetId: assetIdSchema }))
+    .query(async ({ ctx, input }) => {
+      const resolved = await analysisSourceFor(ctx.db, ctx.tenant, input.athleteId, input.assetId);
+
+      if (!resolved.ok) throw analysisRefusal(resolved.refusal);
+
+      // The key stays here. What the browser gets is a name and a size.
+      return {
+        assetId: resolved.source.assetId,
+        fileName: resolved.source.fileName,
+        mimeType: resolved.source.mimeType,
+        sizeBytes: resolved.source.sizeBytes,
+      };
+    }),
+
+  /**
+   * Takes the hold on a stored video, for one analysis that is starting (§18).
+   *
+   * Asked once, by the screen, at the moment it fetches the bytes — not while
+   * the page renders, so that re-rendering the page (which Next does after
+   * every Server Action) cannot silently re-take a hold that was just released.
+   *
+   * The athlete and the workspace are checked again here rather than trusted
+   * from the earlier read: this is a write, and a write authorises itself.
+   */
+  startAnalysis: withCoachPermission('athlete:write')
+    .input(athleteIdSchema.extend({ assetId: assetIdSchema }))
+    .mutation(async ({ ctx, input }) => {
+      const resolved = await analysisSourceFor(ctx.db, ctx.tenant, input.athleteId, input.assetId);
+
+      if (!resolved.ok) throw analysisRefusal(resolved.refusal);
+
+      /**
+       * Take the hold, or find out somebody already has it.
+       *
+       * One statement, with the condition inside it — two coaches opening the
+       * same recording at the same moment cannot both succeed, and neither can
+       * a start that races a deletion.
+       */
+      if (!(await startAnalysisLease(ctx.db, ctx.tenant, resolved.source.assetId))) {
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message: 'Dieses Video wird bereits ausgewertet.',
+        });
+      }
+
+      return { ok: true };
+    }),
+
+  /**
+   * Keeps the hold alive while the screen is open (§18).
+   *
+   * A lease that never expired would block a deletion for ever after one closed
+   * tab; one that expires needs saying so periodically. This only extends a
+   * hold that is genuinely running — it cannot revive one that was ended or
+   * swept.
+   */
+  heartbeatAnalysis: withCoachPermission('athlete:write')
+    .input(z.object({ assetId: assetIdSchema }))
+    .mutation(async ({ ctx, input }) => ({
+      held: await heartbeatAnalysisLease(ctx.db, ctx.tenant, input.assetId),
+    })),
+
+  /**
+   * Ends the analysis and lets the video go (§18).
+   *
+   * Called on every way out — finished, abandoned, failed — so a refusal to
+   * delete never outlives the reason for it. The outcome is kept, because an
+   * analysis that failed is worth knowing about; neither outcome protects the
+   * file any longer.
+   *
+   * Deliberately forgiving: ending something that was not held is not an error.
+   */
+  releaseAnalysisSource: withCoachPermission('athlete:write')
+    .input(
+      z.object({
+        assetId: assetIdSchema,
+        outcome: z.enum(['FINISHED', 'FAILED']).default('FINISHED'),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      await endAnalysisLease(ctx.db, ctx.tenant, input.assetId, input.outcome);
+
+      return { ok: true };
+    }),
+
+  /**
+   * Permission to write **one** object, for a file too big for a request (§18).
+   *
+   * The coach half of the resumable path. Everything the upload will use is
+   * decided here, where the caller is already known, and travels in a signed
+   * ticket the browser cannot edit: the workspace, the athlete, the storage
+   * key, the type and the length. The client chooses none of them.
+   */
+  createUploadTicket: withCoachPermission('athlete:write')
+    .input(athleteIdSchema.extend(UPLOAD_SHAPE))
+    .mutation(async ({ ctx, input }) => {
+      const athlete = await getAthlete(ctx.db, ctx.tenant, input.athleteId);
+      if (!athlete) throw notFound();
+
+      const prepared = prepareResumableUpload({
+        athleteId: athlete.id,
+        mimeType: input.mimeType,
+        sizeBytes: input.sizeBytes,
+      });
+
+      if (!prepared.ok) throw uploadRefusal(prepared.refusal);
+
+      return {
+        ticket: issueUploadTicket({
+          organizationId: ctx.tenant.organizationId,
+          athleteId: athlete.id,
+          storageKey: prepared.storageKey,
+          mimeType: prepared.mimeType,
+          sizeBytes: input.sizeBytes,
+          fileName: input.fileName,
+          folderId: input.folderId ?? null,
+          uploadedByCoachId: ctx.coach.id,
+        }),
+      };
+    }),
+
+  /**
+   * Files the row once the bytes are in the store.
+   *
+   * The ticket says what was authorised; the **store** says whether it actually
+   * happened. Registering without having uploaded finds no object and writes
+   * nothing (§18).
+   */
+  registerUpload: withCoachPermission('athlete:write')
+    .input(z.object({ ticket: z.string().min(1).max(2000) }))
+    .mutation(async ({ ctx, input }) => {
+      const ticket = readUploadTicket(input.ticket);
+
+      // A ticket is bound to the workspace it was issued in. Re-checked rather
+      // than trusted, so one that leaked cannot be spent somewhere else.
+      if (ticket?.organizationId !== ctx.tenant.organizationId) throw notFound();
+
+      const result = await registerUploadedAsset(ctx.db, ctx.tenant, ticket);
+      if (!result.ok) throw uploadRefusal(result.refusal);
+
+      return result;
+    }),
+
+  /**
+   * Proves the coach may put a file on this record, and says who is filing it.
+   *
+   * The bytes travel in a server action rather than through tRPC, exactly as
+   * analysis stills already do. What must not live in an action is the
+   * permission — so it lives here, and the action calls this first.
+   */
+  fileUploadTarget: withCoachPermission('athlete:write')
+    .input(athleteIdSchema)
+    .mutation(async ({ ctx, input }) => {
+      const athlete = await getAthlete(ctx.db, ctx.tenant, input.athleteId);
+      if (!athlete) throw notFound();
+
+      return { athleteId: athlete.id, uploadedByCoachId: ctx.coach.id };
+    }),
+
   create: withCoachPermission('athlete:write')
     .input(createAthleteSchema)
     .mutation(async ({ ctx, input }) => {

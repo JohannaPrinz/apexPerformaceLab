@@ -1139,6 +1139,26 @@ describe('setting an assessment status', () => {
     expect(Object.keys(argsOf(assessment.updateMany).data ?? {})).toEqual(['status']);
   });
 
+  /**
+   * §18: archiving is not a storage backup — and it is not a deletion either.
+   *
+   * Both halves matter. Nothing about the assessment is removed, so the record,
+   * its insights and its published reports stay; and nothing is *kept* on its
+   * behalf either, so the original videos behind it remain ordinary files that
+   * `services/assets/deletion.ts` may release.
+   */
+  it('archives by writing a status and nothing else', async () => {
+    const { db, assessment } = withStatus('COMPLETED', ['COMPLETED']);
+
+    await setAssessmentStatus(db, TENANT, 'as_1', 'ARCHIVED');
+
+    expect(Object.keys(argsOf(assessment.updateMany).data ?? {})).toEqual(['status']);
+    expect(argsOf(assessment.updateMany).data).toMatchObject({ status: 'ARCHIVED' });
+    // One write, and it is that one: archiving reaches no media at all, which
+    // is what leaves frozen report media and originals alike untouched by it.
+    expect(assessment.updateMany).toHaveBeenCalledTimes(1);
+  });
+
   it('stays inside the workspace when reading and when writing', async () => {
     const { db, assessment } = withStatus('PLANNED', ['PLANNED']);
 

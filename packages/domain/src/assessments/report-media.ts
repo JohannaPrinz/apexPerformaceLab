@@ -163,6 +163,23 @@ export function athleteMediaFolder(athleteId: string): string {
   return `${ATHLETE_MEDIA_PREFIX}/${athleteId}`;
 }
 
+/**
+ * The storage key for one file an athlete or their coach uploaded (§18).
+ *
+ * Built from an id the application generated and an extension it derived from
+ * the MIME type — never from the name the browser sent. A file called
+ * `../../reports/x.jpg` would otherwise write itself into a frozen document's
+ * folder, and the original name is kept as data on the row instead, where it
+ * cannot address anything.
+ */
+export function athleteMediaKey(athleteId: string, mediaId: string, extension: string): string {
+  if (!idPattern.test(athleteId) || !idPattern.test(mediaId) || !positionPattern.test(extension)) {
+    throw new Error('Ungültiger Bezeichner für eine Athletendatei.');
+  }
+
+  return `${ATHLETE_MEDIA_PREFIX}/${athleteId}/${mediaId}.${extension}`;
+}
+
 /** The athlete a key belongs to, or `null` where it is not an athlete key. */
 export function athleteOfKey(key: string): string | null {
   const parts = key.split('/');

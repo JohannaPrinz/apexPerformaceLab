@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { bleedingMonth, setBleedingDay } from './service';
+import { bleedingMonth, setBleedingDay } from './cycle';
 
 /**
  * The month behind the calendar.

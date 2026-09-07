@@ -5,7 +5,11 @@ import { scoped, withTenant } from '@apex/database/tenant';
 import { readBleedingIntensity, type BleedingIntensity } from '@apex/domain';
 import type { TenantContext } from '@apex/types';
 
-import type { ListBleedingInput, RecordBleedingInput, RemoveBleedingInput } from '../schemas';
+import type {
+  ListBleedingInput,
+  RecordBleedingInput,
+  RemoveBleedingInput,
+} from '@/features/cycle/schemas';
 
 /**
  * Documented menstrual bleeding.
@@ -380,9 +384,23 @@ export async function removeBleeding(
   db: CycleDb,
   tenant: Pick<TenantContext, 'organizationId'>,
   input: RemoveBleedingInput,
+  /**
+   * Whose entry this must be, or `null` for a caller that may reach every
+   * athlete of the workspace.
+   *
+   * **Required rather than optional on purpose.** An entry id says nothing
+   * about who it belongs to, and the workspace filter that is sufficient for a
+   * coach is not sufficient for an athlete — the workspace holds other athletes
+   * (§21). Making the parameter compulsory means every call site has to answer
+   * the question; an optional one would be answered by whoever forgot it.
+   */
+  owner: string | null,
 ): Promise<{ ok: boolean }> {
   const { count } = await db.bleedingEpisode.deleteMany({
-    where: scoped(tenant, { id: input.episodeId }),
+    where: scoped(tenant, {
+      id: input.episodeId,
+      ...(owner === null ? {} : { athleteId: owner }),
+    }),
   });
 
   return { ok: count > 0 };

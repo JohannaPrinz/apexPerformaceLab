@@ -5,7 +5,7 @@ import { scoped } from '@apex/database/tenant';
 import { comparisonKey, contextOf, type AthleteSex } from '@apex/domain';
 import type { TenantContext } from '@apex/types';
 
-import { BIOFEEDBACK_TREND_KEY } from './biofeedback';
+import { BIOFEEDBACK_TREND_KEY } from '@/services/tracking/biofeedback';
 
 /**
  * One athlete's record over time.

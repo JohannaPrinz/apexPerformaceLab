@@ -154,11 +154,14 @@ export async function copyObject(fromKey: string, toKey: string): Promise<boolea
 }
 
 /**
- * Removes files.
+ * Removes files, without saying whether it worked.
  *
  * Never throws: clearing up runs after the work that mattered has already
  * succeeded, and a failed delete must not undo a published analysis. What it
  * leaves behind is temporary by construction and expires on its own.
+ *
+ * **Not for deleting an Asset** — there the outcome decides whether a database
+ * row may follow, so use `removeObject` below.
  */
 export async function deleteObjects(keys: readonly string[]): Promise<void> {
   const target = store();
@@ -169,4 +172,60 @@ export async function deleteObjects(keys: readonly string[]): Promise<void> {
   for (let index = 0; index < keys.length; index += 100) {
     await target.bucket.remove([...keys.slice(index, index + 100)]);
   }
+}
+
+/**
+ * Removes one file **and says whether it went**.
+ *
+ * The reporting sibling of `deleteObjects`, and the difference is the whole
+ * point. Clearing up temporary stills may fail quietly because nothing depends
+ * on the answer. Deleting an Asset does: the database row may only follow once
+ * the object is actually gone, otherwise the file survives with nothing left
+ * pointing at it and counts against the plan for ever (§18).
+ *
+ * A key that is already absent counts as removed — the outcome the caller needs
+ * is "no object left behind", and that is satisfied either way. An unconfigured
+ * store is **not** success: nothing was checked, so nothing may be assumed.
+ */
+export async function removeObject(key: string): Promise<boolean> {
+  const target = store();
+  if (target === null) return false;
+
+  const { error } = await target.bucket.remove([key]);
+
+  return error === null;
+}
+
+/**
+ * What the store actually holds under one key, or `null`.
+ *
+ * The proof a resumable upload finished. A chunked upload does not report back
+ * to this application at all — the browser talks to the proxy and the proxy to
+ * the store — so before an Asset row is written, the object is looked for and
+ * its **real** size is read. A client that skipped the upload and asked to
+ * register anyway finds nothing here, and a client that lied about the size
+ * does not get its number recorded (§18).
+ */
+export async function objectInfo(
+  key: string,
+): Promise<{ readonly sizeBytes: number; readonly mimeType: string | null } | null> {
+  const target = store();
+  if (target === null) return null;
+
+  const slash = key.lastIndexOf('/');
+  const folder = slash === -1 ? '' : key.slice(0, slash);
+  const name = key.slice(slash + 1);
+
+  const { data, error } = await target.bucket.list(folder, { limit: 100, search: name });
+  if (error !== null || data === null) return null;
+
+  const found = data.find((entry) => entry.name === name && entry.id !== null);
+  if (found === undefined) return null;
+
+  const metadata = found.metadata as { size?: number; mimetype?: string } | null;
+
+  return {
+    sizeBytes: typeof metadata?.size === 'number' ? metadata.size : 0,
+    mimeType: typeof metadata?.mimetype === 'string' ? metadata.mimetype : null,
+  };
 }

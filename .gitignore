@@ -63,3 +63,6 @@ Thumbs.db
 # Test footage a coach dropped in locally. Personal, and 4 MB of binary
 # that git would keep forever.
 testsource/
+
+# Marker des Codec-Checks, kein Quellcode
+apps/web/scripts/.video-codecs.done

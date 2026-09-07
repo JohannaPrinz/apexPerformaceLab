@@ -116,7 +116,7 @@ describe('the workspace boundary', () => {
   it('deletes through a filter that carries the workspace', async () => {
     const fake = nutritionDb();
 
-    await clearNutritionValue(fake.db, TENANT, 'te_1');
+    await clearNutritionValue(fake.db, TENANT, 'te_1', null);
 
     expect(argsOf(fake.trackingEntry.deleteMany).where).toMatchObject({
       id: 'te_1',
@@ -128,7 +128,20 @@ describe('the workspace boundary', () => {
     const fake = nutritionDb();
     fake.trackingEntry.deleteMany.mockResolvedValue({ count: 0 });
 
-    expect(await clearNutritionValue(fake.db, TENANT, 'te_x')).toBe(false);
+    expect(await clearNutritionValue(fake.db, TENANT, 'te_x', null)).toBe(false);
+  });
+
+  /** See the same case in `biofeedback.test.ts` — the portal path (§21). */
+  it('narrows to one athlete when an owner is named', async () => {
+    const fake = nutritionDb();
+
+    await clearNutritionValue(fake.db, TENANT, 'te_1', 'ath_1');
+
+    expect(argsOf(fake.trackingEntry.deleteMany).where).toMatchObject({
+      id: 'te_1',
+      organizationId: 'org_a',
+      athleteId: 'ath_1',
+    });
   });
 });
 

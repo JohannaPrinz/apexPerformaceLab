@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { listBleeding, recordBleeding, removeBleeding } from './service';
+import { listBleeding, recordBleeding, removeBleeding } from './cycle';
 
 /**
  * Documented bleeding.
@@ -253,7 +253,7 @@ describe('the workspace boundary', () => {
   it('deletes through the tenant filter, never by id alone', async () => {
     const { db, bleedingEpisode } = cycleDb();
 
-    await removeBleeding(db, OTHER, { episodeId: 'ep_1' });
+    await removeBleeding(db, OTHER, { episodeId: 'ep_1' }, null);
 
     expect(argsOf(bleedingEpisode.deleteMany).where).toMatchObject({
       id: 'ep_1',
@@ -264,6 +264,19 @@ describe('the workspace boundary', () => {
   it('reports a foreign entry as untouched rather than deleted', async () => {
     const { db } = cycleDb({ deleted: 0 });
 
-    expect(await removeBleeding(db, OTHER, { episodeId: 'ep_1' })).toEqual({ ok: false });
+    expect(await removeBleeding(db, OTHER, { episodeId: 'ep_1' }, null)).toEqual({ ok: false });
+  });
+
+  /** The portal path: one athlete, named in the filter rather than checked (§21). */
+  it('narrows to one athlete when an owner is named', async () => {
+    const { db, bleedingEpisode } = cycleDb();
+
+    await removeBleeding(db, OTHER, { episodeId: 'ep_1' }, 'ath_1');
+
+    expect(argsOf(bleedingEpisode.deleteMany).where).toMatchObject({
+      id: 'ep_1',
+      organizationId: 'org_b',
+      athleteId: 'ath_1',
+    });
   });
 });

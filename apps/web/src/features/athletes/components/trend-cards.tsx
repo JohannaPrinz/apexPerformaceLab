@@ -6,12 +6,21 @@ import { useRouter, useSearchParams } from 'next/navigation';
 
 import { ChevronDown, GripVertical, Plus, X } from 'lucide-react';
 
+import type { BleedingIntensity } from '@apex/domain';
 import { Button } from '@apex/ui';
 
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_FIELD, TOUCH_TARGET } from '@/components/common/touch';
+import { removeBleedingAction, setBleedingDayAction } from '@/features/cycle/server/actions';
 
 import {
+  addBiofeedbackQuantityAction,
+  clearBiofeedbackValueAction,
+  clearNutritionValueAction,
   recordTrackingAction,
+  setBiofeedbackNoteAction,
+  setBiofeedbackRowsAction,
+  setBiofeedbackValueAction,
+  setNutritionValueAction,
   setTrendCardAction,
   setTrendCardOrderAction,
 } from '../server/actions';
@@ -20,6 +29,51 @@ import { encodeTrendCards, type TrendCardSelection } from '../trend-slots';
 import { BiofeedbackWeek, type BiofeedbackWeekView } from './biofeedback-week';
 import { CycleMonth, type CycleMonthView } from './cycle-month';
 import { NutritionWeek, type NutritionWeekView } from './nutrition-week';
+
+/**
+ * The coach's half of the tracking tables.
+ *
+ * The tables themselves name no athlete (see `writes.ts`); this is where the id
+ * is bound, once, so every write below goes through a coach procedure. The
+ * portal binds the same three shapes to its own procedures, which resolve the
+ * athlete from the session instead — one set of tables, two authorization
+ * paths, and no permission softened to let them share (§21).
+ */
+function coachWrites(athleteId: string) {
+  return {
+    nutrition: {
+      setValue: (key: string, day: Date, value: number) =>
+        setNutritionValueAction(athleteId, key, day, value),
+      clearValue: (entryId: string) => clearNutritionValueAction(athleteId, entryId),
+    },
+    biofeedback: {
+      setValue: (key: string, day: Date, value: number) =>
+        setBiofeedbackValueAction(athleteId, key, day, value),
+      clearValue: (entryId: string) => clearBiofeedbackValueAction(athleteId, entryId),
+      setNote: (entryId: string, note: string | null) =>
+        setBiofeedbackNoteAction(athleteId, entryId, note),
+      // Which quantities are followed is a coaching decision, so the controls
+      // exist here and not in the portal.
+      configure: {
+        setRows: (keys: readonly string[]) => setBiofeedbackRowsAction(athleteId, keys),
+        addQuantity: (name: string) => addBiofeedbackQuantityAction(athleteId, name),
+      },
+    },
+    cycle: {
+      setDay: (day: string, intensity: BleedingIntensity | null) =>
+        setBleedingDayAction(athleteId, day, intensity),
+      removeRange: async (episodeId: string) => {
+        const form = new FormData();
+        form.set('episodeId', episodeId);
+        const result = await removeBleedingAction(athleteId, { status: 'idle' }, form);
+
+        return result.status === 'error'
+          ? { message: result.message ?? 'Der Eintrag blieb stehen.' }
+          : {};
+      },
+    },
+  };
+}
 
 /**
  * The trends of one athlete, as many as the coach wants.
@@ -409,7 +463,7 @@ export function TrendCards({
                     {card.key === BIOFEEDBACK_CARD_KEY ? (
                       biofeedback === null ? null : (
                         <BiofeedbackWeek
-                          athleteId={athleteId}
+                          writes={coachWrites(athleteId).biofeedback}
                           week={biofeedback}
                           onRemove={() => {
                             remove(BIOFEEDBACK_CARD_KEY);
@@ -419,7 +473,7 @@ export function TrendCards({
                     ) : card.key === NUTRITION_CARD_KEY ? (
                       nutrition === null ? null : (
                         <NutritionWeek
-                          athleteId={athleteId}
+                          writes={coachWrites(athleteId).nutrition}
                           week={nutrition}
                           onRemove={() => {
                             remove(NUTRITION_CARD_KEY);
@@ -806,5 +860,5 @@ function CycleCard({ month, athleteId }: { month: CycleMonthView | null; athlete
     );
   }
 
-  return <CycleMonth athleteId={athleteId} month={month} />;
+  return <CycleMonth month={month} writes={coachWrites(athleteId).cycle} />;
 }

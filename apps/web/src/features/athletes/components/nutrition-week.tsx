@@ -10,8 +10,9 @@ import { Button } from '@apex/ui';
 
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_TARGET } from '@/components/common/touch';
 
-import { clearNutritionValueAction, setNutritionValueAction } from '../server/actions';
 import { formatWeek, shiftWeek, WEEK_PARAM } from '../week';
+
+import type { WriteOutcome } from './writes';
 
 /**
  * One week of what an athlete ate and drank.
@@ -42,11 +43,24 @@ import { formatWeek, shiftWeek, WEEK_PARAM } from '../week';
  *
  * ## Who may write
  *
- * The coach, today. The entries carry `recordedBy` and the table shows it, so
- * an athlete's own figures are distinguishable from a coach's the moment the
- * athlete portal exists (§21) — it does not yet, so there is no athlete path
- * here to pretend otherwise with.
+ * Both, and this component does not know which. The writes arrive as props, so
+ * the coach's page binds the coach's procedures and the portal binds the
+ * athlete's (§21) — one table, two doors, and no permission softened to share
+ * it. The entries carry `recordedBy` and the table shows it, so a self-report
+ * stays distinguishable from a coach's entry (§13).
  */
+
+/**
+ * The two writes this table performs.
+ *
+ * No athlete is named in either. Whoever supplies them has already decided
+ * whose record is being written — the coach by binding an id, the portal by
+ * resolving one from the session — and the table cannot reach anywhere else.
+ */
+export interface NutritionWrites {
+  readonly setValue: (key: string, day: Date, value: number) => Promise<WriteOutcome>;
+  readonly clearValue: (entryId: string) => Promise<WriteOutcome>;
+}
 
 export interface NutritionQuantityView {
   readonly key: string;
@@ -98,13 +112,14 @@ const forInput = (cell: NutritionCellView | undefined): string =>
   cell === undefined ? '' : decimal(cell.value, 2);
 
 export function NutritionWeek({
-  athleteId,
   week,
+  writes,
   onRemove,
 }: {
-  readonly athleteId: string;
   readonly week: NutritionWeekView;
-  readonly onRemove: () => void;
+  readonly writes: NutritionWrites;
+  /** Absent where the card cannot be taken off the page — the portal. */
+  readonly onRemove?: (() => void) | undefined;
 }) {
   const router = useRouter();
   const search = useSearchParams();
@@ -157,15 +172,17 @@ export function NutritionWeek({
           >
             <ChevronRight aria-hidden="true" className="size-4" />
           </Button>
-          <button
-            type="button"
-            aria-label="Ernährung entfernen"
-            onClick={onRemove}
-            className={`${FOCUS_RING} ${TOUCH_TARGET} flex items-center gap-1 rounded px-2 text-xs text-muted-foreground hover:text-foreground`}
-          >
-            <X aria-hidden="true" className="size-3.5" />
-            Entfernen
-          </button>
+          {onRemove === undefined ? null : (
+            <button
+              type="button"
+              aria-label="Ernährung entfernen"
+              onClick={onRemove}
+              className={`${FOCUS_RING} ${TOUCH_TARGET} flex items-center gap-1 rounded px-2 text-xs text-muted-foreground hover:text-foreground`}
+            >
+              <X aria-hidden="true" className="size-3.5" />
+              Entfernen
+            </button>
+          )}
         </div>
       </div>
 
@@ -219,7 +236,7 @@ export function NutritionWeek({
                   {week.quantities.map((quantity) => (
                     <td key={quantity.key} className="px-1.5 py-1">
                       <Cell
-                        athleteId={athleteId}
+                        writes={writes}
                         day={day.date}
                         quantity={quantity}
                         cell={day.values[quantity.key]}
@@ -313,13 +330,13 @@ export function NutritionWeek({
  * no protein figure is a day nobody wrote down, a day with 0 g is a statement.
  */
 function Cell({
-  athleteId,
+  writes,
   day,
   quantity,
   cell,
   onError,
 }: {
-  readonly athleteId: string;
+  readonly writes: NutritionWrites;
   readonly day: Date;
   readonly quantity: NutritionQuantityView;
   readonly cell: NutritionCellView | undefined;
@@ -346,7 +363,7 @@ function Cell({
       if (cell === undefined) return;
 
       startTransition(async () => {
-        const result = await clearNutritionValueAction(athleteId, cell.entryId);
+        const result = await writes.clearValue(cell.entryId);
         if (result.message) onError(result.message);
         else setSaved('');
       });
@@ -366,7 +383,7 @@ function Cell({
     }
 
     startTransition(async () => {
-      const result = await setNutritionValueAction(athleteId, quantity.key, day, parsed);
+      const result = await writes.setValue(quantity.key, day, parsed);
       if (result.message) onError(result.message);
       else setSaved(draft);
     });

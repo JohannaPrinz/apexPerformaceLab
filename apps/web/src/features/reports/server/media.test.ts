@@ -131,6 +131,27 @@ describe('freezing the stills a document uses', () => {
     expect(frozen.size).toBe(0);
   });
 
+  /**
+   * §18: a published document freezes **stills**, never a recording.
+   *
+   * Now that a stored video can be an analysis source, the athlete media area
+   * is one `key` away from the freeze — and a copy of a 12 MB recording into
+   * `reports/` would quietly defeat the whole storage plan. The grammar already
+   * refuses it; this says so out loud, so a later change to `parseAnalysisStillKey`
+   * cannot open the door without a failing test.
+   */
+  it('never copies an athlete’s stored video into a report', async () => {
+    const frozen = await freezeReportMedia('rep_1', [
+      {
+        moduleId: 'mod_1',
+        images: [{ key: 'athletes/ath_1/formcheck.mp4', label: 'Formcheck' }],
+      },
+    ]);
+
+    expect(store.copies).toHaveLength(0);
+    expect(frozen.size).toBe(0);
+  });
+
   it('leaves a failed copy out rather than naming a picture it does not have', async () => {
     store.copyFails = true;
 

@@ -188,8 +188,8 @@ describe('the workspace boundary', () => {
   it('deletes and annotates only through a biofeedback filter that carries the workspace', async () => {
     const fake = biofeedbackDb();
 
-    await clearBiofeedbackValue(fake.db, TENANT, 'te_1');
-    await setBiofeedbackNote(fake.db, TENANT, 'te_1', 'spät ins Bett');
+    await clearBiofeedbackValue(fake.db, TENANT, 'te_1', null);
+    await setBiofeedbackNote(fake.db, TENANT, 'te_1', 'spät ins Bett', null);
 
     expect(argsOf(fake.trackingEntry.deleteMany).where).toMatchObject({
       id: 'te_1',
@@ -210,8 +210,32 @@ describe('the workspace boundary', () => {
     fake.trackingEntry.deleteMany.mockResolvedValue({ count: 0 });
     fake.trackingEntry.updateMany.mockResolvedValue({ count: 0 });
 
-    expect(await clearBiofeedbackValue(fake.db, TENANT, 'te_x')).toBe(false);
-    expect(await setBiofeedbackNote(fake.db, TENANT, 'te_x', 'x')).toBe(false);
+    expect(await clearBiofeedbackValue(fake.db, TENANT, 'te_x', null)).toBe(false);
+    expect(await setBiofeedbackNote(fake.db, TENANT, 'te_x', 'x', null)).toBe(false);
+  });
+
+  /**
+   * An entry id is client-supplied and says nothing about whose entry it is.
+   * A coach may reach every athlete of their workspace; an athlete writing
+   * through the portal may reach exactly one, and that narrowing has to be in
+   * the filter rather than in a check beside it (§21).
+   */
+  it('narrows to one athlete when an owner is named', async () => {
+    const fake = biofeedbackDb();
+
+    await clearBiofeedbackValue(fake.db, TENANT, 'te_1', 'ath_1');
+    await setBiofeedbackNote(fake.db, TENANT, 'te_1', 'spät ins Bett', 'ath_1');
+
+    expect(argsOf(fake.trackingEntry.deleteMany).where).toMatchObject({
+      id: 'te_1',
+      organizationId: 'org_a',
+      athleteId: 'ath_1',
+    });
+    expect(argsOf(fake.trackingEntry.updateMany).where).toMatchObject({
+      id: 'te_1',
+      organizationId: 'org_a',
+      athleteId: 'ath_1',
+    });
   });
 });
 

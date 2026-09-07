@@ -15,9 +15,10 @@ import {
 import { Button } from '@apex/ui';
 
 import { FOCUS_RING, TOUCH_BUTTON, TOUCH_TARGET } from '@/components/common/touch';
-import { removeBleedingAction, setBleedingDayAction } from '@/features/cycle/server/actions';
 
 import { formatMonth, MONTH_PARAM, shiftMonth } from '../month';
+
+import type { WriteOutcome } from './writes';
 
 /**
  * A month of documented bleeding, one mark per day.
@@ -126,12 +127,23 @@ function Mark({ intensity, marked }: { intensity: BleedingIntensity | null; mark
   );
 }
 
+/**
+ * Marking a day, and taking a multi-day entry back.
+ *
+ * As everywhere in this family: no athlete is named. The coach's page binds an
+ * id, the portal resolves one from the session (§21).
+ */
+export interface CycleWrites {
+  readonly setDay: (day: string, intensity: BleedingIntensity | null) => Promise<WriteOutcome>;
+  readonly removeRange: (episodeId: string) => Promise<WriteOutcome>;
+}
+
 export function CycleMonth({
-  athleteId,
   month,
+  writes,
 }: {
-  readonly athleteId: string;
   readonly month: CycleMonthView;
+  readonly writes: CycleWrites;
 }) {
   const router = useRouter();
   const search = useSearchParams();
@@ -149,7 +161,7 @@ export function CycleMonth({
   const write = (day: BleedingDayView, intensity: BleedingIntensity | null) => {
     setError(null);
     startTransition(async () => {
-      const result = await setBleedingDayAction(athleteId, isoDay(day.date), intensity);
+      const result = await writes.setDay(isoDay(day.date), intensity);
       if (result.message) setError(result.message);
       else {
         setOpenDay(null);
@@ -160,12 +172,10 @@ export function CycleMonth({
 
   const removeRange = (episodeId: string) => {
     setError(null);
-    const form = new FormData();
-    form.set('episodeId', episodeId);
 
     startTransition(async () => {
-      const result = await removeBleedingAction(athleteId, { status: 'idle' }, form);
-      if (result.status === 'error') setError(result.message ?? 'Der Eintrag blieb stehen.');
+      const result = await writes.removeRange(episodeId);
+      if (result.message) setError(result.message);
       else {
         setOpenDay(null);
         router.refresh();

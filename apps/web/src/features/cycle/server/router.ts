@@ -3,6 +3,13 @@ import 'server-only';
 import { TRPCError } from '@trpc/server';
 
 import { createTRPCRouter, withCoachPermission, withPermission } from '@/server/api/trpc';
+import {
+  bleedingMonth,
+  listBleeding,
+  recordBleeding,
+  removeBleeding,
+  setBleedingDay,
+} from '@/services/tracking/cycle';
 
 import {
   bleedingMonthSchema,
@@ -11,14 +18,6 @@ import {
   removeBleedingSchema,
   setBleedingDaySchema,
 } from '../schemas';
-
-import {
-  bleedingMonth,
-  listBleeding,
-  recordBleeding,
-  removeBleeding,
-  setBleedingDay,
-} from './service';
 
 /**
  * Cycle tracking.
@@ -152,7 +151,13 @@ export const cycleRouter = createTRPCRouter({
   remove: withPermission('athlete:write')
     .input(removeBleedingSchema)
     .mutation(async ({ ctx, input }) => {
-      const { ok } = await removeBleeding(ctx.db, ctx.tenant, input);
+      const { ok } = await removeBleeding(
+        ctx.db,
+        ctx.tenant,
+        input,
+        // A coach reaches every athlete of their workspace (§21).
+        null,
+      );
       if (!ok) throw new TRPCError({ code: 'NOT_FOUND', message: 'Eintrag nicht gefunden.' });
 
       return { ok };

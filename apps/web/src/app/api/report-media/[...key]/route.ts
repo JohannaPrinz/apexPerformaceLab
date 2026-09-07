@@ -35,9 +35,15 @@ import { routeTenant } from '@/server/tenant';
  * alike. Distinguishing them would let anyone with a session learn which keys
  * exist elsewhere, which is the only thing this route could leak.
  *
- * The athlete's own copy of a report picture is served by a different route
- * under `/geteilt`, because their proof of access is a cookie scoped to that
- * path — see there.
+ * ## An athlete signed in to the portal
+ *
+ * A workspace holds several athletes, so "this workspace's report" is a coach's
+ * entitlement and not theirs (§21). A portal session is therefore narrowed to
+ * the one athlete it is linked to, on both branches below — the same rule the
+ * portal procedures follow, applied to the bytes as well as to the rows.
+ *
+ * An athlete **without** an account reads their pictures under `/geteilt`
+ * instead, where the proof is a cookie scoped to their own link — see there.
  */
 export async function GET(_request: Request, { params }: { params: Promise<{ key: string[] }> }) {
   const { key: segments } = await params;
@@ -67,12 +73,44 @@ async function entitled(
   key: string,
   tenant: NonNullable<Awaited<ReturnType<typeof routeTenant>>>,
 ): Promise<boolean> {
-  if (analysisKeyBelongsToOrganization(key, tenant.organizationId)) return true;
+  /**
+   * The athlete this session *is*, where it is one.
+   *
+   * Read once, before the branches, because both of them need the same
+   * narrowing and a check that only one branch remembered would be the hole.
+   * `null` for a coach, who is entitled to the whole workspace.
+   */
+  const self =
+    tenant.role === 'athlete'
+      ? await db.athlete.findFirst({
+          where: { userId: tenant.userId, organizationId: tenant.organizationId },
+          select: { id: true },
+        })
+      : null;
+
+  // Working files of an analysis in progress. A coach's own workspace, and
+  // never an athlete's to read.
+  if (analysisKeyBelongsToOrganization(key, tenant.organizationId)) {
+    return tenant.role !== 'athlete';
+  }
 
   const reportId = reportOfKey(key);
   if (reportId !== null) {
     const report = await db.report.findFirst({
-      where: scoped(tenant, { id: reportId }),
+      where: scoped(tenant, {
+        id: reportId,
+        ...(self === null
+          ? {}
+          : {
+              // The picture follows the document: the same three scopes the
+              // portal reads a report through (§16).
+              OR: [
+                { assessment: { case: { athleteId: self.id } } },
+                { case: { athleteId: self.id } },
+                { assessmentModule: { assessment: { case: { athleteId: self.id } } } },
+              ],
+            }),
+      }),
       select: { id: true },
     });
 
@@ -81,6 +119,8 @@ async function entitled(
 
   const athleteId = athleteOfKey(key);
   if (athleteId !== null) {
+    if (self !== null) return athleteId === self.id;
+
     // Their real role: an owner administers the workspace and is not narrowed.
     const viewer = await viewerOf(db, tenant);
     const athlete = await db.athlete.findFirst({

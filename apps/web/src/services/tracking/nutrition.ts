@@ -5,7 +5,7 @@ import { scoped, withTenant } from '@apex/database/tenant';
 import { calculateEnergyIntake, ENERGY_NUTRIENT_KEYS, type EnergyNutrientKey } from '@apex/domain';
 import type { TenantContext } from '@apex/types';
 
-import { weekDays } from '../week';
+import { weekDays } from '@/features/athletes/week';
 
 /**
  * What an athlete ate and drank, week by week.
@@ -361,9 +361,24 @@ export async function clearNutritionValue(
   db: NutritionDb,
   tenant: Pick<TenantContext, 'organizationId'>,
   entryId: string,
+  /**
+   * Whose entry this must be, or `null` for a caller that may reach every
+   * athlete of the workspace.
+   *
+   * **Required rather than optional on purpose.** An entry id says nothing
+   * about who it belongs to, and the workspace filter that is sufficient for a
+   * coach is not sufficient for an athlete — the workspace holds other athletes
+   * (§21). Making the parameter compulsory means every call site has to answer
+   * the question; an optional one would be answered by whoever forgot it.
+   */
+  owner: string | null,
 ): Promise<boolean> {
   const { count } = await db.trackingEntry.deleteMany({
-    where: scoped(tenant, { id: entryId, measurementType: { key: { in: [...trackingKeys] } } }),
+    where: scoped(tenant, {
+      id: entryId,
+      measurementType: { key: { in: [...trackingKeys] } },
+      ...(owner === null ? {} : { athleteId: owner }),
+    }),
   });
 
   return count > 0;
