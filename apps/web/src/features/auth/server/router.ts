@@ -4,7 +4,12 @@ import { TRPCError } from '@trpc/server';
 
 import { AppError } from '@apex/types';
 
-import { createTRPCRouter, organizationProcedure, protectedProcedure } from '@/server/api/trpc';
+import {
+  createTRPCRouter,
+  organizationProcedure,
+  protectedProcedure,
+  sessionCoach,
+} from '@/server/api/trpc';
 
 /**
  * Auth slice router — identity and workspace context.
@@ -85,15 +90,5 @@ export const authRouter = createTRPCRouter({
    * property of the person and is readable without a workspace scope. `null` is
    * a legitimate answer — a user need not be a coach.
    */
-  coachProfile: protectedProcedure.query(async ({ ctx }) => {
-    return ctx.db.coach.findUnique({
-      where: { userId: ctx.session.user.id },
-      select: {
-        id: true,
-        displayName: true,
-        professionalTitle: true,
-        createdAt: true,
-      },
-    });
-  }),
+  coachProfile: protectedProcedure.query(({ ctx }) => sessionCoach(ctx)),
 });

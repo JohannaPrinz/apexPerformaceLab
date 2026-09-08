@@ -182,6 +182,41 @@ export const organizationProcedure = protectedProcedure.use(async ({ ctx, next }
 });
 
 /**
+ * The coach profile behind the session, read once per request.
+ *
+ * ## Why one read for two callers
+ *
+ * Two places want this row: the rung below, which needs the id to record
+ * authorship, and `auth.coachProfile`, which shows the name in the header.
+ * They used to read the same row twice — same table, same filter, different
+ * columns — so a screen that renders the header and writes something paid for
+ * two round trips to learn one thing.
+ *
+ * The columns are the union of what both need, and the memo key names the
+ * user, so nothing of another account can come back. **It resolves data, it
+ * decides nothing**: whether a caller may act without a coach profile is still
+ * the rung's refusal below, and `auth.coachProfile` still answers `null`
+ * legitimately.
+ */
+export function sessionCoach(ctx: {
+  db: TRPCContext['db'];
+  session: { user: { id: string } };
+  perRequest: TRPCContext['perRequest'];
+}): Promise<{
+  id: string;
+  displayName: string | null;
+  professionalTitle: string | null;
+  createdAt: Date;
+} | null> {
+  return ctx.perRequest(`coach:${ctx.session.user.id}`, () =>
+    ctx.db.coach.findUnique({
+      where: { userId: ctx.session.user.id },
+      select: { id: true, displayName: true, professionalTitle: true, createdAt: true },
+    }),
+  );
+}
+
+/**
  * Requires a signed-in user **with a coach profile**, on top of the tenant
  * scope.
  *
@@ -194,12 +229,7 @@ export const organizationProcedure = protectedProcedure.use(async ({ ctx, next }
  * rather than at the top of every authoring mutation.
  */
 export const coachProcedure = organizationProcedure.use(async ({ ctx, next }) => {
-  const coach = await ctx.perRequest(`coach:${ctx.session.user.id}`, () =>
-    ctx.db.coach.findUnique({
-      where: { userId: ctx.session.user.id },
-      select: { id: true },
-    }),
-  );
+  const coach = await sessionCoach(ctx);
 
   if (!coach) {
     throw new TRPCError({
@@ -209,7 +239,7 @@ export const coachProcedure = organizationProcedure.use(async ({ ctx, next }) =>
     });
   }
 
-  return next({ ctx: { ...ctx, coach } });
+  return next({ ctx: { ...ctx, coach: { id: coach.id } } });
 });
 
 /**

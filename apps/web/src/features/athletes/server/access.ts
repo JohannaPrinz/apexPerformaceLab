@@ -270,8 +270,17 @@ export async function sharesForAthletes(
 export async function shareableCoaches(
   db: AccessDb,
   tenant: Pick<TenantContext, 'organizationId' | 'userId' | 'role'>,
+  /**
+   * Who is asking, where the caller already knows.
+   *
+   * Only ever used to leave the asker out of their own list. Passing it in
+   * spares a second read of the same coach row on a screen that has already
+   * resolved the viewer — and it changes nothing about who is listed, because
+   * the list itself is a workspace read that stands on `tenant`.
+   */
+  known?: Viewer,
 ): Promise<readonly { id: string; name: string }[]> {
-  const viewer = await viewerOf(db, tenant);
+  const viewer = known ?? (await viewerOf(db, tenant));
 
   const members = await db.membership.findMany({
     where: { organizationId: tenant.organizationId },
