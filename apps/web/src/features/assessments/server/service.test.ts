@@ -190,6 +190,20 @@ function fakeDb(overrides: { sourceModules?: unknown[] } = {}) {
   };
 }
 
+/** One row as the list query returns it: fields plus the tests' count. */
+const listRow = (over: Record<string, unknown> = {}) => ({
+  id: 'as_2',
+  question: 'Wo liegt die Schwelle?',
+  description: null,
+  type: 'INITIAL',
+  status: 'PLANNED',
+  performedAt: new Date('2026-02-01'),
+  createdAt: new Date('2026-02-01'),
+  caseId: 'case_1',
+  _count: { modules: 0 },
+  ...over,
+});
+
 const argsOf = (mock: { mock: { calls: [QueryArgs][] } }, index = 0): QueryArgs => {
   const args = mock.mock.calls[index]?.[0];
   if (!args) throw new Error(`expected a call at index ${index}`);
@@ -212,19 +226,7 @@ describe('assessment service — tenant scoping', () => {
 
   it('names the athlete it was asked about, without reading the case for it', async () => {
     const { db, assessment } = fakeDb();
-    assessment.findMany.mockResolvedValue([
-      {
-        id: 'as_2',
-        question: 'Wo liegt die Schwelle?',
-        description: null,
-        type: 'INITIAL',
-        status: 'PLANNED',
-        performedAt: new Date('2026-02-01'),
-        createdAt: new Date('2026-02-01'),
-        caseId: 'case_1',
-        modules: [],
-      },
-    ]);
+    assessment.findMany.mockResolvedValue([listRow()]);
 
     const rows = await listAssessmentsForAthlete(db, TENANT, 'ath_1');
 
@@ -232,6 +234,21 @@ describe('assessment service — tenant scoping', () => {
     // engagement never had to be read back to say whose they are.
     expect(rows[0]?.athleteId).toBe('ath_1');
     expect(argsOf(assessment.findMany).select).not.toHaveProperty('case');
+  });
+
+  it('counts the tests instead of reading them', async () => {
+    const { db, assessment } = fakeDb();
+    assessment.findMany.mockResolvedValue([listRow({ _count: { modules: 3 } })]);
+
+    const rows = await listAssessmentsForAthlete(db, TENANT, 'ath_1');
+
+    // What both callers wanted was the number. Reading every test with its
+    // stored configuration to take `.length` was the longest query of this
+    // read and 31.7 kB of JSON for a count.
+    expect(rows[0]?.moduleCount).toBe(3);
+    const select = argsOf(assessment.findMany).select ?? {};
+    expect(select).not.toHaveProperty('modules');
+    expect(select['_count']).toEqual({ select: { modules: true } });
   });
 
   it('keeps the order and the archive rule of the list', async () => {
@@ -248,27 +265,26 @@ describe('assessment service — tenant scoping', () => {
     expect(argsOf(assessment.findMany, 1).where).not.toHaveProperty('status');
   });
 
-  it('still selects everything the record carries', async () => {
+  it('still answers with every field the list shows', async () => {
     const { db, assessment } = fakeDb();
+    assessment.findMany.mockResolvedValue([listRow()]);
 
-    await listAssessmentsForAthlete(db, TENANT, 'ath_1');
+    const rows = await listAssessmentsForAthlete(db, TENANT, 'ath_1');
 
-    // Only the engagement went; every field the list answered with before is
-    // still asked for, modules included.
-    const select = argsOf(assessment.findMany).select ?? {};
-    for (const field of [
-      'id',
-      'question',
-      'description',
-      'type',
-      'status',
-      'performedAt',
-      'createdAt',
-      'caseId',
-      'modules',
-    ]) {
-      expect(select).toHaveProperty(field);
-    }
+    // The screens read these by name; dropping one would empty a card rather
+    // than fail loudly.
+    expect(rows[0]).toEqual({
+      id: 'as_2',
+      question: 'Wo liegt die Schwelle?',
+      description: null,
+      type: 'INITIAL',
+      status: 'PLANNED',
+      performedAt: new Date('2026-02-01'),
+      createdAt: new Date('2026-02-01'),
+      caseId: 'case_1',
+      athleteId: 'ath_1',
+      moduleCount: 0,
+    });
   });
 
   it('scopes a lookup by id', async () => {

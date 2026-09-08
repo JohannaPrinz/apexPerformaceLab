@@ -89,14 +89,55 @@ const assessmentSelect = {
 } as const;
 
 /**
- * The same, minus the engagement's athlete.
+ * What a list of examinations needs, and no more.
  *
- * A list that was asked for one athlete's examinations does not need to be told
- * whose they are — the filter said so. Prisma loads `case` as a query of its
- * own, so selecting it back is a round trip for a value the caller passed in.
- * Every other field, the order and the filter are untouched.
+ * Two things are deliberately absent, and each was a whole query of its own:
+ *
+ * - **the engagement.** A list asked for one athlete's examinations does not
+ *   need to be told whose they are — the filter said so, and the caller passed
+ *   the id in.
+ * - **the tests themselves.** Both callers want a *number*: the profile shows
+ *   "3 Tests", the copy menu shows a question. Reading every test with its
+ *   stored configuration to take `.length` of the array cost the longest query
+ *   of the read (70–77 ms) and 31.7 kB of JSON for a count. `_count` answers
+ *   the same number in the row that is already being fetched.
+ *
+ * The count is over the same set the array was: `modules` carries no filter
+ * here, so an archived test counted then and counts now.
  */
-const { case: _athleteFromCase, ...assessmentListSelect } = assessmentSelect;
+const assessmentListSelect = {
+  id: true,
+  question: true,
+  description: true,
+  type: true,
+  status: true,
+  performedAt: true,
+  createdAt: true,
+  caseId: true,
+  _count: { select: { modules: true } },
+} as const;
+
+/**
+ * One examination as a list shows it.
+ *
+ * Deliberately **not** an `AssessmentRecord`: that type carries every test with
+ * its configuration, which a list has no use for. Anything that needs the tests
+ * reads the assessment itself (`getAssessment`), where they belong.
+ */
+export interface AssessmentListEntry {
+  id: string;
+  question: string;
+  description: string | null;
+  type: AssessmentRecord['type'];
+  status: AssessmentStatus;
+  performedAt: Date;
+  createdAt: Date;
+  caseId: string;
+  /** Derived through the Case, never a second column on the Assessment. */
+  athleteId: string;
+  /** How many tests the examination holds, archived ones included. */
+  moduleCount: number;
+}
 
 export interface AssessmentModuleRecord {
   id: string;
@@ -213,7 +254,7 @@ export async function listAssessmentsForAthlete(
    * it makes the act pointless. Nothing is lost — one link brings them back.
    */
   includeArchived = false,
-): Promise<AssessmentRecord[]> {
+): Promise<AssessmentListEntry[]> {
   const rows = await db.assessment.findMany({
     // The athlete is reached through the Case and never stored twice
     // (§26.4) — this is that relation expressed as a filter.
@@ -225,9 +266,20 @@ export async function listAssessmentsForAthlete(
     orderBy: [{ performedAt: 'desc' }, { id: 'desc' }],
   });
 
-  // The athlete is the one that was asked for: the filter above admits no
-  // other, so this is the value the extra read would have returned.
-  return rows.map((row) => toRecord({ ...row, case: { athleteId } }));
+  return rows.map((row) => ({
+    id: row.id,
+    question: row.question,
+    description: row.description ?? null,
+    type: row.type,
+    status: row.status,
+    performedAt: row.performedAt,
+    createdAt: row.createdAt,
+    caseId: row.caseId,
+    // The athlete is the one that was asked for: the filter above admits no
+    // other, so this is the value the extra read would have returned.
+    athleteId,
+    moduleCount: row._count.modules,
+  }));
 }
 
 /**

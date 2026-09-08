@@ -188,7 +188,7 @@ export default async function AthletePage({
       question: assessment.question,
       type: assessment.type,
       performedAt: assessment.performedAt,
-      testCount: assessment.modules.length,
+      testCount: assessment.moduleCount,
       shared: sharedIds.has(assessment.id),
     };
     byCase.set(assessment.caseId, [...(byCase.get(assessment.caseId) ?? []), entry]);
