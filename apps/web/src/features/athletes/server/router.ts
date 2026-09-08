@@ -194,11 +194,65 @@ function analysisRefusal(refusal: 'NOT_FOUND' | 'NOT_A_VIDEO' | 'MISSING_IN_STOR
   return notFound();
 }
 
+/**
+ * Who is looking, resolved once per request.
+ *
+ * Four procedures on this router build their visibility filter from the same
+ * three facts — workspace, role, and which coach this account is — and each of
+ * them used to read the coach row again. On an athlete profile that was three
+ * identical reads of one row before any athlete data was touched.
+ *
+ * The memo lives on the request context, so it cannot outlive the request and
+ * cannot be seen by another one. The key names the workspace **and** the user:
+ * a viewer resolved for one tenant can never be handed to another.
+ *
+ * **It answers "who", never "may they"** — the filter it feeds is applied on
+ * top of `scoped()`, and every procedure keeps the permission rung it had.
+ */
+function currentViewer(ctx: {
+  db: Parameters<typeof viewerOf>[0];
+  tenant: Parameters<typeof viewerOf>[1];
+  perRequest: <T>(key: string, read: () => Promise<T>) => Promise<T>;
+}) {
+  return ctx.perRequest(`viewer:${ctx.tenant.organizationId}:${ctx.tenant.userId}`, () =>
+    viewerOf(ctx.db, ctx.tenant),
+  );
+}
+
+/**
+ * The athlete this request is about, read once.
+ *
+ * The profile screen asks two procedures for the same record: `byId` for the
+ * master data, `trends` because a chart needs the sex and the chosen cards. Both
+ * read it through the same function with the same filter, so the second read
+ * was the same row a second time — measured at 190 ms on a profile render.
+ *
+ * The memo lives on the request context and dies with it. The key names the
+ * workspace, the account **and** the athlete, so nothing of another request,
+ * another workspace or another viewer can come back through it — and the
+ * visibility filter is still built from the viewer on every first read, which
+ * is what decides whether this record may be seen at all (§7).
+ */
+function athleteFor(
+  ctx: {
+    db: Parameters<typeof getAthlete>[0] & Parameters<typeof viewerOf>[0];
+    tenant: Parameters<typeof viewerOf>[1];
+    perRequest: <T>(key: string, read: () => Promise<T>) => Promise<T>;
+  },
+  athleteId: string,
+) {
+  return ctx.perRequest(
+    `athlete:${ctx.tenant.organizationId}:${ctx.tenant.userId}:${athleteId}`,
+    async () =>
+      getAthlete(ctx.db, ctx.tenant, athleteId, visibleToViewer(await currentViewer(ctx))),
+  );
+}
+
 export const athletesRouter = createTRPCRouter({
   list: withPermission('athlete:read')
     .input(listAthletesSchema)
     .query(async ({ ctx, input }) =>
-      listAthletes(ctx.db, ctx.tenant, input, visibleToViewer(await viewerOf(ctx.db, ctx.tenant))),
+      listAthletes(ctx.db, ctx.tenant, input, visibleToViewer(await currentViewer(ctx))),
     ),
 
   /**
@@ -212,12 +266,7 @@ export const athletesRouter = createTRPCRouter({
   count: withPermission('athlete:read')
     .input(listAthletesSchema.pick({ search: true, status: true }))
     .query(async ({ ctx, input }) =>
-      countAthletesMatching(
-        ctx.db,
-        ctx.tenant,
-        input,
-        visibleToViewer(await viewerOf(ctx.db, ctx.tenant)),
-      ),
+      countAthletesMatching(ctx.db, ctx.tenant, input, visibleToViewer(await currentViewer(ctx))),
     ),
 
   /**
@@ -241,12 +290,7 @@ export const athletesRouter = createTRPCRouter({
   byId: withPermission('athlete:read')
     .input(athleteIdSchema)
     .query(async ({ ctx, input }) => {
-      const athlete = await getAthlete(
-        ctx.db,
-        ctx.tenant,
-        input.athleteId,
-        visibleToViewer(await viewerOf(ctx.db, ctx.tenant)),
-      );
+      const athlete = await athleteFor(ctx, input.athleteId);
       if (!athlete) throw notFound();
 
       return athlete;
@@ -264,8 +308,8 @@ export const athletesRouter = createTRPCRouter({
    * any quantity.
    */
   /** The colleagues this athlete could be released to — coaches of this workspace. */
-  shareableCoaches: withPermission('athlete:read').query(({ ctx }) =>
-    shareableCoaches(ctx.db, ctx.tenant),
+  shareableCoaches: withPermission('athlete:read').query(async ({ ctx }) =>
+    shareableCoaches(ctx.db, ctx.tenant, await currentViewer(ctx)),
   ),
 
   /** Who this athlete has been released to, and whether it has taken effect. */
@@ -354,12 +398,7 @@ export const athletesRouter = createTRPCRouter({
   trends: withPermission('athlete:read')
     .input(athleteTrendsSchema)
     .query(async ({ ctx, input }) => {
-      const athlete = await getAthlete(
-        ctx.db,
-        ctx.tenant,
-        input.athleteId,
-        visibleToViewer(await viewerOf(ctx.db, ctx.tenant)),
-      );
+      const athlete = await athleteFor(ctx, input.athleteId);
       if (!athlete) throw notFound();
 
       // The sex decides whether a cycle card is offered at all, so it travels

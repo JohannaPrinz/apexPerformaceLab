@@ -210,10 +210,29 @@ export async function athleteTrendOptions(
   tenant: Pick<TenantContext, 'organizationId'>,
   athlete: { readonly id: string; readonly sex: AthleteSex },
 ): Promise<readonly TrendOption[]> {
-  const rows = await db.measurement.findMany({
-    where: scoped(tenant, measurementWhere(athlete.id)),
-    select: measurementSelect,
-  });
+  /**
+   * What was measured, and what the athlete reported — in one wave.
+   *
+   * The self-reports are a different table answering a different question, so
+   * they never needed the measurements first. Reading them afterwards put a
+   * round trip in the middle of a list that a coach sees on every profile.
+   */
+  const [rows, tracked] = await Promise.all([
+    db.measurement.findMany({
+      where: scoped(tenant, measurementWhere(athlete.id)),
+      select: measurementSelect,
+    }),
+    /**
+     * A quantity that only exists as self-reports still has a curve worth
+     * offering — otherwise a coach who asked an athlete to weigh themselves
+     * would find no card for the answers.
+     */
+    db.trackingEntry.groupBy({
+      by: ['measurementTypeId'],
+      where: scoped(tenant, { athleteId: athlete.id }),
+      _count: { _all: true },
+    }),
+  ]);
 
   const numeric = rows.filter((row) => numberOf(row.numericValue) !== null);
   const exerciseNames = await namesFor(
@@ -244,19 +263,6 @@ export async function athleteTrendOptions(
       exerciseIds: new Set(row.exerciseId === null ? [] : [row.exerciseId]),
     });
   }
-
-  /**
-   * What the athlete contributed counts too.
-   *
-   * A quantity that only exists as self-reports still has a curve worth
-   * offering — otherwise a coach who asked an athlete to weigh themselves would
-   * find no card for the answers.
-   */
-  const tracked = await db.trackingEntry.groupBy({
-    by: ['measurementTypeId'],
-    where: scoped(tenant, { athleteId: athlete.id }),
-    _count: { _all: true },
-  });
 
   if (tracked.length > 0) {
     const types = await db.measurementType.findMany({
@@ -498,43 +504,77 @@ export async function athleteTrend(
     };
   }
 
-  const type = await db.measurementType.findFirst({
-    where: typeWhere(tenant, selection.key),
-    select: { name: true, unit: true },
-  });
+  /**
+   * Everything this card can be drawn from, in one wave.
+   *
+   * Four reads, and only the last of them needed anything from the others: the
+   * name and unit come from the quantity's own row, the values are found by the
+   * quantity's **key** rather than by its id, the wider movement list asks the
+   * same question without the narrowing, and the athlete's own entries are a
+   * separate table entirely. Each one used to wait out the one before it, which
+   * on a profile with three cards meant three cards' worth of round trips
+   * stacked four deep.
+   *
+   * A card for a quantity this workspace does not have still answers `null`
+   * below — it then paid for three reads it did not use, which happens only for
+   * a stored card whose quantity has since gone.
+   */
+  const [type, rows, widerRows, tracked] = await Promise.all([
+    db.measurementType.findFirst({
+      where: typeWhere(tenant, selection.key),
+      select: { name: true, unit: true },
+    }),
+    db.measurement.findMany({
+      where: scoped(tenant, {
+        ...measurementWhere(athlete.id),
+        measurementType: { key: selection.key },
+        ...(selection.exerciseIds.length === 0
+          ? {}
+          : { exerciseId: { in: [...selection.exerciseIds] } }),
+      }),
+      select: measurementSelect,
+      orderBy: [{ capturedAt: 'asc' }],
+    }),
+    // Every movement this quantity was recorded with, not only the chosen ones
+    // — otherwise narrowing to one lift would hide the way back to the others.
+    // Only needed where the card *is* narrowed; otherwise the rows above
+    // already carry every movement.
+    selection.exerciseIds.length === 0
+      ? []
+      : db.measurement.findMany({
+          where: scoped(tenant, {
+            ...measurementWhere(athlete.id),
+            measurementType: { key: selection.key },
+          }),
+          select: { exerciseId: true, numericValue: true },
+        }),
+    /**
+     * What the athlete or their device contributed.
+     *
+     * Left out entirely when the card is narrowed to particular movements,
+     * because a self-reported body weight belongs to no lift and showing it
+     * under one would be a claim nobody made.
+     */
+    selection.exerciseIds.length === 0
+      ? db.trackingEntry.findMany({
+          where: scoped(tenant, {
+            athleteId: athlete.id,
+            measurementType: { key: selection.key },
+          }),
+          select: { capturedAt: true, numericValue: true },
+          orderBy: [{ capturedAt: 'asc' }],
+        })
+      : [],
+  ]);
 
   if (!type) return null;
 
-  const rows = await db.measurement.findMany({
-    where: scoped(tenant, {
-      ...measurementWhere(athlete.id),
-      measurementType: { key: selection.key },
-      ...(selection.exerciseIds.length === 0
-        ? {}
-        : { exerciseId: { in: [...selection.exerciseIds] } }),
-    }),
-    select: measurementSelect,
-    orderBy: [{ capturedAt: 'asc' }],
-  });
-
   const numeric = rows.filter((row) => numberOf(row.numericValue) !== null);
 
-  // Every movement this quantity was recorded with, not only the chosen ones —
-  // otherwise narrowing to one lift would hide the way back to the others.
   const everyMovement =
     selection.exerciseIds.length === 0
       ? numeric.map((row) => row.exerciseId)
-      : (
-          await db.measurement.findMany({
-            where: scoped(tenant, {
-              ...measurementWhere(athlete.id),
-              measurementType: { key: selection.key },
-            }),
-            select: { exerciseId: true, numericValue: true },
-          })
-        )
-          .filter((row) => numberOf(row.numericValue) !== null)
-          .map((row) => row.exerciseId);
+      : widerRows.filter((row) => numberOf(row.numericValue) !== null).map((row) => row.exerciseId);
 
   const exerciseNames = await namesFor(
     db,
@@ -561,27 +601,8 @@ export async function athleteTrend(
     if (!described.has(key)) described.set(key, seriesLabel(row, exerciseNames));
   }
 
-  /**
-   * What the athlete or their device contributed.
-   *
-   * One line, never split by coordinates: a tracking entry has no side, no
-   * exercise and no stage — it is a quantity at a moment. Left out entirely when
-   * the card is narrowed to particular movements, because a self-reported body
-   * weight belongs to no lift and showing it under one would be a claim nobody
-   * made.
-   */
-  const tracked =
-    selection.exerciseIds.length === 0
-      ? await db.trackingEntry.findMany({
-          where: scoped(tenant, {
-            athleteId: athlete.id,
-            measurementType: { key: selection.key },
-          }),
-          select: { capturedAt: true, numericValue: true },
-          orderBy: [{ capturedAt: 'asc' }],
-        })
-      : [];
-
+  // One line, never split by coordinates: a tracking entry has no side, no
+  // exercise and no stage — it is a quantity at a moment.
   const trackedPoints: TrendPoint[] = tracked.flatMap((row) => {
     const value = numberOf(row.numericValue);
 
