@@ -503,40 +503,48 @@ export async function assessmentAnalysisOverview(
   tenant: Pick<TenantContext, 'organizationId'>,
   assessmentId: string,
 ): Promise<AssessmentAnalysisOverview | null> {
-  const assessment = await db.assessment.findFirst({
-    where: scoped(tenant, { id: assessmentId }),
-    select: {
-      id: true,
-      modules: {
-        select: {
-          id: true,
-          name: true,
-          moduleKey: true,
-          status: true,
-          archivedAt: true,
-          payload: true,
-          moduleVersion: true,
+  /**
+   * The tests, and the draft, together.
+   *
+   * The draft is found by `assessmentId` alone, so it never needed the tests to
+   * arrive first — and waiting for them cost a full round trip on a screen
+   * where this read is on the critical path.
+   */
+  const [assessment, draft] = await Promise.all([
+    db.assessment.findFirst({
+      where: scoped(tenant, { id: assessmentId }),
+      select: {
+        id: true,
+        modules: {
+          select: {
+            id: true,
+            name: true,
+            moduleKey: true,
+            status: true,
+            archivedAt: true,
+            payload: true,
+            moduleVersion: true,
+          },
+          orderBy: [{ createdAt: 'asc' }],
         },
-        orderBy: [{ createdAt: 'asc' }],
       },
-    },
-  });
+    }),
+    // The newest draft, not the newest report: a published analysis is finished
+    // and its selection is part of the document (§16).
+    db.report.findFirst({
+      where: scoped(tenant, { assessmentId, status: 'DRAFT' as const }),
+      orderBy: [{ version: 'desc' }],
+      select: {
+        id: true,
+        title: true,
+        version: true,
+        createdAt: true,
+        modules: { select: { assessmentModuleId: true, included: true } },
+      },
+    }),
+  ]);
 
   if (!assessment) return null;
-
-  // The newest draft, not the newest report: a published analysis is finished
-  // and its selection is part of the document (§16).
-  const draft = await db.report.findFirst({
-    where: scoped(tenant, { assessmentId, status: 'DRAFT' as const }),
-    orderBy: [{ version: 'desc' }],
-    select: {
-      id: true,
-      title: true,
-      version: true,
-      createdAt: true,
-      modules: { select: { assessmentModuleId: true, included: true } },
-    },
-  });
 
   const inclusion = new Map(
     (draft?.modules ?? []).map((entry) => [entry.assessmentModuleId, entry.included]),
@@ -837,58 +845,66 @@ export async function assessmentEvaluation(
   assessmentId: string,
   labels: ModuleLabels,
 ): Promise<AssessmentEvaluation | null> {
-  const assessment = await db.assessment.findFirst({
-    where: scoped(tenant, { id: assessmentId }),
-    select: {
-      id: true,
-      question: true,
-      status: true,
-      performedAt: true,
-      case: {
-        select: {
-          athlete: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              heightCm: true,
-              weightKg: true,
-              dateOfBirth: true,
-              sex: true,
+  /**
+   * The examination and its draft, together.
+   *
+   * Both are found by `assessmentId` alone — the draft never needed the tests
+   * to arrive first, and waiting for them cost a full round trip on the slowest
+   * screen in the app. The two refusals below are unchanged and in the same
+   * order: no examination, or no draft, is `null` either way.
+   */
+  const [assessment, report] = await Promise.all([
+    db.assessment.findFirst({
+      where: scoped(tenant, { id: assessmentId }),
+      select: {
+        id: true,
+        question: true,
+        status: true,
+        performedAt: true,
+        case: {
+          select: {
+            athlete: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                heightCm: true,
+                weightKg: true,
+                dateOfBirth: true,
+                sex: true,
+              },
             },
           },
         },
-      },
-      modules: {
-        where: { archivedAt: null },
-        select: {
-          id: true,
-          name: true,
-          moduleKey: true,
-          status: true,
-          payload: true,
-          moduleVersion: true,
+        modules: {
+          where: { archivedAt: null },
+          select: {
+            id: true,
+            name: true,
+            moduleKey: true,
+            status: true,
+            payload: true,
+            moduleVersion: true,
+          },
+          orderBy: [{ createdAt: 'asc' }],
         },
-        orderBy: [{ createdAt: 'asc' }],
       },
-    },
-  });
+    }),
+    db.report.findFirst({
+      where: scoped(tenant, { assessmentId, status: 'DRAFT' as const }),
+      orderBy: [{ version: 'desc' }],
+      select: {
+        id: true,
+        title: true,
+        version: true,
+        draft: true,
+        authorCoach: { select: { displayName: true, user: { select: { name: true } } } },
+        modules: { select: { assessmentModuleId: true, included: true } },
+      },
+    }),
+  ]);
 
   if (!assessment) return null;
-
-  const report = await db.report.findFirst({
-    where: scoped(tenant, { assessmentId, status: 'DRAFT' as const }),
-    orderBy: [{ version: 'desc' }],
-    select: {
-      id: true,
-      title: true,
-      version: true,
-      draft: true,
-      authorCoach: { select: { displayName: true, user: { select: { name: true } } } },
-      modules: { select: { assessmentModuleId: true, included: true } },
-    },
-  });
-
   if (!report) return null;
 
   const draft = readReportDraft(report.draft) ?? emptyReportDraft();
@@ -904,10 +920,10 @@ export async function assessmentEvaluation(
    * athlete — the assessment's own and everything earlier it may be compared
    * with. One query rather than one per test.
    */
-  const readings =
+  const [readings, peers] = await Promise.all([
     moduleKeys.length === 0
       ? []
-      : await db.measurement.findMany({
+      : db.measurement.findMany({
           where: scoped(tenant, {
             supersededById: null,
             assessmentModule: {
@@ -931,7 +947,46 @@ export async function assessmentEvaluation(
             measurementType: { select: { key: true, name: true, unit: true } },
           },
           orderBy: [{ capturedAt: 'asc' }, { id: 'asc' }],
-        });
+        }),
+    /**
+     * The cohort, read in the same wave.
+     *
+     * It is the same question asked of everybody else, and it never depended on
+     * this athlete's own values — only on the test types and on who is *not*
+     * this athlete, both known already. It used to run last, behind the
+     * exercises, which put two round trips in front of it for nothing.
+     */
+    moduleKeys.length === 0
+      ? []
+      : db.measurement.findMany({
+          where: scoped(tenant, {
+            supersededById: null,
+            assessmentModule: {
+              moduleKey: { in: moduleKeys },
+              archivedAt: null,
+              assessment: { case: { athleteId: { not: athleteId } } },
+            },
+          }),
+          select: {
+            measurementTypeId: true,
+            side: true,
+            exerciseId: true,
+            passIndex: true,
+            context: true,
+            numericValue: true,
+            capturedAt: true,
+            assessmentModule: {
+              select: {
+                id: true,
+                payload: true,
+                moduleVersion: true,
+                assessment: { select: { case: { select: { athleteId: true } } } },
+              },
+            },
+          },
+          take: 5000,
+        }),
+  ]);
 
   const exerciseIds = [...new Set(readings.map((row) => row.exerciseId))].filter(
     (id): id is string => id !== null,
@@ -992,68 +1047,37 @@ export async function assessmentEvaluation(
    */
   const cohort = new Map<string, Map<string, { lowest: number; highest: number }>>();
 
-  if (moduleKeys.length > 0) {
-    const peers = await db.measurement.findMany({
-      where: scoped(tenant, {
-        supersededById: null,
-        assessmentModule: {
-          moduleKey: { in: moduleKeys },
-          archivedAt: null,
-          assessment: { case: { athleteId: { not: athleteId } } },
-        },
-      }),
-      select: {
-        measurementTypeId: true,
-        side: true,
-        exerciseId: true,
-        passIndex: true,
-        context: true,
-        numericValue: true,
-        capturedAt: true,
-        assessmentModule: {
-          select: {
-            id: true,
-            payload: true,
-            moduleVersion: true,
-            assessment: { select: { case: { select: { athleteId: true } } } },
-          },
-        },
-      },
-      take: 5000,
+  for (const row of peers) {
+    const value = row.numericValue === null ? null : Number(row.numericValue.toString());
+    if (value === null || !Number.isFinite(value)) continue;
+
+    const identity = seriesIdentity({
+      measurementTypeId: row.measurementTypeId,
+      side: row.side,
+      exerciseId: row.exerciseId,
+      passIndex: row.passIndex,
+      context: row.context,
+      value,
+      capturedAt: row.capturedAt,
+      moduleId: row.assessmentModule.id,
+      protocolKey: protocolKey(protocolOf(row.assessmentModule)?.protocol ?? null),
     });
 
-    for (const row of peers) {
-      const value = row.numericValue === null ? null : Number(row.numericValue.toString());
-      if (value === null || !Number.isFinite(value)) continue;
+    const who = row.assessmentModule.assessment.case.athleteId;
+    const byAthlete =
+      cohort.get(identity) ?? new Map<string, { lowest: number; highest: number }>();
+    const held = byAthlete.get(who);
 
-      const identity = seriesIdentity({
-        measurementTypeId: row.measurementTypeId,
-        side: row.side,
-        exerciseId: row.exerciseId,
-        passIndex: row.passIndex,
-        context: row.context,
-        value,
-        capturedAt: row.capturedAt,
-        moduleId: row.assessmentModule.id,
-        protocolKey: protocolKey(protocolOf(row.assessmentModule)?.protocol ?? null),
-      });
-
-      const who = row.assessmentModule.assessment.case.athleteId;
-      const byAthlete =
-        cohort.get(identity) ?? new Map<string, { lowest: number; highest: number }>();
-      const held = byAthlete.get(who);
-
-      // Both extremes per athlete: which one is their *best* depends on the
-      // direction, and that is a property of the series being compared, not of
-      // this loop.
-      byAthlete.set(
-        who,
-        held === undefined
-          ? { lowest: value, highest: value }
-          : { lowest: Math.min(held.lowest, value), highest: Math.max(held.highest, value) },
-      );
-      cohort.set(identity, byAthlete);
-    }
+    // Both extremes per athlete: which one is their *best* depends on the
+    // direction, and that is a property of the series being compared, not of
+    // this loop.
+    byAthlete.set(
+      who,
+      held === undefined
+        ? { lowest: value, highest: value }
+        : { lowest: Math.min(held.lowest, value), highest: Math.max(held.highest, value) },
+    );
+    cohort.set(identity, byAthlete);
   }
 
   const named = new Map(

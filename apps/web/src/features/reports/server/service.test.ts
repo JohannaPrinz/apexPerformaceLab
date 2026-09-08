@@ -829,9 +829,9 @@ function evaluationDb(options: {
     },
     measurement: {
       /**
-       * Two reads, in order: this athlete's readings, then the workspace's
-       * other athletes for the percentile. The second is answered empty — a
-       * cohort is its own question, and these tests are about the first.
+       * Two reads, started together: this athlete's readings and the
+       * workspace's other athletes for the percentile. The cohort is answered
+       * empty — it is its own question, and these tests are about the first.
        */
       findMany: vi.fn(
         ((): (() => Promise<unknown[]>) => {
@@ -1147,5 +1147,166 @@ describe('storing what the coach wrote', () => {
     ).where;
 
     expect(where?.['status']).toBe('DRAFT');
+  });
+});
+
+/**
+ * Which reads wait for which.
+ *
+ * The analysis screen was the slowest in the app because its reads ran in a
+ * line: the examination, then its draft, then the readings, then the cohort —
+ * each waiting out a full round trip for an answer it did not use. What is
+ * asserted here is the **shape of the waiting**, not a duration: two reads that
+ * need nothing from each other must both have started before either has
+ * finished, and a read that genuinely depends on another must start after it.
+ *
+ * A test about timing has to be able to see time, so every read here resolves
+ * on a later tick and records when it started and finished.
+ */
+function recordingDb(events: string[]) {
+  const read =
+    <T>(name: string, value: T) =>
+    () => {
+      events.push(`${name}:start`);
+
+      return new Promise<T>((resolve) => {
+        setTimeout(() => {
+          events.push(`${name}:end`);
+          resolve(value);
+        }, 5);
+      });
+    };
+
+  const modules = [
+    {
+      id: 'mod_1',
+      name: 'Laufen',
+      moduleKey: 'lactate',
+      status: 'COMPLETED',
+      payload: null,
+      moduleVersion: 1,
+    },
+  ];
+
+  let measurementCall = 0;
+
+  return {
+    assessment: {
+      findFirst: vi.fn(
+        read('assessment', {
+          id: 'ass_1',
+          question: 'Warum?',
+          status: 'COMPLETED',
+          performedAt: new Date('2026-05-05T00:00:00.000Z'),
+          case: {
+            athlete: {
+              id: 'ath_1',
+              firstName: 'Mara',
+              lastName: 'Berg',
+              heightCm: null,
+              weightKg: null,
+              dateOfBirth: null,
+              sex: 'not_specified',
+            },
+          },
+          modules,
+        }),
+      ),
+    },
+    report: {
+      findFirst: vi.fn(
+        read('draft', {
+          id: 'rep_1',
+          title: 'Auswertung',
+          version: 1,
+          draft: null,
+          authorCoach: { displayName: 'Johanna', user: { name: 'Johanna' } },
+          modules: [{ assessmentModuleId: 'mod_1', included: true }],
+        }),
+      ),
+    },
+    measurement: {
+      findMany: vi.fn(() => {
+        measurementCall += 1;
+
+        // One reading with an exercise on it, so the exercise read — the one
+        // that genuinely depends on this answer — actually happens.
+        return read(measurementCall === 1 ? 'readings' : 'cohort', [
+          {
+            measurementTypeId: 'mt_1',
+            side: 'BILATERAL',
+            exerciseId: 'ex_1',
+            passIndex: null,
+            context: null,
+            numericValue: { toString: () => '4' },
+            capturedAt: new Date('2026-05-05T00:00:00.000Z'),
+            source: 'MANUAL',
+            assessmentModule: {
+              id: 'mod_1',
+              moduleKey: 'lactate',
+              payload: null,
+              moduleVersion: 1,
+              assessment: { case: { athleteId: 'ath_other' } },
+            },
+            measurementType: { key: 'lactate', name: 'Laktat', unit: 'mmol/l' },
+          },
+        ])();
+      }),
+    },
+    exercise: { findMany: vi.fn(read('exercises', [])) },
+  } as unknown as Parameters<typeof assessmentEvaluation>[0];
+}
+
+describe('what the analysis read waits for', () => {
+  it('asks for the examination and its draft in the same wave', async () => {
+    const events: string[] = [];
+
+    await assessmentEvaluation(recordingDb(events), TENANT, 'ass_1', LABELS);
+
+    // Both started before either came back — one round trip, not two.
+    expect(events.indexOf('draft:start')).toBeLessThan(events.indexOf('assessment:end'));
+    expect(events.indexOf('assessment:start')).toBeLessThan(events.indexOf('draft:end'));
+  });
+
+  it('asks for the readings and the cohort in the same wave', async () => {
+    const events: string[] = [];
+
+    await assessmentEvaluation(recordingDb(events), TENANT, 'ass_1', LABELS);
+
+    expect(events.indexOf('cohort:start')).toBeLessThan(events.indexOf('readings:end'));
+    expect(events.indexOf('readings:start')).toBeLessThan(events.indexOf('cohort:end'));
+  });
+
+  it('still waits where a read genuinely depends on another', async () => {
+    const events: string[] = [];
+
+    await assessmentEvaluation(recordingDb(events), TENANT, 'ass_1', LABELS);
+
+    // The readings name the tests to compare; the exercises are named by the
+    // readings. Neither may start early, and this is what keeps the
+    // parallelisation honest rather than merely fast.
+    expect(events.indexOf('readings:start')).toBeGreaterThan(events.indexOf('assessment:end'));
+    expect(events.indexOf('exercises:start')).toBeGreaterThan(events.indexOf('readings:end'));
+  });
+
+  it('reads nothing further when there is no examination', async () => {
+    const events: string[] = [];
+    const db = recordingDb(events) as unknown as {
+      assessment: { findFirst: () => Promise<unknown> };
+    };
+    db.assessment.findFirst = () => Promise.resolve(null);
+
+    expect(
+      await assessmentEvaluation(
+        db as unknown as Parameters<typeof assessmentEvaluation>[0],
+        TENANT,
+        'ass_1',
+        LABELS,
+      ),
+    ).toBeNull();
+    // The draft may have been asked for alongside it — that is the point of the
+    // wave — but nothing beyond it was.
+    expect(events.filter((entry) => entry.startsWith('readings'))).toEqual([]);
+    expect(events.filter((entry) => entry.startsWith('cohort'))).toEqual([]);
   });
 });

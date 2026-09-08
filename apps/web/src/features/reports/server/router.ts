@@ -122,12 +122,34 @@ export const reportsRouter = createTRPCRouter({
        * that has no bucket — where this simply comes back empty and the analysis
        * opens exactly as before.
        */
-      const offered = await Promise.all(
-        evaluation.modules.map(async (entry) => ({
-          moduleId: entry.moduleId,
-          keys: await listAnalysisStills(ctx.tenant, entry.moduleId),
-        })),
-      );
+      /**
+       * The stills and the curves, in one wave.
+       *
+       * Both are fan-outs over the same list of tests and neither reads the
+       * other's answer — the stills come from the object store, the curves from
+       * the database. They used to run one after the other, so a screen with
+       * four tests paid four store round trips *before* the first curve was
+       * asked for. Measured at ~255 ms of storage latency with nothing else
+       * happening (§16).
+       */
+      const [offered, curves] = await Promise.all([
+        Promise.all(
+          evaluation.modules.map(async (entry) => ({
+            moduleId: entry.moduleId,
+            keys: await listAnalysisStills(ctx.tenant, entry.moduleId),
+          })),
+        ),
+        Promise.all(
+          evaluation.modules.map(async (entry) =>
+            entry.included
+              ? {
+                  moduleId: entry.moduleId,
+                  groups: await measurementChart(ctx.db, ctx.tenant, entry.moduleId),
+                }
+              : { moduleId: entry.moduleId, groups: null },
+          ),
+        ),
+      ]);
 
       /**
        * Each offered still with the word for the position it shows.
@@ -160,22 +182,9 @@ export const reportsRouter = createTRPCRouter({
         }),
       );
 
-      /**
-       * The curves, for the tests that have one.
-       *
-       * Only the included ones: an analysis draws the tests it draws on, and a
-       * query per excluded test would be work for a picture nobody sees.
-       */
-      const curves = await Promise.all(
-        evaluation.modules.map(async (entry) =>
-          entry.included
-            ? {
-                moduleId: entry.moduleId,
-                groups: await measurementChart(ctx.db, ctx.tenant, entry.moduleId),
-              }
-            : { moduleId: entry.moduleId, groups: null },
-        ),
-      );
+      // Only the included tests get a curve: an analysis draws the tests it
+      // draws on, and a query per excluded test would be work for a picture
+      // nobody sees.
       const chartsOf = new Map(curves.map((entry) => [entry.moduleId, entry.groups ?? []]));
 
       return {

@@ -53,24 +53,31 @@ export default async function AssessmentEvaluationPage({
 }) {
   const { assessmentId } = await params;
 
-  const [assessment, evaluation] = await Promise.all([
+  /**
+   * Everything that needs only the id in the address bar, at once.
+   *
+   * Four reads, one wave: none of them looks at another's answer — they all
+   * take the same `assessmentId`. They used to run one after the other behind
+   * the analysis, which is the slowest read on the screen, so the page waited
+   * out four round trips it never had to.
+   */
+  const [assessment, evaluation, reports, snapshot] = await Promise.all([
     api.assessments.byId({ assessmentId }).catch((error: unknown) => {
       if (error instanceof TRPCError && error.code === 'NOT_FOUND') notFound();
       throw error;
     }),
     // `null` while no analysis exists — the screen then offers to start one.
     api.reports.evaluation({ assessmentId }),
+    // Which analyses exist for this assessment, so a published one is shown as
+    // a document rather than as a draft that cannot be edited.
+    api.reports.listForAssessment({ assessmentId }),
+    // What was published, so a finished analysis is still readable here — the
+    // coach must be able to see what they sent, not just that they sent it.
+    api.reports.publishedSnapshot({ assessmentId }),
   ]);
 
-  // Which analyses exist for this assessment, so a published one is shown as a
-  // document rather than as a draft that cannot be edited.
-  const reports = await api.reports.listForAssessment({ assessmentId });
-  // What was published, so a finished analysis is still readable here — the
-  // coach must be able to see what they sent, not just that they sent it.
-  const snapshot = await api.reports.publishedSnapshot({ assessmentId });
   const latest = reports[0] ?? null;
   const reportId = evaluation?.reportId ?? latest?.id ?? null;
-  const shares = reportId === null ? [] : await api.reports.shares({ reportId });
   const finished = evaluation === null && latest?.status === 'PUBLISHED';
 
   /**
@@ -81,7 +88,12 @@ export default async function AssessmentEvaluationPage({
    * before the coach commits, and refuse with the actual reason where it cannot
    * — no address on file, or no sender configured.
    */
-  const record = await api.athletes.byId({ athleteId: assessment.athleteId });
+  const [record, shares] = await Promise.all([
+    api.athletes.byId({ athleteId: assessment.athleteId }),
+    // Who the analysis was released to. Waits, because which analysis that is
+    // follows from the draft above — or, where none is open, from the list.
+    reportId === null ? [] : api.reports.shares({ reportId }),
+  ]);
   const athlete = evaluation?.athlete ?? record;
   const recipient = record.email ?? null;
   const mailReady = emailReady();
