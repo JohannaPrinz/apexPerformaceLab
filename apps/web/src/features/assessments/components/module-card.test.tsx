@@ -41,6 +41,9 @@ vi.mock('../server/actions', () => ({
   },
   updateModuleAction: () => Promise.resolve({}),
   setModuleArchivedAction: () => Promise.resolve({}),
+  // Die Kopieren-Schaltfläche lädt ihre Ziele selbst; hier wird sie nicht
+  // geöffnet, der Export muss aber existieren.
+  copyTargetsAction: () => Promise.resolve({ ok: true, targets: [] }),
 }));
 
 const moduleData = (over: Partial<ModuleCardData> = {}): ModuleCardData => ({
@@ -77,7 +80,7 @@ const renderCard = (over: Partial<ModuleCardData> = {}, assessmentClosed = false
       assessmentId="ass_1"
       typeNames={{ mt_1: 'Laktat' }}
       exerciseNames={{}}
-      copyTargets={[]}
+      athleteId="ath_1"
       assessmentClosed={assessmentClosed}
     />,
   );

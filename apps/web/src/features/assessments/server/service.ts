@@ -88,6 +88,16 @@ const assessmentSelect = {
   modules: { select: moduleSelect, orderBy: { createdAt: 'asc' } },
 } as const;
 
+/**
+ * The same, minus the engagement's athlete.
+ *
+ * A list that was asked for one athlete's examinations does not need to be told
+ * whose they are — the filter said so. Prisma loads `case` as a query of its
+ * own, so selecting it back is a round trip for a value the caller passed in.
+ * Every other field, the order and the filter are untouched.
+ */
+const { case: _athleteFromCase, ...assessmentListSelect } = assessmentSelect;
+
 export interface AssessmentModuleRecord {
   id: string;
   /** What the coach called this test; `null` on rows written before names existed. */
@@ -211,11 +221,13 @@ export async function listAssessmentsForAthlete(
       case: { athleteId },
       ...(includeArchived ? {} : { status: { not: 'ARCHIVED' as const } }),
     }),
-    select: assessmentSelect,
+    select: assessmentListSelect,
     orderBy: [{ performedAt: 'desc' }, { id: 'desc' }],
   });
 
-  return rows.map(toRecord);
+  // The athlete is the one that was asked for: the filter above admits no
+  // other, so this is the value the extra read would have returned.
+  return rows.map((row) => toRecord({ ...row, case: { athleteId } }));
 }
 
 /**
@@ -264,8 +276,38 @@ export async function selectableAssessments(
   }));
 }
 
+/**
+ * The examination, its tests and how far each of them is.
+ *
+ * Two reads, because the counts need the ids the first one returns. Callers
+ * that also resolve names should use {@link getAssessmentBase} and ask for the
+ * counts alongside them instead — see the assessment screen.
+ */
 export async function getAssessment(
   db: AssessmentDb & Pick<PrismaClientInstance, 'measurement'>,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  assessmentId: string,
+): Promise<AssessmentRecord | null> {
+  const record = await getAssessmentBase(db, tenant, assessmentId);
+  if (!record) return null;
+
+  return { ...record, modules: await withRecordedValues(db, tenant, record.modules) };
+}
+
+/**
+ * The examination and its tests, without the recorded counts.
+ *
+ * Split out so a caller that also has to resolve names can ask for the counts
+ * and the names **in the same wave**: both need only the module ids and the
+ * configurations, which this read already returns, and running them one after
+ * the other cost a round trip on the assessment screen's critical path.
+ *
+ * `recordedCount` is 0 and `lastRecordedAt` null on what comes back — which is
+ * exactly what `AssessmentModuleRecord` documents for records not read through
+ * `getAssessment`.
+ */
+export async function getAssessmentBase(
+  db: AssessmentDb,
   tenant: Pick<TenantContext, 'organizationId'>,
   assessmentId: string,
 ): Promise<AssessmentRecord | null> {
@@ -274,11 +316,7 @@ export async function getAssessment(
     select: assessmentSelect,
   });
 
-  if (!row) return null;
-
-  const record = toRecord(row);
-
-  return { ...record, modules: await withRecordedValues(db, tenant, record.modules) };
+  return row ? toRecord(row) : null;
 }
 
 /**
@@ -297,7 +335,7 @@ export async function getAssessment(
  * One `groupBy` for the whole assessment rather than a query per test — the
  * page renders every module and would otherwise fan out.
  */
-async function withRecordedValues(
+export async function withRecordedValues(
   db: Pick<PrismaClientInstance, 'measurement'>,
   tenant: Pick<TenantContext, 'organizationId'>,
   modules: readonly AssessmentModuleRecord[],

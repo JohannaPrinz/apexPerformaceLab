@@ -22,6 +22,7 @@ import {
   deleteModuleTemplateAction,
   renameModuleTemplateAction,
   saveModuleTemplateAction,
+  testCatalogueAction,
 } from '../server/actions';
 
 import {
@@ -113,27 +114,56 @@ export interface SelectableMeasurementType {
 
 const ROLES: readonly MeasurementRole[] = ['required', 'recommended', 'optional'];
 
-export function CreateTestDialog({
-  assessmentId,
-  exercises,
-  measurementTypes,
-  ownTemplates,
-}: {
-  readonly assessmentId: string;
-  /**
-   * The exercises this workspace may use, already resolved by the page through
-   * the ordinary exercise procedure — catalogue plus this workspace's own, and
-   * never another tenant's. This dialog does not query and does not filter by
-   * ownership; it only lets the coach pick from what they were given.
-   */
+/** The three lists this dialog picks from, once they have arrived. */
+interface Catalogue {
   readonly exercises: readonly SelectableExercise[];
-  /** The same, for quantities: a template names them by key, the draft by id. */
   readonly measurementTypes: readonly SelectableMeasurementType[];
-  /** What this workspace saved for itself. Empty until a coach saves one. */
   readonly ownTemplates: readonly OwnTemplateOption[];
-}) {
+}
+
+export function CreateTestDialog({ assessmentId }: { readonly assessmentId: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+
+  /**
+   * The catalogue, fetched when the dialog is first opened.
+   *
+   * It used to arrive as props, which meant the assessment page read 200
+   * exercises, every quantity and every saved template before rendering — for a
+   * dialog that is shut. The lists are the same ones, from the same procedures;
+   * only the moment changed.
+   */
+  const [catalogue, setCatalogue] = useState<Catalogue | null>(null);
+  const [catalogueError, setCatalogueError] = useState<string | null>(null);
+  const [loadingCatalogue, setLoadingCatalogue] = useState(false);
+
+  const exercises = catalogue?.exercises ?? [];
+  const measurementTypes = catalogue?.measurementTypes ?? [];
+  const ownTemplates = catalogue?.ownTemplates ?? [];
+
+  function loadCatalogue() {
+    setCatalogueError(null);
+    setLoadingCatalogue(true);
+    void testCatalogueAction().then(
+      (result) => {
+        setLoadingCatalogue(false);
+        if (result.ok) {
+          setCatalogue({
+            exercises: result.exercises,
+            measurementTypes: result.measurementTypes,
+            ownTemplates: result.ownTemplates,
+          });
+        } else {
+          setCatalogueError(result.message);
+        }
+      },
+      () => {
+        setLoadingCatalogue(false);
+        setCatalogueError('Die Auswahl konnte nicht geladen werden.');
+      },
+    );
+  }
+
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -326,6 +356,8 @@ export function CreateTestDialog({
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
+        // Einmal je Sitzung: ein zweites Öffnen findet die Listen vor.
+        if (next && catalogue === null && !loadingCatalogue) loadCatalogue();
         if (!next) reset();
       }}
     >
@@ -340,330 +372,350 @@ export function CreateTestDialog({
         title="Test hinzufügen"
         description="Name und Typ genügen. Alles Weitere lässt sich später ändern."
       >
-        <div className="flex flex-col gap-4">
-          <div className="flex min-w-0 flex-col gap-1.5">
-            <label htmlFor="testName" className="text-sm font-medium">
-              Name des Tests
-            </label>
-            <input
-              id="testName"
-              value={name}
-              placeholder={typeLabel}
-              onChange={(event) => {
-                setName(event.target.value);
-              }}
-              className={`${TOUCH_FIELD} ${FOCUS_RING} w-full rounded-md border border-input bg-background px-3 shadow-sm`}
-            />
-            <p className="text-xs text-muted-foreground">
-              Der Name unterscheidet mehrere Tests desselben Typs.
+        {catalogueError !== null ? (
+          /* Ohne die Listen lässt sich kein Test zusammenstellen — also sagt
+             der Dialog das, statt eine leere Auswahl anzubieten. */
+          <div className="flex flex-col items-start gap-3">
+            <p role="alert" className="text-sm text-pretty text-destructive">
+              {catalogueError}
             </p>
+            <Button variant="outline" className={TOUCH_BUTTON} onClick={loadCatalogue}>
+              Erneut versuchen
+            </Button>
           </div>
+        ) : catalogue === null ? (
+          <p role="status" className="py-6 text-sm text-muted-foreground">
+            Auswahl wird geladen …
+          </p>
+        ) : (
+          <>
+            <div className="flex flex-col gap-4">
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <label htmlFor="testName" className="text-sm font-medium">
+                  Name des Tests
+                </label>
+                <input
+                  id="testName"
+                  value={name}
+                  placeholder={typeLabel}
+                  onChange={(event) => {
+                    setName(event.target.value);
+                  }}
+                  className={`${TOUCH_FIELD} ${FOCUS_RING} w-full rounded-md border border-input bg-background px-3 shadow-sm`}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Der Name unterscheidet mehrere Tests desselben Typs.
+                </p>
+              </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="flex min-w-0 flex-col gap-1.5">
-              <label htmlFor="testType" className="text-sm font-medium">
-                Testtyp
-              </label>
-              <select
-                id="testType"
-                value={moduleKey}
-                onChange={(event) => {
-                  const next = event.target.value as ModuleKey;
-                  setModuleKey(next);
-                  // The templates of the old type do not apply to the new one.
-                  setTemplateKey('');
-                  setDraft(emptyDraft(next));
-                }}
-                className={`${TOUCH_FIELD} ${FOCUS_RING} w-full rounded-md border border-input bg-background px-3 shadow-sm`}
-              >
-                {MODULE_KEYS.map((key) => (
-                  <option key={key} value={key}>
-                    {MODULE_LABELS_DE[key] ?? key}
-                  </option>
-                ))}
-              </select>
-            </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="flex min-w-0 flex-col gap-1.5">
+                  <label htmlFor="testType" className="text-sm font-medium">
+                    Testtyp
+                  </label>
+                  <select
+                    id="testType"
+                    value={moduleKey}
+                    onChange={(event) => {
+                      const next = event.target.value as ModuleKey;
+                      setModuleKey(next);
+                      // The templates of the old type do not apply to the new one.
+                      setTemplateKey('');
+                      setDraft(emptyDraft(next));
+                    }}
+                    className={`${TOUCH_FIELD} ${FOCUS_RING} w-full rounded-md border border-input bg-background px-3 shadow-sm`}
+                  >
+                    {MODULE_KEYS.map((key) => (
+                      <option key={key} value={key}>
+                        {MODULE_LABELS_DE[key] ?? key}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-            <div className="flex min-w-0 flex-col gap-1.5">
-              <label htmlFor="testTemplate" className="text-sm font-medium">
-                Vorlage
-              </label>
-              <select
-                id="testTemplate"
-                value={templateKey}
-                onChange={(event) => {
-                  chooseTemplate(event.target.value);
-                }}
-                // Both lists, not just the shipped one: a test type that
-                // ships no template is exactly the type a coach saves their own
-                // for, and locking the picker on the shipped count made that
-                // saved template unreachable.
-                disabled={templates.length === 0 && own.length === 0}
-                className={`${TOUCH_FIELD} ${FOCUS_RING} w-full rounded-md border border-input bg-background px-3 shadow-sm disabled:opacity-50`}
-              >
-                <option value="">
-                  {templates.length === 0 && own.length === 0
-                    ? 'Keine Vorlage verfügbar'
-                    : 'Ohne Vorlage'}
-                </option>
+                <div className="flex min-w-0 flex-col gap-1.5">
+                  <label htmlFor="testTemplate" className="text-sm font-medium">
+                    Vorlage
+                  </label>
+                  <select
+                    id="testTemplate"
+                    value={templateKey}
+                    onChange={(event) => {
+                      chooseTemplate(event.target.value);
+                    }}
+                    // Both lists, not just the shipped one: a test type that
+                    // ships no template is exactly the type a coach saves their own
+                    // for, and locking the picker on the shipped count made that
+                    // saved template unreachable.
+                    disabled={templates.length === 0 && own.length === 0}
+                    className={`${TOUCH_FIELD} ${FOCUS_RING} w-full rounded-md border border-input bg-background px-3 shadow-sm disabled:opacity-50`}
+                  >
+                    <option value="">
+                      {templates.length === 0 && own.length === 0
+                        ? 'Keine Vorlage verfügbar'
+                        : 'Ohne Vorlage'}
+                    </option>
 
-                {/* Two groups, never one list: a shipped template is a global
+                    {/* Two groups, never one list: a shipped template is a global
                     professional starting point, an own one is what this
                     practice runs. Which is which decides how much a coach
                     trusts it, so the picker says so. */}
-                {templates.length === 0 ? null : (
-                  <optgroup label="Apex OS">
-                    {templates.map((template) => (
-                      <option key={template.key} value={template.key}>
-                        {template.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
+                    {templates.length === 0 ? null : (
+                      <optgroup label="Apex OS">
+                        {templates.map((template) => (
+                          <option key={template.key} value={template.key}>
+                            {template.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
 
-                {own.length === 0 ? null : (
-                  <optgroup label="Eigene Vorlagen">
-                    {own.map((template) => (
-                      <option key={template.id} value={`own:${template.id}`}>
-                        {template.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
-            </div>
-          </div>
+                    {own.length === 0 ? null : (
+                      <optgroup label="Eigene Vorlagen">
+                        {own.map((template) => (
+                          <option key={template.id} value={`own:${template.id}`}>
+                            {template.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                </div>
+              </div>
 
-          {/* Only where something was actually changed. Saving a shipped
+              {/* Only where something was actually changed. Saving a shipped
               template unchanged would put a second entry in the picker meaning
               exactly what the first one means. */}
-          {adjusted || chosenOwn !== null ? (
-            <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted px-3 py-2">
-              {chosenOwn === null ? null : (
-                <>
-                  <span className="min-w-0 flex-1 text-sm break-words">
-                    Eigene Vorlage: <span className="font-medium">{chosenOwn.name}</span>
-                  </span>
+              {adjusted || chosenOwn !== null ? (
+                <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted px-3 py-2">
+                  {chosenOwn === null ? null : (
+                    <>
+                      <span className="min-w-0 flex-1 text-sm break-words">
+                        Eigene Vorlage: <span className="font-medium">{chosenOwn.name}</span>
+                      </span>
 
-                  <ActionMenu label={`Aktionen: ${chosenOwn.name}`}>
-                    <ActionMenuItem
-                      disabled={pending}
+                      <ActionMenu label={`Aktionen: ${chosenOwn.name}`}>
+                        <ActionMenuItem
+                          disabled={pending}
+                          onClick={() => {
+                            const next = window.prompt('Neuer Name der Vorlage', chosenOwn.name);
+                            if (next !== null && next.trim() !== '')
+                              renameTemplate(chosenOwn.id, next);
+                          }}
+                        >
+                          <Pencil aria-hidden="true" />
+                          Umbenennen
+                        </ActionMenuItem>
+
+                        <ActionMenuItem
+                          disabled={pending}
+                          onClick={() => {
+                            deleteTemplate(chosenOwn.id);
+                          }}
+                        >
+                          <Trash2 aria-hidden="true" />
+                          Löschen
+                        </ActionMenuItem>
+                      </ActionMenu>
+                    </>
+                  )}
+
+                  {!adjusted ? null : saving ? (
+                    <div className="flex min-w-0 flex-1 flex-wrap items-end gap-2">
+                      <label className="flex min-w-48 flex-1 flex-col gap-1 text-sm">
+                        <span className="text-xs font-medium">Name der Vorlage</span>
+                        <input
+                          value={templateName}
+                          placeholder="z. B. Unser Stufentest"
+                          autoFocus
+                          onChange={(event) => {
+                            setTemplateName(event.target.value);
+                          }}
+                          className={`${TOUCH_FIELD} ${FOCUS_RING} w-full rounded-md border border-input bg-background px-3`}
+                        />
+                      </label>
+                      <Button
+                        type="button"
+                        variant="accent"
+                        className={TOUCH_BUTTON}
+                        disabled={pending || templateName.trim() === ''}
+                        onClick={saveTemplate}
+                      >
+                        Speichern
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className={TOUCH_BUTTON}
+                        onClick={() => {
+                          setSaving(false);
+                        }}
+                      >
+                        Abbrechen
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className={`${TOUCH_BUTTON} ml-auto`}
                       onClick={() => {
-                        const next = window.prompt('Neuer Name der Vorlage', chosenOwn.name);
-                        if (next !== null && next.trim() !== '') renameTemplate(chosenOwn.id, next);
+                        // Deliberately not pre-filled. The test's name is usually
+                        // the template's own — "Laktat-Stufentest" — and offering
+                        // that made an entry indistinguishable from the shipped one
+                        // the default outcome. A saved template is named on purpose.
+                        setTemplateName('');
+                        setSaving(true);
                       }}
                     >
-                      <Pencil aria-hidden="true" />
-                      Umbenennen
-                    </ActionMenuItem>
-
-                    <ActionMenuItem
-                      disabled={pending}
-                      onClick={() => {
-                        deleteTemplate(chosenOwn.id);
-                      }}
-                    >
-                      <Trash2 aria-hidden="true" />
-                      Löschen
-                    </ActionMenuItem>
-                  </ActionMenu>
-                </>
-              )}
-
-              {!adjusted ? null : saving ? (
-                <div className="flex min-w-0 flex-1 flex-wrap items-end gap-2">
-                  <label className="flex min-w-48 flex-1 flex-col gap-1 text-sm">
-                    <span className="text-xs font-medium">Name der Vorlage</span>
-                    <input
-                      value={templateName}
-                      placeholder="z. B. Unser Stufentest"
-                      autoFocus
-                      onChange={(event) => {
-                        setTemplateName(event.target.value);
-                      }}
-                      className={`${TOUCH_FIELD} ${FOCUS_RING} w-full rounded-md border border-input bg-background px-3`}
-                    />
-                  </label>
-                  <Button
-                    type="button"
-                    variant="accent"
-                    className={TOUCH_BUTTON}
-                    disabled={pending || templateName.trim() === ''}
-                    onClick={saveTemplate}
-                  >
-                    Speichern
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className={TOUCH_BUTTON}
-                    onClick={() => {
-                      setSaving(false);
-                    }}
-                  >
-                    Abbrechen
-                  </Button>
+                      Als Vorlage speichern
+                    </Button>
+                  )}
                 </div>
-              ) : (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className={`${TOUCH_BUTTON} ml-auto`}
-                  onClick={() => {
-                    // Deliberately not pre-filled. The test's name is usually
-                    // the template's own — "Laktat-Stufentest" — and offering
-                    // that made an entry indistinguishable from the shipped one
-                    // the default outcome. A saved template is named on purpose.
-                    setTemplateName('');
-                    setSaving(true);
-                  }}
-                >
-                  Als Vorlage speichern
-                </Button>
-              )}
-            </div>
-          ) : null}
+              ) : null}
 
-          <MeasurementPreview
-            draft={draft}
-            measurementTypes={measurementTypes}
-            typeById={typeById}
-            onRole={(id, role) => {
-              setDraft((previous) => withRole(previous, id, role));
-            }}
-            onAdd={(id) => {
-              setDraft((previous) => withMeasurementType(previous, id));
-            }}
-            onRemove={(id) => {
-              setDraft((previous) => withoutMeasurementType(previous, id));
-            }}
-          />
+              <MeasurementPreview
+                draft={draft}
+                measurementTypes={measurementTypes}
+                typeById={typeById}
+                onRole={(id, role) => {
+                  setDraft((previous) => withRole(previous, id, role));
+                }}
+                onAdd={(id) => {
+                  setDraft((previous) => withMeasurementType(previous, id));
+                }}
+                onRemove={(id) => {
+                  setDraft((previous) => withoutMeasurementType(previous, id));
+                }}
+              />
 
-          {/* Always offered, template or not. A strength template deliberately
+              {/* Always offered, template or not. A strength template deliberately
               proposes no movement — §12a leaves that to the assessment — and
               hiding the picker made it unreachable from here. */}
-          <ExercisePicker
-            exercises={exercises}
-            chosen={draft.exerciseIds}
-            onToggle={(id) => {
-              setDraft((previous) => ({
-                ...previous,
-                exerciseIds: previous.exerciseIds.includes(id)
-                  ? previous.exerciseIds.filter((entry) => entry !== id)
-                  : [...previous.exerciseIds, id],
-              }));
-            }}
-          />
+              <ExercisePicker
+                exercises={exercises}
+                chosen={draft.exerciseIds}
+                onToggle={(id) => {
+                  setDraft((previous) => ({
+                    ...previous,
+                    exerciseIds: previous.exerciseIds.includes(id)
+                      ? previous.exerciseIds.filter((entry) => entry !== id)
+                      : [...previous.exerciseIds, id],
+                  }));
+                }}
+              />
 
-          <div className="flex flex-col gap-3 border-t border-border pt-4">
-            <button
-              type="button"
-              aria-expanded={advanced}
-              onClick={() => {
-                setAdvanced((previous) => !previous);
-              }}
-              className={`${TOUCH_TARGET} ${FOCUS_RING} -ml-2 flex w-fit items-center gap-1.5 rounded px-2 text-sm text-muted-foreground hover:text-foreground`}
-            >
-              Weitere Einstellungen
-              <span aria-hidden="true">{advanced ? '▴' : '▾'}</span>
-            </button>
+              <div className="flex flex-col gap-3 border-t border-border pt-4">
+                <button
+                  type="button"
+                  aria-expanded={advanced}
+                  onClick={() => {
+                    setAdvanced((previous) => !previous);
+                  }}
+                  className={`${TOUCH_TARGET} ${FOCUS_RING} -ml-2 flex w-fit items-center gap-1.5 rounded px-2 text-sm text-muted-foreground hover:text-foreground`}
+                >
+                  Weitere Einstellungen
+                  <span aria-hidden="true">{advanced ? '▴' : '▾'}</span>
+                </button>
 
-            {advanced ? (
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="flex min-w-0 flex-col gap-1.5">
-                  <label htmlFor="passes" className="text-sm font-medium">
-                    Durchgänge
-                  </label>
-                  <input
-                    id="passes"
-                    type="number"
-                    min={1}
-                    max={50}
-                    value={draft.passes}
-                    onChange={(event) => {
-                      setDraft((previous) =>
-                        withPasses(previous, Math.max(1, Number(event.target.value) || 1)),
-                      );
-                    }}
-                    className={`${TOUCH_FIELD} ${FOCUS_RING} w-full rounded-md border border-input bg-background px-3 shadow-sm`}
-                    data-numeric
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Wie oft der gesamte Satz erfasst wird — bei einem Stufentest die Anzahl der
-                    Stufen.
-                  </p>
-                </div>
+                {advanced ? (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="flex min-w-0 flex-col gap-1.5">
+                      <label htmlFor="passes" className="text-sm font-medium">
+                        Durchgänge
+                      </label>
+                      <input
+                        id="passes"
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={draft.passes}
+                        onChange={(event) => {
+                          setDraft((previous) =>
+                            withPasses(previous, Math.max(1, Number(event.target.value) || 1)),
+                          );
+                        }}
+                        className={`${TOUCH_FIELD} ${FOCUS_RING} w-full rounded-md border border-input bg-background px-3 shadow-sm`}
+                        data-numeric
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Wie oft der gesamte Satz erfasst wird — bei einem Stufentest die Anzahl der
+                        Stufen.
+                      </p>
+                    </div>
 
-                {/* The hit area is the whole label, not the 16px box: a checkbox
+                    {/* The hit area is the whole label, not the 16px box: a checkbox
                     measures below every touch guidance, and enlarging the box
                     itself would look wrong. */}
-                <label
-                  className={`${TOUCH_TARGET} flex cursor-pointer items-start gap-2 rounded-md py-2 text-sm sm:pt-7`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={draft.recordsSide}
-                    onChange={(event) => {
-                      setDraft((previous) => withRecordsSide(previous, event.target.checked));
-                    }}
-                    className="mt-0.5 size-4 rounded border-input"
-                  />
-                  <span className="min-w-0">
-                    Jeden Wert je Seite erfassen
-                    <span className="block text-xs text-muted-foreground">
-                      Für Tests, bei denen links gegen rechts der Vergleich ist.
-                    </span>
-                  </span>
-                </label>
+                    <label
+                      className={`${TOUCH_TARGET} flex cursor-pointer items-start gap-2 rounded-md py-2 text-sm sm:pt-7`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={draft.recordsSide}
+                        onChange={(event) => {
+                          setDraft((previous) => withRecordsSide(previous, event.target.checked));
+                        }}
+                        className="mt-0.5 size-4 rounded border-input"
+                      />
+                      <span className="min-w-0">
+                        Jeden Wert je Seite erfassen
+                        <span className="block text-xs text-muted-foreground">
+                          Für Tests, bei denen links gegen rechts der Vergleich ist.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+                ) : null}
+
+                {draft.dimensions.length === 0 ? null : (
+                  <p className="text-xs text-pretty text-muted-foreground">
+                    Merkmale: {draft.dimensions.map((dimension) => dimension.label).join(' · ')} —
+                    über „Ausführlich konfigurieren“ änderbar.
+                  </p>
+                )}
               </div>
-            ) : null}
 
-            {draft.dimensions.length === 0 ? null : (
-              <p className="text-xs text-pretty text-muted-foreground">
-                Merkmale: {draft.dimensions.map((dimension) => dimension.label).join(' · ')} — über
-                „Ausführlich konfigurieren“ änderbar.
-              </p>
-            )}
-          </div>
+              <Summary
+                name={effectiveName}
+                typeLabel={typeLabel}
+                templateName={
+                  MEASUREMENT_TEMPLATES.find((entry) => entry.key === templateKey)?.name ?? null
+                }
+                exerciseCount={draft.exerciseIds.length}
+                passes={draft.passes}
+              />
 
-          <Summary
-            name={effectiveName}
-            typeLabel={typeLabel}
-            templateName={
-              MEASUREMENT_TEMPLATES.find((entry) => entry.key === templateKey)?.name ?? null
-            }
-            exerciseCount={draft.exerciseIds.length}
-            passes={draft.passes}
-          />
+              {error === null ? null : (
+                <p role="alert" className="text-sm text-destructive">
+                  {error}
+                </p>
+              )}
+            </div>
 
-          {error === null ? null : (
-            <p role="alert" className="text-sm text-destructive">
-              {error}
-            </p>
-          )}
-        </div>
-
-        <DialogFooter>
-          <Button
-            type="button"
-            variant="ghost"
-            className={TOUCH_BUTTON}
-            onClick={() => {
-              setOpen(false);
-            }}
-          >
-            Abbrechen
-          </Button>
-          <Button
-            type="button"
-            variant="accent"
-            className={TOUCH_BUTTON}
-            disabled={pending}
-            onClick={submit}
-          >
-            {pending ? 'Wird angelegt…' : 'Test anlegen'}
-          </Button>
-        </DialogFooter>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="ghost"
+                className={TOUCH_BUTTON}
+                onClick={() => {
+                  setOpen(false);
+                }}
+              >
+                Abbrechen
+              </Button>
+              <Button
+                type="button"
+                variant="accent"
+                className={TOUCH_BUTTON}
+                disabled={pending}
+                onClick={submit}
+              >
+                {pending ? 'Wird angelegt…' : 'Test anlegen'}
+              </Button>
+            </DialogFooter>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );

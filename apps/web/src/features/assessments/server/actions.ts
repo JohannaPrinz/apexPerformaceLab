@@ -11,6 +11,13 @@ import { api } from '@/trpc/server';
 
 import { createAssessmentSchema } from '../schemas';
 
+import type { CopyTarget } from '../components/copy-module-button';
+import type {
+  OwnTemplateOption,
+  SelectableExercise,
+  SelectableMeasurementType,
+} from '../components/create-test-dialog';
+
 /** Thin callers. Authorization lives in the procedures. */
 
 export interface AssessmentFormState {
@@ -364,5 +371,92 @@ export async function deleteModuleTemplateAction(
     return {};
   } catch (error) {
     return { message: toMessage(error) };
+  }
+}
+
+/**
+ * What the "add a test" dialog needs, fetched when it opens (§26).
+ *
+ * ## Why not with the page
+ *
+ * These three lists cost the assessment screen a fifth of its load time before
+ * anybody had clicked anything: the exercise catalogue alone is 200 rows and
+ * 212 kB, and it exists for a dialog that is closed. The measurement put the
+ * whole assessment render at 32 queries; these are four of them, and the
+ * heaviest single one.
+ *
+ * ## Why one action for three lists
+ *
+ * They are opened together and useless apart — a template names quantities by
+ * key and exercises by name, so a dialog holding one without the others cannot
+ * apply anything. One round trip rather than three.
+ *
+ * The doors are unchanged: each list comes from the procedure that already
+ * owned it, so the workspace scope and the permission it requires are exactly
+ * what they were when the page asked.
+ */
+export async function testCatalogueAction(): Promise<
+  | {
+      readonly ok: true;
+      readonly exercises: readonly SelectableExercise[];
+      readonly measurementTypes: readonly SelectableMeasurementType[];
+      readonly ownTemplates: readonly OwnTemplateOption[];
+    }
+  | { readonly ok: false; readonly message: string }
+> {
+  try {
+    const [exercises, measurementTypes, ownTemplates] = await Promise.all([
+      api.exercises.list({ includeArchived: false, limit: 200, offset: 0 }),
+      api.assessments.measurementTypes(),
+      api.assessments.ownTemplates(),
+    ]);
+
+    return {
+      ok: true,
+      // The same projection the page did, kept here so the dialog receives what
+      // it always received.
+      exercises: exercises.map((exercise) => ({
+        id: exercise.id,
+        name: exercise.name,
+        category: exercise.category,
+        scope: exercise.scope,
+      })),
+      measurementTypes,
+      ownTemplates,
+    };
+  } catch (error) {
+    return { ok: false, message: toMessage(error) };
+  }
+}
+
+/**
+ * The athlete's other examinations, for the "copy into" menu.
+ *
+ * Read when the menu opens rather than with the page: a coach opens an
+ * assessment to look at it, and this list only answers "where else should this
+ * test go".
+ *
+ * `athleteId` names *which* athlete, it does not grant anything — the procedure
+ * is workspace-scoped, so an id from another workspace returns nothing. That is
+ * the same arrangement the page had.
+ */
+export async function copyTargetsAction(
+  athleteId: string,
+  assessmentId: string,
+): Promise<
+  | { readonly ok: true; readonly targets: readonly CopyTarget[] }
+  | { readonly ok: false; readonly message: string }
+> {
+  try {
+    const siblings = await api.assessments.listForAthlete({ athleteId });
+
+    return {
+      ok: true,
+      targets: siblings
+        .filter((entry) => entry.id !== assessmentId)
+        .map((entry) => ({ id: entry.id, question: entry.question })),
+    };
+  } catch (error) {
+    return { ok: false, message: toMessage(error) };
   }
 }

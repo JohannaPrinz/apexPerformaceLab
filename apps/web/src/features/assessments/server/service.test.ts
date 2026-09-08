@@ -11,7 +11,7 @@ import {
   setModuleStatus,
   copyAssessment,
   createAssessment,
-  getAssessment,
+  getAssessmentBase,
   listAssessmentsForAthlete,
   removeModule,
   setAssessmentStatus,
@@ -29,6 +29,8 @@ interface QueryArgs {
   where: Record<string, unknown>;
   data?: Record<string, unknown>;
   select?: Record<string, unknown>;
+  /** Read where a test asserts the order the list promises. */
+  orderBy?: unknown;
 }
 
 const configuration = {
@@ -208,10 +210,71 @@ describe('assessment service — tenant scoping', () => {
     });
   });
 
+  it('names the athlete it was asked about, without reading the case for it', async () => {
+    const { db, assessment } = fakeDb();
+    assessment.findMany.mockResolvedValue([
+      {
+        id: 'as_2',
+        question: 'Wo liegt die Schwelle?',
+        description: null,
+        type: 'INITIAL',
+        status: 'PLANNED',
+        performedAt: new Date('2026-02-01'),
+        createdAt: new Date('2026-02-01'),
+        caseId: 'case_1',
+        modules: [],
+      },
+    ]);
+
+    const rows = await listAssessmentsForAthlete(db, TENANT, 'ath_1');
+
+    // The filter admits this athlete's examinations and no others, so the
+    // engagement never had to be read back to say whose they are.
+    expect(rows[0]?.athleteId).toBe('ath_1');
+    expect(argsOf(assessment.findMany).select).not.toHaveProperty('case');
+  });
+
+  it('keeps the order and the archive rule of the list', async () => {
+    const { db, assessment } = fakeDb();
+
+    await listAssessmentsForAthlete(db, TENANT, 'ath_1');
+
+    const args = argsOf(assessment.findMany);
+    expect(args.orderBy).toEqual([{ performedAt: 'desc' }, { id: 'desc' }]);
+    // Archived examinations stay out unless they are asked for (§8).
+    expect(args.where).toMatchObject({ status: { not: 'ARCHIVED' } });
+
+    await listAssessmentsForAthlete(db, TENANT, 'ath_1', true);
+    expect(argsOf(assessment.findMany, 1).where).not.toHaveProperty('status');
+  });
+
+  it('still selects everything the record carries', async () => {
+    const { db, assessment } = fakeDb();
+
+    await listAssessmentsForAthlete(db, TENANT, 'ath_1');
+
+    // Only the engagement went; every field the list answered with before is
+    // still asked for, modules included.
+    const select = argsOf(assessment.findMany).select ?? {};
+    for (const field of [
+      'id',
+      'question',
+      'description',
+      'type',
+      'status',
+      'performedAt',
+      'createdAt',
+      'caseId',
+      'modules',
+    ]) {
+      expect(select).toHaveProperty(field);
+    }
+  });
+
   it('scopes a lookup by id', async () => {
     const { db, assessment } = fakeDb();
 
-    await getAssessment(db, TENANT, 'as_from_another_workspace');
+    await getAssessmentBase(db, TENANT, 'as_from_another_workspace');
 
     expect(argsOf(assessment.findFirst).where).toMatchObject({
       organizationId: 'org_a',

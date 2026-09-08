@@ -48,7 +48,8 @@ import {
   copyModule,
   createAssessment,
   exerciseNames,
-  getAssessment,
+  getAssessmentBase,
+  withRecordedValues,
   listAssessmentsForAthlete,
   selectableAssessments,
   measurementTypeNames,
@@ -101,7 +102,7 @@ export const assessmentsRouter = createTRPCRouter({
   byId: withPermission('assessment:read')
     .input(assessmentIdSchema)
     .query(async ({ ctx, input }) => {
-      const assessment = await getAssessment(ctx.db, ctx.tenant, input.assessmentId);
+      const assessment = await getAssessmentBase(ctx.db, ctx.tenant, input.assessmentId);
       if (!assessment) throw notFound('Assessment');
 
       // Resolved here rather than in the page: a configuration stores type ids,
@@ -113,12 +114,25 @@ export const assessmentsRouter = createTRPCRouter({
         (entry) => entry.configuration?.exerciseIds ?? [],
       );
 
-      const [typeNames, movementNames] = await Promise.all([
+      /**
+       * The counts and the names in one wave.
+       *
+       * All three need the same thing — the tests that just arrived — and none
+       * of them needs the others. Asking for the counts first and the names
+       * afterwards cost a full round trip for nothing.
+       */
+      const [modules, typeNames, movementNames] = await Promise.all([
+        withRecordedValues(ctx.db, ctx.tenant, assessment.modules),
         measurementTypeNames(ctx.db, ctx.tenant.organizationId, [...new Set(ids)]),
         exerciseNames(ctx.db, ctx.tenant.organizationId, [...new Set(exerciseIds)]),
       ]);
 
-      return { ...assessment, measurementTypeNames: typeNames, exerciseNames: movementNames };
+      return {
+        ...assessment,
+        modules,
+        measurementTypeNames: typeNames,
+        exerciseNames: movementNames,
+      };
     }),
 
   create: withCoachPermission('assessment:write')

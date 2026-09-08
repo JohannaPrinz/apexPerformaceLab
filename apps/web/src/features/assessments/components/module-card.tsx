@@ -23,7 +23,7 @@ import { RunTestButton } from '../measurements/components/run-test-button';
 import { slotsForPass } from '../measurements/components/slots';
 import { removeModuleAction } from '../server/actions';
 
-import { CopyModuleButton, type CopyTarget } from './copy-module-button';
+import { CopyModuleButton } from './copy-module-button';
 import { MEASUREMENT_ROLE_LABELS_DE, MODULE_LABELS_DE, MODULE_STATUS_LABELS_DE } from './labels';
 
 export interface ModuleCardData {
@@ -70,7 +70,7 @@ export function ModuleCard({
   assessmentId,
   typeNames,
   exerciseNames,
-  copyTargets,
+  athleteId,
   assessmentClosed,
 }: {
   module: ModuleCardData;
@@ -78,7 +78,8 @@ export function ModuleCard({
   typeNames: Record<string, string>;
   exerciseNames: Record<string, string>;
   /** The athlete's other assessments — a test is copied into one of those. */
-  copyTargets: readonly CopyTarget[];
+  /** Whose other assessments the copy menu may offer. */
+  athleteId: string;
   /**
    * Whether the examination is closed — finished, abandoned or put away.
    *
@@ -266,7 +267,7 @@ export function ModuleCard({
             <CopyModuleButton
               moduleId={module.id}
               assessmentId={assessmentId}
-              targets={copyTargets}
+              athleteId={athleteId}
             />
 
             {performed ? (
