@@ -171,12 +171,6 @@ function numberOf(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-/** The workspace's own types plus the system catalogue it inherits (§12). */
-const typeWhere = (tenant: Pick<TenantContext, 'organizationId'>, key: string) => ({
-  key,
-  OR: [{ organizationId: tenant.organizationId }, { organizationId: null }],
-});
-
 async function namesFor(
   db: TrendDb,
   tenant: Pick<TenantContext, 'organizationId'>,
@@ -197,6 +191,25 @@ async function namesFor(
   return new Map(exercises.map((exercise) => [exercise.id, exercise.name]));
 }
 
+/** Exactly what `measurementSelect` returns — the columns a card draws from. */
+interface MeasurementRow {
+  readonly measurementTypeId: string;
+  readonly side: string;
+  readonly exerciseId: string | null;
+  readonly passIndex: number | null;
+  readonly context: unknown;
+  readonly numericValue: unknown;
+  readonly capturedAt: Date;
+  readonly assessmentModule: { readonly name: string | null };
+  readonly measurementType: { readonly key: string; readonly name: string; readonly unit: string };
+}
+
+/** How many self-reported readings one quantity has. */
+interface TrackedCount {
+  readonly measurementTypeId: string;
+  readonly _count: { readonly _all: number };
+}
+
 /**
  * Which cards this athlete may be given.
  *
@@ -204,43 +217,18 @@ async function namesFor(
  * whether or not anything is recorded yet. The cycle is offered for a female
  * athlete — and for anyone who already has a bleeding documented, so nothing
  * already written down can become unreachable.
+ *
+ * The readings and the movement names arrive from `athleteTrends`, which has
+ * them already: they are the same rows every card is drawn from.
  */
-export async function athleteTrendOptions(
+async function trendOptionsFrom(
   db: TrendDb,
   tenant: Pick<TenantContext, 'organizationId'>,
   athlete: { readonly id: string; readonly sex: AthleteSex },
+  numeric: readonly MeasurementRow[],
+  tracked: readonly TrackedCount[],
+  exerciseNames: ReadonlyMap<string, string>,
 ): Promise<readonly TrendOption[]> {
-  /**
-   * What was measured, and what the athlete reported — in one wave.
-   *
-   * The self-reports are a different table answering a different question, so
-   * they never needed the measurements first. Reading them afterwards put a
-   * round trip in the middle of a list that a coach sees on every profile.
-   */
-  const [rows, tracked] = await Promise.all([
-    db.measurement.findMany({
-      where: scoped(tenant, measurementWhere(athlete.id)),
-      select: measurementSelect,
-    }),
-    /**
-     * A quantity that only exists as self-reports still has a curve worth
-     * offering — otherwise a coach who asked an athlete to weigh themselves
-     * would find no card for the answers.
-     */
-    db.trackingEntry.groupBy({
-      by: ['measurementTypeId'],
-      where: scoped(tenant, { athleteId: athlete.id }),
-      _count: { _all: true },
-    }),
-  ]);
-
-  const numeric = rows.filter((row) => numberOf(row.numericValue) !== null);
-  const exerciseNames = await namesFor(
-    db,
-    tenant,
-    [...new Set(numeric.map((row) => row.exerciseId))].filter((id): id is string => id !== null),
-  );
-
   const byKey = new Map<
     string,
     { name: string; unit: string; count: number; exerciseIds: Set<string> }
@@ -434,6 +422,175 @@ export interface TrendSelection {
   readonly exerciseIds: readonly string[];
 }
 
+/** The cards that draw nothing of their own. */
+const SILENT_TREND_KEYS: readonly string[] = [
+  CYCLE_TREND_KEY,
+  NUTRITION_TREND_KEY,
+  BIOFEEDBACK_TREND_KEY,
+];
+
+/**
+ * One athlete's record over time: what could be drawn, and what is drawn.
+ *
+ * ## Why this is one read and not one per card
+ *
+ * The options list is built from **every standing reading this athlete has**,
+ * with exactly the columns a card draws its points from. Each card then went
+ * back to the database for a *subset of those very rows* — plus its quantity's
+ * name, plus the movements it was recorded with, plus the self-reports. Five
+ * reads per card, two of which Prisma split out of the relation columns on its
+ * own. Measured: 16 queries for a profile with one card, 53 for one with eight,
+ * and a database time that rose from 556 ms to 15.2 s as fifty concurrent reads
+ * queued for the same connection pool.
+ *
+ * The rows are already here, so the cards are built from them. What genuinely
+ * is not in them is asked for **once for all cards**: one read for the
+ * quantities' names and units, one for the self-reports. The movements need no
+ * read at all — the options list has already named every one of them.
+ *
+ * ## What does not change
+ *
+ * Nothing about what is drawn. No aggregation, no time window, no sampling:
+ * every single reading still becomes its own point, and the curve still reaches
+ * as far back as the record does. The narrowing to chosen movements, the
+ * ordering and the rule that a narrowed card shows no self-reports are the same
+ * rules — applied to rows in memory instead of in a `WHERE`.
+ */
+export async function athleteTrends(
+  db: TrendDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  athlete: { readonly id: string; readonly sex: AthleteSex },
+  slots: readonly TrendSelection[],
+): Promise<{
+  readonly options: readonly TrendOption[];
+  readonly charts: readonly (TrendChart | null)[];
+}> {
+  // The cards that actually draw a quantity. The cycle and the two table cards
+  // read nothing here and never did; an empty key is not a card at all.
+  const drawn = slots.filter((slot) => slot.key !== '' && !SILENT_TREND_KEYS.includes(slot.key));
+
+  const typeKeys = [...new Set(drawn.map((slot) => slot.key))];
+
+  /**
+   * The keys whose self-reports are wanted.
+   *
+   * A card narrowed to particular movements leaves them out entirely — a
+   * self-reported body weight belongs to no lift — so its key is not asked for
+   * here either. This is exactly the union of what the per-card reads asked
+   * for, never more.
+   */
+  const selfReportKeys = [
+    ...new Set(drawn.filter((slot) => slot.exerciseIds.length === 0).map((slot) => slot.key)),
+  ];
+
+  /**
+   * Everything that depends on nothing, in one wave.
+   *
+   * The readings, the self-report counts behind the options list, the names of
+   * the quantities on the cards and the self-reports themselves: four questions
+   * about four tables, none of which needs an answer from another. The card
+   * keys are known before any of it starts, which is what makes the last two
+   * possible at all.
+   */
+  const [rows, tracked, chartTypes, trackedRows] = await Promise.all([
+    db.measurement.findMany({
+      where: scoped(tenant, measurementWhere(athlete.id)),
+      select: measurementSelect,
+    }),
+    /**
+     * A quantity that only exists as self-reports still has a curve worth
+     * offering — otherwise a coach who asked an athlete to weigh themselves
+     * would find no card for the answers.
+     */
+    db.trackingEntry.groupBy({
+      by: ['measurementTypeId'],
+      where: scoped(tenant, { athleteId: athlete.id }),
+      _count: { _all: true },
+    }),
+    // The title and unit of every card at once. Deliberately *not* taken from
+    // the readings' own type: a workspace may define a key the catalogue also
+    // has, and which of the two names the card is a question about the
+    // catalogue, not about one reading.
+    typeKeys.length === 0
+      ? []
+      : db.measurementType.findMany({
+          where: {
+            key: { in: typeKeys },
+            OR: [{ organizationId: tenant.organizationId }, { organizationId: null }],
+          },
+          select: { key: true, name: true, unit: true },
+        }),
+    selfReportKeys.length === 0
+      ? []
+      : db.trackingEntry.findMany({
+          where: scoped(tenant, {
+            athleteId: athlete.id,
+            measurementType: { key: { in: selfReportKeys } },
+          }),
+          select: {
+            capturedAt: true,
+            numericValue: true,
+            measurementType: { select: { key: true } },
+          },
+          orderBy: [{ capturedAt: 'asc' }],
+        }),
+  ]);
+
+  const numeric: readonly MeasurementRow[] = rows.filter(
+    (row) => numberOf(row.numericValue) !== null,
+  );
+
+  /**
+   * Every movement any of these readings names, resolved once.
+   *
+   * The one genuine dependency in the whole path: which movements to name
+   * follows from the readings. It served the options list already; every card's
+   * movements are a subset of the same ids, so no card needs its own read.
+   */
+  const exerciseNames = await namesFor(
+    db,
+    tenant,
+    [...new Set(numeric.map((row) => row.exerciseId))].filter((id): id is string => id !== null),
+  );
+
+  // The catalogue's answer per key. `findFirst` used to decide this per card by
+  // taking whichever row came back first; taking the first of this key's rows
+  // is the same decision, made once.
+  const typeByKey = new Map<string, { name: string; unit: string }>();
+  for (const type of chartTypes) {
+    if (!typeByKey.has(type.key)) typeByKey.set(type.key, { name: type.name, unit: type.unit });
+  }
+
+  // One line per quantity, never split by coordinates: a tracking entry has no
+  // side, no exercise and no stage — it is a quantity at a moment.
+  const trackedByKey = new Map<string, TrendPoint[]>();
+  for (const entry of trackedRows) {
+    const value = numberOf(entry.numericValue);
+    if (value === null) continue;
+
+    const points = trackedByKey.get(entry.measurementType.key) ?? [];
+    points.push({ at: entry.capturedAt, value, moduleName: null });
+    trackedByKey.set(entry.measurementType.key, points);
+  }
+
+  const charts = slots.map((slot) =>
+    chartFrom(slot, { numeric, typeByKey, exerciseNames, trackedByKey }),
+  );
+
+  return {
+    options: await trendOptionsFrom(db, tenant, athlete, numeric, tracked, exerciseNames),
+    charts,
+  };
+}
+
+/** What every card is built from, read once for all of them. */
+interface TrendSource {
+  readonly numeric: readonly MeasurementRow[];
+  readonly typeByKey: ReadonlyMap<string, { name: string; unit: string }>;
+  readonly exerciseNames: ReadonlyMap<string, string>;
+  readonly trackedByKey: ReadonlyMap<string, readonly TrendPoint[]>;
+}
+
 /**
  * The card behind one selection.
  *
@@ -441,12 +598,7 @@ export interface TrendSelection {
  * is what lets a coach add "body weight" before there is a body weight. `null`
  * is reserved for a key that is not a card at all.
  */
-export async function athleteTrend(
-  db: TrendDb,
-  tenant: Pick<TenantContext, 'organizationId'>,
-  athlete: { readonly id: string; readonly sex: AthleteSex },
-  selection: TrendSelection,
-): Promise<TrendChart | null> {
+function chartFrom(selection: TrendSelection, source: TrendSource): TrendChart | null {
   if (selection.key === '') return null;
 
   /**
@@ -504,83 +656,62 @@ export async function athleteTrend(
     };
   }
 
-  /**
-   * Everything this card can be drawn from, in one wave.
-   *
-   * Four reads, and only the last of them needed anything from the others: the
-   * name and unit come from the quantity's own row, the values are found by the
-   * quantity's **key** rather than by its id, the wider movement list asks the
-   * same question without the narrowing, and the athlete's own entries are a
-   * separate table entirely. Each one used to wait out the one before it, which
-   * on a profile with three cards meant three cards' worth of round trips
-   * stacked four deep.
-   *
-   * A card for a quantity this workspace does not have still answers `null`
-   * below — it then paid for three reads it did not use, which happens only for
-   * a stored card whose quantity has since gone.
-   */
-  const [type, rows, widerRows, tracked] = await Promise.all([
-    db.measurementType.findFirst({
-      where: typeWhere(tenant, selection.key),
-      select: { name: true, unit: true },
-    }),
-    db.measurement.findMany({
-      where: scoped(tenant, {
-        ...measurementWhere(athlete.id),
-        measurementType: { key: selection.key },
-        ...(selection.exerciseIds.length === 0
-          ? {}
-          : { exerciseId: { in: [...selection.exerciseIds] } }),
-      }),
-      select: measurementSelect,
-      orderBy: [{ capturedAt: 'asc' }],
-    }),
-    // Every movement this quantity was recorded with, not only the chosen ones
-    // — otherwise narrowing to one lift would hide the way back to the others.
-    // Only needed where the card *is* narrowed; otherwise the rows above
-    // already carry every movement.
-    selection.exerciseIds.length === 0
-      ? []
-      : db.measurement.findMany({
-          where: scoped(tenant, {
-            ...measurementWhere(athlete.id),
-            measurementType: { key: selection.key },
-          }),
-          select: { exerciseId: true, numericValue: true },
-        }),
-    /**
-     * What the athlete or their device contributed.
-     *
-     * Left out entirely when the card is narrowed to particular movements,
-     * because a self-reported body weight belongs to no lift and showing it
-     * under one would be a claim nobody made.
-     */
-    selection.exerciseIds.length === 0
-      ? db.trackingEntry.findMany({
-          where: scoped(tenant, {
-            athleteId: athlete.id,
-            measurementType: { key: selection.key },
-          }),
-          select: { capturedAt: true, numericValue: true },
-          orderBy: [{ capturedAt: 'asc' }],
-        })
-      : [],
-  ]);
-
+  const type = source.typeByKey.get(selection.key);
   if (!type) return null;
 
-  const numeric = rows.filter((row) => numberOf(row.numericValue) !== null);
-
-  const everyMovement =
+  /**
+   * This quantity's readings, in time order.
+   *
+   * The same two narrowings the database used to apply, in the same order: the
+   * quantity's **key** — which is what the reading itself carries, not the
+   * catalogue row that names the card — and then the chosen movements. A
+   * reading with no movement is left out of a narrowed card exactly as
+   * `exerciseId IN (…)` left it out.
+   *
+   * Sorted rather than ordered: `capturedAt` ascending is what decided the
+   * order the lines appear in and which reading gives a line its label, so it
+   * has to be the same order here. The sort is stable, so readings sharing a
+   * moment keep the order the read returned them in.
+   */
+  const ofKey = source.numeric.filter((row) => row.measurementType.key === selection.key);
+  const numeric = (
     selection.exerciseIds.length === 0
-      ? numeric.map((row) => row.exerciseId)
-      : widerRows.filter((row) => numberOf(row.numericValue) !== null).map((row) => row.exerciseId);
+      ? [...ofKey]
+      : ofKey.filter(
+          (row) => row.exerciseId !== null && selection.exerciseIds.includes(row.exerciseId),
+        )
+  ).sort((left, right) => left.capturedAt.getTime() - right.capturedAt.getTime());
 
-  const exerciseNames = await namesFor(
-    db,
-    tenant,
-    [...new Set(everyMovement)].filter((id): id is string => id !== null),
+  // Every movement this quantity was recorded with, not only the chosen ones —
+  // otherwise narrowing to one lift would hide the way back to the others.
+  const everyMovement = (selection.exerciseIds.length === 0 ? numeric : ofKey).map(
+    (row) => row.exerciseId,
   );
+
+  /**
+   * The movements to name, out of the names already resolved.
+   *
+   * An id with no name is left out, exactly as it was when this was its own
+   * read: `namesFor` returns only what the catalogue could name.
+   */
+  const exerciseNames = new Map<string, string>();
+  for (const id of everyMovement) {
+    if (id === null || exerciseNames.has(id)) continue;
+
+    const name = source.exerciseNames.get(id);
+    if (name !== undefined) exerciseNames.set(id, name);
+  }
+
+  /**
+   * What the athlete or their device contributed.
+   *
+   * Left out entirely when the card is narrowed to particular movements,
+   * because a self-reported body weight belongs to no lift and showing it under
+   * one would be a claim nobody made — which is why a narrowed card's key is
+   * not even asked for.
+   */
+  const trackedPoints =
+    selection.exerciseIds.length === 0 ? (source.trackedByKey.get(selection.key) ?? []) : [];
 
   // One line per set of coordinates, by the one comparison rule. A stepped test
   // therefore contributes one line per stage.
@@ -600,14 +731,6 @@ export async function athleteTrend(
 
     if (!described.has(key)) described.set(key, seriesLabel(row, exerciseNames));
   }
-
-  // One line, never split by coordinates: a tracking entry has no side, no
-  // exercise and no stage — it is a quantity at a moment.
-  const trackedPoints: TrendPoint[] = tracked.flatMap((row) => {
-    const value = numberOf(row.numericValue);
-
-    return value === null ? [] : [{ at: row.capturedAt, value, moduleName: null }];
-  });
 
   return {
     key: selection.key,

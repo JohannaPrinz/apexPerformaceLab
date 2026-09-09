@@ -76,7 +76,7 @@ import {
   setTrendCardOrder,
   trackingEntriesFor,
 } from './tracking';
-import { athleteTrend, athleteTrendOptions } from './trends';
+import { athleteTrends } from './trends';
 
 /** A missing athlete and another tenant's athlete are the same answer (§4). */
 const notFound = () =>
@@ -422,15 +422,14 @@ export const athletesRouter = createTRPCRouter({
           : stored.map((key) => ({ key, exerciseIds: [] as string[] }));
 
       /**
-       * The list of what could be drawn and the drawings themselves are
-       * independent: the slots are known, so the charts do not wait on the
-       * options. They used to, which put the whole depth of one read in front of
-       * the other for no reason.
+       * The list of what could be drawn and the drawings themselves, from one
+       * read of the readings.
+       *
+       * They were two independent paths, and each card inside the second was a
+       * further four reads of rows the first had already fetched. One read now
+       * serves all of them — see `athleteTrends`.
        */
-      const [options, charts] = await Promise.all([
-        athleteTrendOptions(ctx.db, ctx.tenant, subject),
-        Promise.all(slots.map((slot) => athleteTrend(ctx.db, ctx.tenant, subject, slot))),
-      ]);
+      const { options, charts } = await athleteTrends(ctx.db, ctx.tenant, subject, slots);
 
       return { options, charts, cards: stored, slots };
     }),

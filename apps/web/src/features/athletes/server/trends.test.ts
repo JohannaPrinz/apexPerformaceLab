@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { athleteTrend, athleteTrendOptions, CYCLE_TREND_KEY } from './trends';
+import { athleteTrends, CYCLE_TREND_KEY } from './trends';
 
 /**
  * One athlete's record over time.
@@ -67,15 +67,12 @@ function trendDb(
   };
   const exercise = { findMany: vi.fn(() => Promise.resolve(options.exercises ?? [])) };
   const measurementType = {
-    findFirst: vi.fn((args: { where: { key: string } }) => {
-      const known = options.knownKeys;
-      if (known !== undefined && known !== null && !known.includes(args.where.key)) {
-        return Promise.resolve(null);
-      }
-
-      return Promise.resolve({ name: `Katalog ${args.where.key}`, unit: 'kg' });
-    }),
-    /** The documentation keys, in one read rather than one query per key. */
+    /**
+     * The cards' quantities and the documentation keys — both by key list.
+     *
+     * There is no `findFirst` here any more, and that is the point of the
+     * batch: one read names every card, however many there are.
+     */
     findMany: vi.fn((args: { where: { key?: { in: string[] } } }) => {
       const known = options.knownKeys;
       const wanted = args.where.key?.in ?? [];
@@ -136,15 +133,28 @@ function trendDb(
     exercise,
     measurementType,
     trackingEntry,
-  } as unknown as Parameters<typeof athleteTrend>[0];
+  } as unknown as Parameters<typeof athleteTrends>[0];
 
   return { db, measurement, bleedingEpisode, exercise, measurementType, trackingEntry };
 }
 
-const argsOf = (spy: { mock: { calls: unknown[][] } }) =>
-  (spy.mock.calls[0]?.[0] ?? {}) as { where?: Record<string, unknown>; orderBy?: unknown };
+const argsOf = (spy: { mock: { calls: unknown[][] } }, index = 0) =>
+  (spy.mock.calls[index]?.[0] ?? {}) as { where?: Record<string, unknown>; orderBy?: unknown };
 
 const keysOf = (options: readonly { key: string }[]) => options.map((option) => option.key);
+
+type Fixture = Parameters<typeof athleteTrends>[0];
+type Tenant = Parameters<typeof athleteTrends>[1];
+type Subject = Parameters<typeof athleteTrends>[2];
+type Selection = Parameters<typeof athleteTrends>[3][number];
+
+/** Which cards this athlete may be given — no card asked for. */
+const optionsFor = async (db: Fixture, tenant: Tenant, athlete: Subject) =>
+  (await athleteTrends(db, tenant, athlete, [])).options;
+
+/** The one card behind one selection. */
+const chartFor = async (db: Fixture, tenant: Tenant, athlete: Subject, selection: Selection) =>
+  (await athleteTrends(db, tenant, athlete, [selection])).charts[0];
 
 describe('which cards an athlete may be given', () => {
   it('offers a quantity they have values for, keyed by its catalogue key', async () => {
@@ -152,7 +162,7 @@ describe('which cards an athlete may be given', () => {
     // lets a card be offered before the value exists.
     const { db } = trendDb({ rows: [row()] });
 
-    expect(await athleteTrendOptions(db, TENANT, MALE)).toContainEqual({
+    expect(await optionsFor(db, TENANT, MALE)).toContainEqual({
       key: 'weight',
       kind: 'measurement',
       name: 'Weight',
@@ -165,7 +175,7 @@ describe('which cards an athlete may be given', () => {
   it('offers body weight and body fat before anything is recorded', async () => {
     // A card that only appeared once a value existed would be a card nobody
     // could use to start tracking one.
-    const options = await athleteTrendOptions(trendDb({ rows: [] }).db, TENANT, MALE);
+    const options = await optionsFor(trendDb({ rows: [] }).db, TENANT, MALE);
 
     // The two table cards are offered on the same reasoning and for the same
     // reason: nobody can start writing a week down against a card that is not
@@ -179,7 +189,7 @@ describe('which cards an athlete may be given', () => {
     // inventing a name for it would be worse than leaving the card out.
     const { db } = trendDb({ rows: [], knownKeys: [] });
 
-    expect(await athleteTrendOptions(db, TENANT, MALE)).toEqual([]);
+    expect(await optionsFor(db, TENANT, MALE)).toEqual([]);
   });
 
   it('leaves a non-numeric quantity out', async () => {
@@ -194,7 +204,7 @@ describe('which cards an athlete may be given', () => {
       ],
     });
 
-    expect(keysOf(await athleteTrendOptions(db, TENANT, MALE))).not.toContain('movement_quality');
+    expect(keysOf(await optionsFor(db, TENANT, MALE))).not.toContain('movement_quality');
   });
 
   it('names the movements a quantity was recorded with', async () => {
@@ -210,7 +220,7 @@ describe('which cards an athlete may be given', () => {
       ],
     });
 
-    const option = (await athleteTrendOptions(db, TENANT, MALE)).find(
+    const option = (await optionsFor(db, TENANT, MALE)).find(
       (entry) => entry.key === 'external_load',
     );
 
@@ -225,13 +235,13 @@ describe('which cards an athlete may be given', () => {
     // bleeding existed left no way to record the first one.
     const { db } = trendDb({ rows: [], episodes: [] });
 
-    expect(keysOf(await athleteTrendOptions(db, TENANT, ATHLETE))).toContain(CYCLE_TREND_KEY);
+    expect(keysOf(await optionsFor(db, TENANT, ATHLETE))).toContain(CYCLE_TREND_KEY);
   });
 
   it('does not offer it where the sex says otherwise', async () => {
     const { db } = trendDb({ rows: [], episodes: [] });
 
-    expect(keysOf(await athleteTrendOptions(db, TENANT, MALE))).not.toContain(CYCLE_TREND_KEY);
+    expect(keysOf(await optionsFor(db, TENANT, MALE))).not.toContain(CYCLE_TREND_KEY);
   });
 
   it('still offers it where something is already documented', async () => {
@@ -241,13 +251,13 @@ describe('which cards an athlete may be given', () => {
       episodes: [{ id: 'ep_1', startedOn: day('2026-03-04'), endedOn: null }],
     });
 
-    expect(keysOf(await athleteTrendOptions(db, TENANT, MALE))).toContain(CYCLE_TREND_KEY);
+    expect(keysOf(await optionsFor(db, TENANT, MALE))).toContain(CYCLE_TREND_KEY);
   });
 
   it('asks only for readings that still stand, from tests still in view', async () => {
     const { db, measurement } = trendDb({ rows: [] });
 
-    await athleteTrendOptions(db, TENANT, MALE);
+    await optionsFor(db, TENANT, MALE);
 
     expect(argsOf(measurement.findMany).where).toMatchObject({
       supersededById: null,
@@ -270,7 +280,7 @@ describe('the points behind one card', () => {
       ],
     });
 
-    const chart = await athleteTrend(db, TENANT, MALE, weight);
+    const chart = await chartFor(db, TENANT, MALE, weight);
 
     expect(chart?.series).toHaveLength(1);
     expect(chart?.series[0]?.points.map((point) => point.value)).toEqual([66, 64.5]);
@@ -295,7 +305,7 @@ describe('the points behind one card', () => {
       ],
     });
 
-    const chart = await athleteTrend(db, TENANT, MALE, { key: 'lactate', exerciseIds: [] });
+    const chart = await chartFor(db, TENANT, MALE, { key: 'lactate', exerciseIds: [] });
 
     expect(chart?.series).toHaveLength(2);
     expect(chart?.series[0]?.points).toHaveLength(2);
@@ -305,7 +315,7 @@ describe('the points behind one card', () => {
   it('keeps left and right apart', async () => {
     const { db } = trendDb({ rows: [row({ side: 'LEFT' }), row({ side: 'RIGHT' })] });
 
-    const chart = await athleteTrend(db, TENANT, MALE, weight);
+    const chart = await chartFor(db, TENANT, MALE, weight);
 
     expect(chart?.series.map((series) => series.label)).toEqual(['Links', 'Rechts']);
   });
@@ -319,38 +329,83 @@ describe('the points behind one card', () => {
       ],
     });
 
-    const chart = await athleteTrend(db, TENANT, MALE, weight);
+    const chart = await chartFor(db, TENANT, MALE, weight);
 
     expect(chart?.series.map((series) => series.label)).toEqual(['Bankdrücken', 'Kreuzheben']);
   });
 
   it('narrows to the movements that were chosen', async () => {
-    const { db, measurement } = trendDb({ rows: [row({ exerciseId: 'ex_bench' })] });
-
-    await athleteTrend(db, TENANT, MALE, { key: 'external_load', exerciseIds: ['ex_bench'] });
-
-    expect(argsOf(measurement.findMany).where).toMatchObject({
-      measurementType: { key: 'external_load' },
-      exerciseId: { in: ['ex_bench'] },
-    });
-  });
-
-  it('still offers the movements it is not narrowed to', async () => {
-    // Otherwise narrowing to one lift would hide the way back to the others.
+    // The narrowing moved out of the `WHERE` and into memory, so what it does
+    // is asserted on the points rather than on the query: only the chosen lift
+    // is drawn, and a reading that belongs to no lift is not smuggled in.
+    const load = { key: 'external_load', name: 'External Load', unit: 'kg' };
     const { db, measurement } = trendDb({
-      rows: [row({ exerciseId: 'ex_bench' })],
+      rows: [
+        row({ exerciseId: 'ex_bench', numericValue: 100, measurementType: load }),
+        row({ exerciseId: 'ex_dead', numericValue: 140, measurementType: load }),
+        row({ exerciseId: null, numericValue: 80, measurementType: load }),
+      ],
       exercises: [
         { id: 'ex_bench', name: 'Bankdrücken' },
         { id: 'ex_dead', name: 'Kreuzheben' },
       ],
     });
 
-    const chart = await athleteTrend(db, TENANT, MALE, {
+    const chart = await chartFor(db, TENANT, MALE, {
       key: 'external_load',
       exerciseIds: ['ex_bench'],
     });
 
-    expect(measurement.findMany).toHaveBeenCalledTimes(2);
+    expect(chart?.series.map((series) => series.label)).toEqual(['Bankdrücken']);
+    expect(chart?.series.flatMap((series) => series.points.map((point) => point.value))).toEqual([
+      100,
+    ]);
+    expect(measurement.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws only the quantity it is a card for', async () => {
+    // Every reading now arrives in one list, so the key that used to be a
+    // `WHERE` has to keep the cards apart in memory.
+    const { db } = trendDb({
+      rows: [
+        row({ numericValue: 64.5 }),
+        row({
+          numericValue: 12,
+          measurementTypeId: 'mt_fat',
+          measurementType: { key: 'body_fat', name: 'Body Fat', unit: '%' },
+        }),
+      ],
+    });
+
+    const chart = await chartFor(db, TENANT, MALE, { key: 'weight', exerciseIds: [] });
+
+    expect(chart?.series.flatMap((series) => series.points.map((point) => point.value))).toEqual([
+      64.5,
+    ]);
+  });
+
+  it('still offers the movements it is not narrowed to', async () => {
+    // Otherwise narrowing to one lift would hide the way back to the others.
+    const load = { key: 'external_load', name: 'External Load', unit: 'kg' };
+    const { db, measurement } = trendDb({
+      rows: [
+        row({ exerciseId: 'ex_bench', measurementType: load }),
+        row({ exerciseId: 'ex_dead', measurementType: load }),
+      ],
+      exercises: [
+        { id: 'ex_bench', name: 'Bankdrücken' },
+        { id: 'ex_dead', name: 'Kreuzheben' },
+      ],
+    });
+
+    const chart = await chartFor(db, TENANT, MALE, {
+      key: 'external_load',
+      exerciseIds: ['ex_bench'],
+    });
+
+    // The wider list was a second read of the same rows. It is now the same
+    // rows.
+    expect(measurement.findMany).toHaveBeenCalledTimes(1);
     expect(chart?.exercises.map((exercise) => exercise.name).sort()).toEqual([
       'Bankdrücken',
       'Kreuzheben',
@@ -366,7 +421,7 @@ describe('the points behind one card', () => {
       ],
     });
 
-    const chart = await athleteTrend(db, TENANT, MALE, weight);
+    const chart = await chartFor(db, TENANT, MALE, weight);
 
     expect(chart?.series[0]?.points.map((point) => point.value)).toEqual([66, 63]);
   });
@@ -375,7 +430,7 @@ describe('the points behind one card', () => {
     // What lets a coach add "body weight" before there is a body weight.
     const { db } = trendDb({ rows: [] });
 
-    const chart = await athleteTrend(db, TENANT, MALE, weight);
+    const chart = await chartFor(db, TENANT, MALE, weight);
 
     expect(chart).not.toBeNull();
     expect(chart?.series).toEqual([]);
@@ -385,14 +440,20 @@ describe('the points behind one card', () => {
   it('is nothing at all for a key this workspace does not know', async () => {
     const { db } = trendDb({ rows: [], knownKeys: [] });
 
-    expect(await athleteTrend(db, TENANT, MALE, { key: 'erfunden', exerciseIds: [] })).toBeNull();
+    expect(await chartFor(db, TENANT, MALE, { key: 'erfunden', exerciseIds: [] })).toBeNull();
   });
 
   it('is nothing at all for an unfilled card', async () => {
-    const { db, measurement } = trendDb({ rows: [row()] });
+    const { db, measurementType, trackingEntry } = trendDb({ rows: [row()] });
 
-    expect(await athleteTrend(db, TENANT, MALE, { key: '', exerciseIds: [] })).toBeNull();
-    expect(measurement.findMany).not.toHaveBeenCalled();
+    expect(await chartFor(db, TENANT, MALE, { key: '', exerciseIds: [] })).toBeNull();
+
+    // Nothing is asked on its behalf: it is not among the keys the card read
+    // names, and no self-report is fetched for it.
+    expect(trackingEntry.findMany).not.toHaveBeenCalled();
+    for (const call of measurementType.findMany.mock.calls) {
+      expect(call[0].where.key?.in ?? []).not.toContain('');
+    }
   });
 
   it('computes no trend line, average or rate of change', async () => {
@@ -400,7 +461,7 @@ describe('the points behind one card', () => {
     // not record.
     const { db } = trendDb({ rows: [row(), row({ capturedAt: day('2026-05-01') })] });
 
-    const chart = await athleteTrend(db, TENANT, MALE, weight);
+    const chart = await chartFor(db, TENANT, MALE, weight);
 
     expect(Object.keys(chart ?? {}).sort()).toEqual([
       'episodes',
@@ -430,7 +491,7 @@ describe('the documented bleedings', () => {
       ],
     });
 
-    const chart = await athleteTrend(db, TENANT, ATHLETE, cycle);
+    const chart = await chartFor(db, TENANT, ATHLETE, cycle);
 
     expect(chart?.kind).toBe('cycle');
     expect(chart?.title).toBe('Zyklus');
@@ -442,7 +503,7 @@ describe('the documented bleedings', () => {
     // The card is how a bleeding gets recorded in the first place.
     const { db } = trendDb({ episodes: [] });
 
-    const chart = await athleteTrend(db, TENANT, ATHLETE, cycle);
+    const chart = await chartFor(db, TENANT, ATHLETE, cycle);
 
     expect(chart).not.toBeNull();
     expect(chart?.episodes).toEqual([]);
@@ -453,19 +514,25 @@ describe('the documented bleedings', () => {
       episodes: [{ id: 'ep_1', startedOn: day('2026-03-04'), endedOn: null }],
     });
 
-    const chart = await athleteTrend(db, TENANT, ATHLETE, cycle);
+    const chart = await chartFor(db, TENANT, ATHLETE, cycle);
 
     expect(chart?.series).toEqual([]);
     // What the calendar shows is asserted against the month read, in
     // `features/cycle/server/month.test.ts`, where the days actually come from.
   });
 
-  it('reads no measurement at all for it', async () => {
-    const { db, measurement } = trendDb({ episodes: [] });
+  it('reads nothing of its own', async () => {
+    // The readings are read for the options list, as they always were. What the
+    // cycle card must not add is a read of its own — no quantity to name, no
+    // self-reports.
+    const { db, measurementType, trackingEntry } = trendDb({ episodes: [] });
 
-    await athleteTrend(db, TENANT, ATHLETE, cycle);
+    await chartFor(db, TENANT, ATHLETE, cycle);
 
-    expect(measurement.findMany).not.toHaveBeenCalled();
+    expect(trackingEntry.findMany).not.toHaveBeenCalled();
+    for (const call of measurementType.findMany.mock.calls) {
+      expect(call[0].where.key?.in ?? []).not.toContain(CYCLE_TREND_KEY);
+    }
   });
 });
 
@@ -477,7 +544,7 @@ describe('the workspace boundary', () => {
   it('scopes the options read', async () => {
     const { db, measurement, bleedingEpisode } = trendDb({ rows: [] });
 
-    await athleteTrendOptions(db, OTHER, ATHLETE);
+    await optionsFor(db, OTHER, ATHLETE);
 
     expect(argsOf(measurement.findMany).where).toMatchObject({ organizationId: 'org_b' });
     expect(argsOf(bleedingEpisode.count).where).toMatchObject({ organizationId: 'org_b' });
@@ -486,7 +553,7 @@ describe('the workspace boundary', () => {
   it('scopes the points read', async () => {
     const { db, measurement } = trendDb({ rows: [row()] });
 
-    await athleteTrend(db, OTHER, MALE, { key: 'weight', exerciseIds: [] });
+    await chartFor(db, OTHER, MALE, { key: 'weight', exerciseIds: [] });
 
     expect(argsOf(measurement.findMany).where).toMatchObject({ organizationId: 'org_b' });
   });
@@ -500,7 +567,7 @@ describe('the workspace boundary', () => {
       episodes: [{ id: 'ep_1', startedOn: day('2026-03-04'), endedOn: null }],
     });
 
-    await athleteTrendOptions(db, OTHER, MALE);
+    await optionsFor(db, OTHER, MALE);
 
     expect(argsOf(bleedingEpisode.count).where).toMatchObject({
       organizationId: 'org_b',
@@ -516,12 +583,18 @@ describe('the workspace boundary', () => {
       exercises: [{ id: 'ex_bench', name: 'Bankdrücken' }],
     });
 
-    await athleteTrend(db, OTHER, MALE, { key: 'external_load', exerciseIds: [] });
+    await chartFor(db, OTHER, MALE, { key: 'external_load', exerciseIds: [] });
 
-    for (const spy of [exercise.findMany, measurementType.findFirst]) {
+    // Every type read carries it, the cards' one included — that read is the
+    // first, because it starts in the same wave as the readings themselves.
+    for (const spy of [exercise.findMany, measurementType.findMany]) {
       expect(argsOf(spy).where).toMatchObject({
         OR: [{ organizationId: 'org_b' }, { organizationId: null }],
       });
     }
+
+    expect(argsOf(measurementType.findMany).where).toMatchObject({
+      key: { in: ['external_load'] },
+    });
   });
 });
