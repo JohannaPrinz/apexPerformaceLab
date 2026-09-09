@@ -11,7 +11,7 @@ import {
 } from '@apex/domain';
 import { AppError } from '@apex/types';
 
-import { measurementChart, MODULE_LABELS_DE } from '@/features/assessments';
+import { measurementCharts, MODULE_LABELS_DE } from '@/features/assessments';
 import { createTRPCRouter, withCoachPermission, withPermission } from '@/server/api/trpc';
 
 import {
@@ -139,15 +139,18 @@ export const reportsRouter = createTRPCRouter({
             keys: await listAnalysisStills(ctx.tenant, entry.moduleId),
           })),
         ),
-        Promise.all(
-          evaluation.modules.map(async (entry) =>
-            entry.included
-              ? {
-                  moduleId: entry.moduleId,
-                  groups: await measurementChart(ctx.db, ctx.tenant, entry.moduleId),
-                }
-              : { moduleId: entry.moduleId, groups: null },
-          ),
+        /**
+         * Every curve from one read.
+         *
+         * Only the included tests: an analysis draws the tests it draws on, and
+         * fetching an excluded one would be work for a picture nobody sees.
+         * They used to be a fan-out of six queries per test over the same
+         * athlete — one read now answers all of them (§16).
+         */
+        measurementCharts(
+          ctx.db,
+          ctx.tenant,
+          evaluation.modules.filter((entry) => entry.included).map((entry) => entry.moduleId),
         ),
       ]);
 
@@ -182,17 +185,12 @@ export const reportsRouter = createTRPCRouter({
         }),
       );
 
-      // Only the included tests get a curve: an analysis draws the tests it
-      // draws on, and a query per excluded test would be work for a picture
-      // nobody sees.
-      const chartsOf = new Map(curves.map((entry) => [entry.moduleId, entry.groups ?? []]));
-
       return {
         ...evaluation,
         modules: evaluation.modules.map((entry) => ({
           ...entry,
           offeredStills: byModule.get(entry.moduleId) ?? [],
-          charts: chartsOf.get(entry.moduleId) ?? [],
+          charts: curves.get(entry.moduleId) ?? [],
         })),
       };
     }),
@@ -298,13 +296,19 @@ export const reportsRouter = createTRPCRouter({
       const frozen = await freezeReportMedia(input.reportId, included);
 
       // The same curves the coach was looking at, frozen with the document: a
-      // staged test read without them is a column of numbers.
-      const withCurves = await Promise.all(
-        included.map(async (entry) => ({
-          moduleId: entry.moduleId,
-          charts: (await measurementChart(ctx.db, ctx.tenant, entry.moduleId)) ?? [],
-        })),
+      // staged test read without them is a column of numbers. Through the same
+      // batched read the screen uses, so the frozen curves cannot differ from
+      // the ones that were on screen.
+      const drawn = await measurementCharts(
+        ctx.db,
+        ctx.tenant,
+        included.map((entry) => entry.moduleId),
       );
+
+      const withCurves = included.map((entry) => ({
+        moduleId: entry.moduleId,
+        charts: drawn.get(entry.moduleId) ?? [],
+      }));
 
       const result = await publishReport(
         ctx.db,

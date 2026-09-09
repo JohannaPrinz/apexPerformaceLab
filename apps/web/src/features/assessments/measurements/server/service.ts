@@ -880,21 +880,112 @@ export async function saveStage(
   }
 }
 
+/** What the table and the diagram of one test are both built from. */
+const comparableSelect = {
+  id: true,
+  measurementTypeId: true,
+  side: true,
+  exerciseId: true,
+  passIndex: true,
+  context: true,
+  numericValue: true,
+  textValue: true,
+  booleanValue: true,
+  capturedAt: true,
+  source: true,
+  assessmentModule: {
+    select: {
+      id: true,
+      name: true,
+      status: true,
+      assessmentId: true,
+      // Which test type this reading belongs to. A scalar on a relation that is
+      // already selected, so it costs nothing — and it is what tells one
+      // batched test's readings from another's without a second read.
+      moduleKey: true,
+      // The protocol's own answer to "what did this stage demand". Read
+      // here so the diagram never has to ask a second time.
+      payload: true,
+      moduleVersion: true,
+      // The examination this test sat in used to be selected here for its
+      // question. Neither the diagram nor the table has ever read it, and a
+      // relation two levels down is a round trip of its own — so it is gone.
+    },
+  },
+  measurementType: { select: { name: true, unit: true, valueType: true } },
+} as const;
+
 /**
- * Every standing measurement that may be compared with this test's.
+ * One athlete's standing readings of the given test types.
+ *
+ * A named function rather than an inline call so the row type below can be
+ * derived from it, instead of being written out a second time and drifting.
+ */
+function readComparable(
+  db: MeasurementDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  athleteId: string,
+  moduleKeys: readonly string[],
+) {
+  return db.measurement.findMany({
+    where: scoped(tenant, {
+      // A superseded reading is history, not a point on the curve (§13).
+      supersededById: null,
+      assessmentModule: {
+        moduleKey: { in: [...moduleKeys] },
+        archivedAt: null,
+        assessment: { case: { athleteId } },
+      },
+    }),
+    select: comparableSelect,
+    orderBy: [{ capturedAt: 'asc' }, { id: 'asc' }],
+  });
+}
+
+type ComparableRow = Awaited<ReturnType<typeof readComparable>>[number];
+
+interface Comparable {
+  readonly current: {
+    readonly id: string;
+    readonly moduleKey: string;
+    readonly assessment: { readonly case: { readonly athleteId: string } };
+  };
+  readonly rows: readonly ComparableRow[];
+  readonly exerciseNames: ReadonlyMap<string, string>;
+}
+
+/**
+ * Every standing measurement that may be compared with these tests'.
  *
  * The one place the tenant rule, the supersede rule, the archive rule and the
  * "same type, same athlete" rule are stated. Both the table and the diagram
  * read from here, so neither can quietly disagree with the other about what
  * belongs in an evaluation.
+ *
+ * ## Why it takes a list
+ *
+ * An analysis draws every test it includes, and each of them used to come here
+ * on its own: the test, its readings, and the movements they name — six queries
+ * apiece once Prisma split the relations out. Eight tests were forty-eight
+ * queries in one wave, all asking about the same athlete.
+ *
+ * They are answered together now. The readings are read **once per athlete**
+ * rather than once per test, because that is what the filter actually turns on:
+ * every test of one analysis belongs to one assessment and therefore to one
+ * athlete, so in practice this is a single read. Grouping by athlete rather
+ * than assuming one is what keeps the split exact — a caller that mixed two
+ * athletes would still get each one's readings and never the other's.
  */
-async function comparableMeasurements(
+async function comparableMeasurementsFor(
   db: MeasurementDb,
   tenant: Pick<TenantContext, 'organizationId'>,
-  moduleId: string,
-) {
-  const current = await db.assessmentModule.findFirst({
-    where: scoped(tenant, { id: moduleId }),
+  moduleIds: readonly string[],
+): Promise<ReadonlyMap<string, Comparable>> {
+  const wanted = [...new Set(moduleIds)];
+  if (wanted.length === 0) return new Map();
+
+  const modules = await db.assessmentModule.findMany({
+    where: scoped(tenant, { id: { in: wanted } }),
     select: {
       id: true,
       moduleKey: true,
@@ -902,51 +993,33 @@ async function comparableMeasurements(
     },
   });
 
-  if (!current) return null;
+  if (modules.length === 0) return new Map();
 
-  const rows = await db.measurement.findMany({
-    where: scoped(tenant, {
-      // A superseded reading is history, not a point on the curve (§13).
-      supersededById: null,
-      assessmentModule: {
-        moduleKey: current.moduleKey,
-        archivedAt: null,
-        assessment: { case: { athleteId: current.assessment.case.athleteId } },
-      },
-    }),
-    select: {
-      id: true,
-      measurementTypeId: true,
-      side: true,
-      exerciseId: true,
-      passIndex: true,
-      context: true,
-      numericValue: true,
-      textValue: true,
-      booleanValue: true,
-      capturedAt: true,
-      source: true,
-      assessmentModule: {
-        select: {
-          id: true,
-          name: true,
-          status: true,
-          assessmentId: true,
-          // The protocol's own answer to "what did this stage demand". Read
-          // here so the diagram never has to ask a second time.
-          payload: true,
-          moduleVersion: true,
-          assessment: { select: { question: true } },
-        },
-      },
-      measurementType: { select: { name: true, unit: true, valueType: true } },
-    },
-    orderBy: [{ capturedAt: 'asc' }, { id: 'asc' }],
-  });
+  /** Which test types to fetch for which athlete — the filter, deduplicated. */
+  const keysByAthlete = new Map<string, Set<string>>();
+  for (const test of modules) {
+    const athleteId = test.assessment.case.athleteId;
+    const found = keysByAthlete.get(athleteId);
 
-  const exerciseIds = [...new Set(rows.map((row) => row.exerciseId))].filter(
-    (id): id is string => id !== null,
+    if (found) found.add(test.moduleKey);
+    else keysByAthlete.set(athleteId, new Set([test.moduleKey]));
+  }
+
+  const readings = await Promise.all(
+    [...keysByAthlete.entries()].map(async ([athleteId, keys]) => ({
+      athleteId,
+      rows: await readComparable(db, tenant, athleteId, [...keys]),
+    })),
   );
+
+  const rowsByAthlete = new Map(readings.map((entry) => [entry.athleteId, entry.rows]));
+
+  // The movements every one of these readings names, in one read. A superset of
+  // what any single test needs, which is what a lookup by id wants anyway.
+  const exerciseIds = [
+    ...new Set(readings.flatMap((entry) => entry.rows.map((row) => row.exerciseId))),
+  ].filter((id): id is string => id !== null);
+
   const exercises =
     exerciseIds.length > 0
       ? await db.exercise.findMany({
@@ -961,7 +1034,30 @@ async function comparableMeasurements(
       : [];
   const exerciseNames = new Map(exercises.map((exercise) => [exercise.id, exercise.name]));
 
-  return { current, rows, exerciseNames };
+  const loaded = new Map<string, Comparable>();
+
+  for (const test of modules) {
+    const athleteRows = rowsByAthlete.get(test.assessment.case.athleteId) ?? [];
+
+    loaded.set(test.id, {
+      current: test,
+      // The same set the per-test filter selected: this athlete's standing
+      // readings of this test type, in the order the read returned them.
+      rows: athleteRows.filter((row) => row.assessmentModule.moduleKey === test.moduleKey),
+      exerciseNames,
+    });
+  }
+
+  return loaded;
+}
+
+/** The same, for one test. A test that is not there answers `null`. */
+async function comparableMeasurements(
+  db: MeasurementDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  moduleId: string,
+): Promise<Comparable | null> {
+  return (await comparableMeasurementsFor(db, tenant, [moduleId])).get(moduleId) ?? null;
 }
 
 /** One series of a test, as the overview shows it. */
@@ -1215,9 +1311,40 @@ export async function measurementChart(
   tenant: Pick<TenantContext, 'organizationId'>,
   moduleId: string,
 ): Promise<ChartGroup[] | null> {
-  const loaded = await comparableMeasurements(db, tenant, moduleId);
-  if (loaded === null) return null;
+  return (await measurementCharts(db, tenant, [moduleId])).get(moduleId) ?? null;
+}
 
+/**
+ * The same, for every test of one analysis.
+ *
+ * ## Why this exists beside the one above
+ *
+ * The analysis screen draws a curve per included test, and each of them used to
+ * make its own trip: the test, then this athlete's readings of that test type,
+ * then the movements they name — six queries apiece once Prisma split the
+ * relations out of the nested selects. Eight tests were forty-eight queries in
+ * a single wave, every one of them asking about the same athlete.
+ *
+ * The reading is now done once for all of them and the tests are built from it
+ * in memory. **Nothing about a curve changes** — each test is still grouped,
+ * ordered and drawn by exactly the rules below, from exactly the rows its own
+ * filter would have returned.
+ *
+ * A test that is not in this workspace is absent from the answer rather than
+ * mapped to `null`, so a caller can still tell "no curve" from "no such test".
+ */
+export async function measurementCharts(
+  db: MeasurementDb,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  moduleIds: readonly string[],
+): Promise<ReadonlyMap<string, ChartGroup[]>> {
+  const loaded = await comparableMeasurementsFor(db, tenant, moduleIds);
+
+  return new Map([...loaded.entries()].map(([id, entry]) => [id, chartsFrom(entry)]));
+}
+
+/** One test's diagrams, from readings that are already in hand. */
+function chartsFrom(loaded: Comparable): ChartGroup[] {
   const { current, rows, exerciseNames } = loaded;
 
   /** Every value of one test at one stage, so the other quantities are reachable. */

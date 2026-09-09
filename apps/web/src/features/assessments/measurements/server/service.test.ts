@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { measurementChart, moduleWorkspace, recordMeasurements } from './service';
+import {
+  measurementChart,
+  measurementCharts,
+  moduleWorkspace,
+  recordMeasurements,
+} from './service';
 
 /**
  * Saving a whole stage at once.
@@ -330,6 +335,7 @@ interface HistoryRow {
     name: string | null;
     status: string;
     assessmentId: string;
+    moduleKey: string;
     assessment: { question: string };
   };
   measurementType: { name: string; unit: string; valueType: string };
@@ -350,6 +356,7 @@ const point = (over: Partial<HistoryRow> & { id: string }): HistoryRow => ({
     name: 'Laufen – Laktat',
     status: 'COMPLETED',
     assessmentId: 'as_1',
+    moduleKey: 'lactate',
     assessment: { question: 'Wo liegt die Schwelle?' },
   },
   measurementType: { name: 'Laktat', unit: 'mmol/L', valueType: 'NUMERIC' },
@@ -362,21 +369,26 @@ const laterModule = (assessmentId: string, over: Partial<HistoryRow['assessmentM
   name: 'Laufen – Laktat',
   status: 'COMPLETED',
   assessmentId,
+  moduleKey: 'lactate',
   assessment: { question: 'Wo liegt die Schwelle?' },
   ...over,
 });
 
-function historyDb(rows: HistoryRow[], over: { moduleFound?: boolean } = {}) {
+/** The tests an analysis asks about, as the batched lookup answers them. */
+const testRecord = (id: string, moduleKey = 'lactate', athleteId = 'ath_1') => ({
+  id,
+  moduleKey,
+  assessment: { case: { athleteId } },
+});
+
+function historyDb(
+  rows: HistoryRow[],
+  over: { moduleFound?: boolean; modules?: ReturnType<typeof testRecord>[] } = {},
+) {
   const assessmentModule = {
-    findFirst: vi.fn<(args: QueryArgs) => Promise<unknown>>().mockResolvedValue(
-      over.moduleFound === false
-        ? null
-        : {
-            id: 'mod_1',
-            moduleKey: 'lactate',
-            assessment: { case: { athleteId: 'ath_1' } },
-          },
-    ),
+    findMany: vi
+      .fn<(args: QueryArgs) => Promise<unknown[]>>()
+      .mockResolvedValue(over.moduleFound === false ? [] : (over.modules ?? [testRecord('mod_1')])),
   };
 
   const measurement = {
@@ -565,7 +577,7 @@ describe('drawing the stages of a test', () => {
       supersededById: null,
       assessmentModule: {
         archivedAt: null,
-        moduleKey: 'lactate',
+        moduleKey: { in: ['lactate'] },
         assessment: { case: { athleteId: 'ath_1' } },
       },
     });
@@ -584,7 +596,7 @@ describe('drawing the stages of a test', () => {
 
     await measurementChart(db, HISTORY_OTHER, 'mod_1');
 
-    expect(argsOf(assessmentModule.findFirst).where).toMatchObject({ organizationId: 'org_b' });
+    expect(argsOf(assessmentModule.findMany).where).toMatchObject({ organizationId: 'org_b' });
     expect(argsOf(measurement.findMany).where).toMatchObject({ organizationId: 'org_b' });
   });
 
@@ -660,6 +672,7 @@ describe('the load the protocol declares', () => {
       name: 'Laufen – Laktat',
       status: 'COMPLETED',
       assessmentId: 'as_1',
+      moduleKey: 'lactate',
       payload,
       moduleVersion: 2,
       assessment: { question: 'Wo liegt die Schwelle?' },
@@ -715,5 +728,207 @@ describe('the load the protocol declares', () => {
     const charts = (await measurementChart(db, HISTORY_TENANT, 'mod_1')) ?? [];
 
     expect(charts.find((chart) => chart.typeName === 'Laktat')?.defaultLoadId).toBeNull();
+  });
+});
+
+/**
+ * Every curve of one analysis, from one read.
+ *
+ * The analysis screen draws a curve per included test, and each of them used to
+ * make its own trip: the test, this athlete's readings of that test type, and
+ * the movements they name — six queries apiece once Prisma split the relations
+ * out of the nested selects. A measured render with eight tests spent 48
+ * queries in a single wave, all of them asking about the same athlete.
+ *
+ * Two things are asserted here, and both are needed. That the count no longer
+ * moves with the number of tests — the regression this exists to prevent — and
+ * that every test still gets exactly its own curves, because a batch that mixed
+ * two tests' readings would also look constant.
+ */
+describe('drawing every test of one analysis', () => {
+  /** One stage of one test, in the shape the batched read returns. */
+  const reading = (
+    moduleId: string,
+    moduleKey: string,
+    passIndex: number,
+    value: number,
+    over: Partial<HistoryRow> = {},
+  ): HistoryRow =>
+    point({
+      id: `${moduleId}_${moduleKey}_${String(passIndex)}`,
+      passIndex,
+      numericValue: value,
+      assessmentModule: {
+        id: moduleId,
+        name: `Test ${moduleKey}`,
+        status: 'COMPLETED',
+        assessmentId: 'as_1',
+        moduleKey,
+        assessment: { question: 'Wo liegt die Schwelle?' },
+      },
+      ...over,
+    });
+
+  /** A test type with two stages, which is the least that makes a curve. */
+  const testWith = (moduleId: string, moduleKey: string, over: Partial<HistoryRow> = {}) => [
+    reading(moduleId, moduleKey, 1, 2, over),
+    reading(moduleId, moduleKey, 2, 3, over),
+  ];
+
+  const eight = Array.from({ length: 8 }, (_, index) => ({
+    moduleId: `mod_${String(index + 1)}`,
+    moduleKey: `key_${String(index + 1)}`,
+  }));
+
+  it('draws the one test an analysis includes', async () => {
+    const { db } = historyDb(testWith('mod_1', 'lactate'));
+
+    const drawn = await measurementCharts(db, HISTORY_TENANT, ['mod_1']);
+
+    expect([...drawn.keys()]).toEqual(['mod_1']);
+    expect(drawn.get('mod_1')?.[0]?.series.map((entry) => entry.moduleId)).toEqual(['mod_1']);
+  });
+
+  it('draws eight without asking eight times', async () => {
+    const { db, assessmentModule, measurement, exercise } = historyDb(
+      eight.flatMap((entry) => testWith(entry.moduleId, entry.moduleKey)),
+      { modules: eight.map((entry) => testRecord(entry.moduleId, entry.moduleKey)) },
+    );
+
+    const drawn = await measurementCharts(
+      db,
+      HISTORY_TENANT,
+      eight.map((entry) => entry.moduleId),
+    );
+
+    expect([...drawn.keys()]).toEqual(eight.map((entry) => entry.moduleId));
+
+    // The whole point of the phase: one read of the tests, one of the readings,
+    // one of the movements — for eight tests as for one.
+    expect(assessmentModule.findMany).toHaveBeenCalledTimes(1);
+    expect(measurement.findMany).toHaveBeenCalledTimes(1);
+    expect(exercise.findMany.mock.calls.length).toBeLessThanOrEqual(1);
+  });
+
+  it('costs the same reads for eight tests as for one', async () => {
+    const reads = async (count: number) => {
+      const wanted = eight.slice(0, count);
+      const { db, assessmentModule, measurement, exercise } = historyDb(
+        wanted.flatMap((entry) => testWith(entry.moduleId, entry.moduleKey)),
+        { modules: wanted.map((entry) => testRecord(entry.moduleId, entry.moduleKey)) },
+      );
+
+      await measurementCharts(
+        db,
+        HISTORY_TENANT,
+        wanted.map((entry) => entry.moduleId),
+      );
+
+      return (
+        assessmentModule.findMany.mock.calls.length +
+        measurement.findMany.mock.calls.length +
+        exercise.findMany.mock.calls.length
+      );
+    };
+
+    // It used to be six per test — six for one, forty-eight for eight.
+    expect(await reads(8)).toBe(await reads(1));
+  });
+
+  it('asks for every test type in one filter, never one at a time', async () => {
+    const { db, measurement } = historyDb(
+      eight.flatMap((entry) => testWith(entry.moduleId, entry.moduleKey)),
+      { modules: eight.map((entry) => testRecord(entry.moduleId, entry.moduleKey)) },
+    );
+
+    await measurementCharts(
+      db,
+      HISTORY_TENANT,
+      eight.map((entry) => entry.moduleId),
+    );
+
+    // One read naming all eight types, with the tenant, supersede and archive
+    // rules exactly as a single test stated them.
+    expect(argsOf(measurement.findMany).where).toMatchObject({
+      organizationId: 'org_a',
+      supersededById: null,
+      assessmentModule: {
+        archivedAt: null,
+        moduleKey: { in: eight.map((entry) => entry.moduleKey) },
+        assessment: { case: { athleteId: 'ath_1' } },
+      },
+    });
+  });
+
+  it('gives each test only its own readings', async () => {
+    // The filter that used to be a `WHERE` per test is now a split in memory,
+    // so this is what stands between one curve and another one's points.
+    const { db } = historyDb([...testWith('mod_1', 'lactate'), ...testWith('mod_2', 'sprint')], {
+      modules: [testRecord('mod_1', 'lactate'), testRecord('mod_2', 'sprint')],
+    });
+
+    const drawn = await measurementCharts(db, HISTORY_TENANT, ['mod_1', 'mod_2']);
+
+    expect(drawn.get('mod_1')?.flatMap((c) => c.series.map((s) => s.moduleId))).toEqual(['mod_1']);
+    expect(drawn.get('mod_2')?.flatMap((c) => c.series.map((s) => s.moduleId))).toEqual(['mod_2']);
+  });
+
+  it('keeps two quantities of one test apart, each on its own axis', async () => {
+    const { db } = historyDb([
+      ...testWith('mod_1', 'lactate'),
+      ...testWith('mod_1', 'lactate', {
+        measurementTypeId: 'mt_pace',
+        measurementType: { name: 'Pace', unit: 'km/h', valueType: 'NUMERIC' },
+      }),
+    ]);
+
+    const drawn = await measurementCharts(db, HISTORY_TENANT, ['mod_1']);
+
+    expect(drawn.get('mod_1')?.map((chart) => [chart.typeName, chart.unit])).toEqual([
+      ['Laktat', 'mmol/L'],
+      ['Pace', 'km/h'],
+    ]);
+  });
+
+  it('leaves out a test this workspace does not have', async () => {
+    // Absent rather than mapped to an empty list, so a caller can still tell
+    // "no curve" from "no such test" — the answer `measurementChart` gives.
+    const { db } = historyDb(testWith('mod_1', 'lactate'));
+
+    const drawn = await measurementCharts(db, HISTORY_TENANT, ['mod_1', 'mod_weg']);
+
+    expect([...drawn.keys()]).toEqual(['mod_1']);
+    expect(drawn.get('mod_weg')).toBeUndefined();
+  });
+
+  it('answers nothing at all where no test is asked for', async () => {
+    const { db, assessmentModule, measurement } = historyDb([]);
+
+    expect(await measurementCharts(db, HISTORY_TENANT, [])).toEqual(new Map());
+    expect(assessmentModule.findMany).not.toHaveBeenCalled();
+    expect(measurement.findMany).not.toHaveBeenCalled();
+  });
+
+  it('draws each test exactly as it was drawn one at a time', async () => {
+    // The equivalence the phase rests on: the batched answer for every test
+    // matches what the single-test read produced for it.
+    const rows = eight.flatMap((entry) => testWith(entry.moduleId, entry.moduleKey));
+    const modules = eight.map((entry) => testRecord(entry.moduleId, entry.moduleKey));
+
+    const batched = await measurementCharts(
+      historyDb(rows, { modules }).db,
+      HISTORY_TENANT,
+      eight.map((entry) => entry.moduleId),
+    );
+
+    for (const entry of eight) {
+      const alone = await measurementChart(
+        historyDb(rows, { modules: [testRecord(entry.moduleId, entry.moduleKey)] }).db,
+        HISTORY_TENANT,
+        entry.moduleId,
+      );
+
+      expect(batched.get(entry.moduleId)).toEqual(alone);
+    }
   });
 });

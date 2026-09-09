@@ -23,7 +23,11 @@ export { ModuleCard, type ModuleCardData } from './components/module-card';
  * over the speed it was performed at — so it reads it through the same query
  * rather than assembling a second one.
  */
-export { measurementChart, type ChartGroup } from './measurements/server/service';
+export {
+  measurementChart,
+  measurementCharts,
+  type ChartGroup,
+} from './measurements/server/service';
 // The name every test an analysis opens for itself carries. The athlete's
 // profile needs it to tell "the coach named this" from "we named it".
 export { ANALYSIS_MODULE_NAME } from './server/analysis-target';
