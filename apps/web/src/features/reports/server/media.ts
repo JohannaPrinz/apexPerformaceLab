@@ -59,6 +59,84 @@ export async function listAnalysisStills(
 }
 
 /**
+ * How many working folders one workspace may have before this gives up counting.
+ *
+ * Generous: a folder exists only while an analysis is unpublished, and they
+ * expire after `ANALYSIS_TEMP_DAYS`. Reaching this would mean a thousand
+ * analyses in a fortnight, at which point the answer is treated as unknown
+ * rather than as "the rest have nothing".
+ */
+const MAX_WORKSPACE_FOLDERS = 1000;
+
+/**
+ * Which tests this workspace has left working files for — one listing.
+ *
+ * ## What it is for
+ *
+ * An analysis screen asks for the stills of every test it shows, and almost
+ * every one of those tests has none: stills exist only where a coach ran a
+ * video analysis. Eight tests were eight round trips to the object store, ~120
+ * ms each, to be told "nothing here" eight times.
+ *
+ * The temporary area is laid out `analysis-temp/{workspace}/{test}/…`, so the
+ * **folder names one level under the workspace are exactly the tests that have
+ * anything at all**. One listing answers for all of them, and it needs nothing
+ * but the workspace — so it can be started before the analysis itself has been
+ * read.
+ *
+ * ## Why it returns `null` rather than an empty set when in doubt
+ *
+ * `null` means "not answered", and the caller then asks per test as before. It
+ * happens where the listing may be incomplete — a workspace with more folders
+ * than the ceiling above — because a truncated list would silently turn "I did
+ * not see it" into "it does not exist", and hide a coach's pictures.
+ *
+ * A workspace with **no** bucket configured answers with an empty set, not
+ * `null`: there is genuinely nothing to find, which is what the per-test read
+ * would have concluded too.
+ */
+export async function analysisStillTests(
+  tenant: Pick<TenantContext, 'organizationId'>,
+): Promise<ReadonlySet<string> | null> {
+  const folders = await listFolders(
+    analysisWorkspaceFolder(tenant.organizationId),
+    MAX_WORKSPACE_FOLDERS,
+  );
+
+  if (folders.length >= MAX_WORKSPACE_FOLDERS) return null;
+
+  // `listFolders` answers with whole paths; the last segment is the test.
+  return new Set(folders.map((folder) => folder.slice(folder.lastIndexOf('/') + 1)));
+}
+
+/**
+ * The stills of several tests, asking the store only where there can be any.
+ *
+ * `withFiles` is what `analysisStillTests` found. A test that is not in it is
+ * answered with an empty list **without a round trip** — the store has already
+ * said it has no folder for that test. Where the set is `null` the question was
+ * not answered, and every test is asked individually, exactly as before.
+ *
+ * The answer per test is the same list `listAnalysisStills` gives, in the same
+ * order, so nothing downstream can tell which route it came by.
+ */
+export async function analysisStillsFor(
+  tenant: Pick<TenantContext, 'organizationId'>,
+  moduleIds: readonly string[],
+  withFiles: ReadonlySet<string> | null,
+): Promise<ReadonlyMap<string, readonly string[]>> {
+  const asked = moduleIds.filter((moduleId) => withFiles === null || withFiles.has(moduleId));
+
+  const found = await Promise.all(
+    asked.map(async (moduleId) => [moduleId, await listAnalysisStills(tenant, moduleId)] as const),
+  );
+
+  const byModule = new Map<string, readonly string[]>(found);
+
+  return new Map(moduleIds.map((moduleId) => [moduleId, byModule.get(moduleId) ?? []]));
+}
+
+/**
  * Copies the stills a document uses into the document's own folder.
  *
  * Only what the draft actually chose, and only what the key grammar recognises.

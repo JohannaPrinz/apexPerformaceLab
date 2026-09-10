@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  analysisStillsFor,
+  analysisStillTests,
   discardAnalysisStills,
   freezeReportMedia,
   listAnalysisStills,
@@ -24,27 +26,39 @@ const store = {
   copies: [] as { from: string; to: string }[],
   deleted: [] as string[],
   copyFails: false,
+  /** Every folder the store was asked about, so a round trip is countable. */
+  listedObjects: [] as string[],
+  listedFolders: [] as string[],
 };
 
 vi.mock('@/integrations/object-store', () => ({
-  listObjects: (folder: string) =>
-    Promise.resolve(
+  listObjects: (folder: string, limit = 100) => {
+    store.listedObjects.push(folder);
+
+    return Promise.resolve(
       [...store.objects.entries()]
         .filter(
           ([key]) => key.startsWith(`${folder}/`) && !key.slice(folder.length + 1).includes('/'),
         )
-        .map(([key, createdAt]) => ({ key, createdAt })),
-    ),
-  listFolders: (folder: string) =>
-    Promise.resolve([
-      ...new Set(
-        [...store.objects.keys()]
-          .filter((key) => key.startsWith(`${folder}/`))
-          .map((key) => key.slice(folder.length + 1).split('/')[0])
-          .filter((name): name is string => name !== undefined)
-          .map((name) => `${folder}/${name}`),
-      ),
-    ]),
+        .map(([key, createdAt]) => ({ key, createdAt }))
+        .slice(0, limit),
+    );
+  },
+  listFolders: (folder: string, limit = 500) => {
+    store.listedFolders.push(folder);
+
+    return Promise.resolve(
+      [
+        ...new Set(
+          [...store.objects.keys()]
+            .filter((key) => key.startsWith(`${folder}/`))
+            .map((key) => key.slice(folder.length + 1).split('/')[0])
+            .filter((name): name is string => name !== undefined)
+            .map((name) => `${folder}/${name}`),
+        ),
+      ].slice(0, limit),
+    );
+  },
   copyObject: (from: string, to: string) => {
     if (store.copyFails) return Promise.resolve(false);
     store.copies.push({ from, to });
@@ -69,6 +83,8 @@ beforeEach(() => {
   store.objects.clear();
   store.copies.length = 0;
   store.deleted.length = 0;
+  store.listedObjects.length = 0;
+  store.listedFolders.length = 0;
   store.copyFails = false;
   store.objects.set(STILL_A, new Date('2026-08-30T09:00:00.000Z'));
   store.objects.set(STILL_B, new Date('2026-08-30T09:00:00.000Z'));
@@ -270,5 +286,134 @@ describe('the scheduled sweep across every workspace', () => {
 
     expect(await sweepAllAnalysisStills(NOW)).toBe(0);
     expect(store.objects.has('reports/rep_1/abc.jpg')).toBe(true);
+  });
+});
+
+/**
+ * Asking the store once instead of once per test.
+ *
+ * An analysis screen wants the stills of every test it shows, and almost every
+ * one of those tests has none — stills exist only where a coach ran a video
+ * analysis. Eight tests were eight round trips to be told "nothing here" eight
+ * times, ~120 ms each.
+ *
+ * The temporary area is laid out `analysis-temp/{workspace}/{test}/…`, so the
+ * folder names one level under the workspace already say which tests have
+ * anything. What is asserted here is that the shortcut never *loses* a picture:
+ * the answer for a test must be the same list `listAnalysisStills` gives, in
+ * the same order, whichever route it came by.
+ */
+describe('the stills of several tests at once', () => {
+  const eight = Array.from({ length: 8 }, (_, index) => `mod_${String(index + 1)}`);
+
+  /** What the store was asked, minus the one folder listing. */
+  const reads = () => store.listedObjects.length;
+
+  it('asks the store nothing where no test has a still', async () => {
+    store.objects.clear();
+
+    const found = await analysisStillsFor(TENANT, eight, await analysisStillTests(TENANT));
+
+    expect([...found.values()]).toEqual(eight.map(() => []));
+    // One listing of the workspace folder, and not a single per-test read.
+    expect(reads()).toBe(0);
+    expect(store.listedFolders).toEqual(['analysis-temp/org_a']);
+  });
+
+  it('asks nothing for a video analysis that produced no still', async () => {
+    // The test ran, the coach kept no frame: there is no folder, so there is
+    // nothing to ask about.
+    store.objects.clear();
+
+    const found = await analysisStillsFor(TENANT, ['mod_9'], await analysisStillTests(TENANT));
+
+    expect(found.get('mod_9')).toEqual([]);
+    expect(reads()).toBe(0);
+  });
+
+  it('asks once for the one test that has stills', async () => {
+    const found = await analysisStillsFor(TENANT, eight, await analysisStillTests(TENANT));
+
+    expect(found.get('mod_1')).toEqual([STILL_A, STILL_B]);
+    expect(reads()).toBe(1);
+    expect(store.listedObjects).toEqual(['analysis-temp/org_a/mod_1']);
+  });
+
+  it('answers every asked test, with or without stills', async () => {
+    const found = await analysisStillsFor(TENANT, eight, await analysisStillTests(TENANT));
+
+    expect([...found.keys()]).toEqual(eight);
+    expect(found.get('mod_2')).toEqual([]);
+  });
+
+  it('asks once per test that has stills, and no more', async () => {
+    store.objects.set('analysis-temp/org_a/mod_4/flexed__ccc.jpg', new Date());
+    store.objects.set('analysis-temp/org_a/mod_7/flexed__ddd.jpg', new Date());
+
+    const found = await analysisStillsFor(TENANT, eight, await analysisStillTests(TENANT));
+
+    expect(reads()).toBe(3);
+    expect(found.get('mod_4')).toEqual(['analysis-temp/org_a/mod_4/flexed__ccc.jpg']);
+    expect(found.get('mod_7')).toEqual(['analysis-temp/org_a/mod_7/flexed__ddd.jpg']);
+    expect(found.get('mod_3')).toEqual([]);
+  });
+
+  it('still asks all eight where all eight have stills', async () => {
+    for (const moduleId of eight) {
+      store.objects.set(`analysis-temp/org_a/${moduleId}/flexed__x.jpg`, new Date());
+    }
+
+    const found = await analysisStillsFor(TENANT, eight, await analysisStillTests(TENANT));
+
+    expect(reads()).toBe(8);
+    expect(eight.every((moduleId) => (found.get(moduleId) ?? []).length > 0)).toBe(true);
+  });
+
+  it('gives the same list, in the same order, as asking one test directly', async () => {
+    store.objects.set('analysis-temp/org_a/mod_1/hip__ccc.jpg', new Date());
+
+    const alone = await listAnalysisStills(TENANT, 'mod_1');
+    const batched = await analysisStillsFor(TENANT, ['mod_1'], await analysisStillTests(TENANT));
+
+    expect(batched.get('mod_1')).toEqual(alone);
+  });
+
+  it('ignores an object whose key it did not write, exactly as before', async () => {
+    store.objects.set('analysis-temp/org_a/mod_1/notours.txt', new Date());
+
+    const found = await analysisStillsFor(TENANT, ['mod_1'], await analysisStillTests(TENANT));
+
+    expect(found.get('mod_1')).toEqual([STILL_A, STILL_B]);
+  });
+
+  it('never looks into another workspace', async () => {
+    store.objects.set('analysis-temp/org_b/mod_1/flexed__eee.jpg', new Date());
+
+    const tests = await analysisStillTests(TENANT);
+
+    expect([...(tests ?? [])]).toEqual(['mod_1']);
+    expect(store.listedFolders).toEqual(['analysis-temp/org_a']);
+
+    const found = await analysisStillsFor(TENANT, ['mod_1'], tests);
+
+    expect(found.get('mod_1')).toEqual([STILL_A, STILL_B]);
+  });
+
+  it('falls back to asking each test where the listing may be incomplete', async () => {
+    // A truncated list would turn "I did not see it" into "it does not exist",
+    // which is how a coach's pictures would quietly disappear from the screen.
+    const found = await analysisStillsFor(TENANT, eight, null);
+
+    expect(reads()).toBe(8);
+    expect(found.get('mod_1')).toEqual([STILL_A, STILL_B]);
+  });
+
+  it('reports an unanswerable listing as unanswered, not as empty', async () => {
+    // Above the ceiling the shortcut refuses to conclude anything.
+    for (let index = 0; index < 1000; index += 1) {
+      store.objects.set(`analysis-temp/org_a/many_${String(index)}/flexed__x.jpg`, new Date());
+    }
+
+    expect(await analysisStillTests(TENANT)).toBeNull();
   });
 });

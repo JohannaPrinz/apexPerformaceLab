@@ -28,9 +28,10 @@ import {
 } from '../schemas';
 
 import {
+  analysisStillsFor,
+  analysisStillTests,
   discardAnalysisStills,
   freezeReportMedia,
-  listAnalysisStills,
   sweepAnalysisStills,
 } from './media';
 import {
@@ -105,6 +106,16 @@ export const reportsRouter = createTRPCRouter({
   evaluation: withPermission('report:read')
     .input(assessmentAnalysisSchema)
     .query(async ({ ctx, input }) => {
+      /**
+       * Which tests have working files at all — asked first, awaited last.
+       *
+       * It needs nothing but the workspace, so it does not have to wait for the
+       * analysis to be read. Started here, its round trip runs underneath the
+       * database work instead of after it, and by the time the stills are
+       * wanted the answer is already there.
+       */
+      const withStills = analysisStillTests(ctx.tenant);
+
       const evaluation = await assessmentEvaluation(
         ctx.db,
         ctx.tenant,
@@ -115,29 +126,22 @@ export const reportsRouter = createTRPCRouter({
       if (evaluation === null) return null;
 
       /**
-       * Which stills a coach may still choose from.
-       *
-       * Asked here rather than in the service: listing them is the object
-       * store's business, and the service must stay answerable in a workspace
-       * that has no bucket — where this simply comes back empty and the analysis
-       * opens exactly as before.
-       */
-      /**
        * The stills and the curves, in one wave.
        *
-       * Both are fan-outs over the same list of tests and neither reads the
-       * other's answer — the stills come from the object store, the curves from
-       * the database. They used to run one after the other, so a screen with
-       * four tests paid four store round trips *before* the first curve was
-       * asked for. Measured at ~255 ms of storage latency with nothing else
-       * happening (§16).
+       * Listing stills is the object store's business rather than the
+       * service's, which is what keeps the service answerable in a workspace
+       * with no bucket — there this simply comes back empty and the analysis
+       * opens exactly as before.
+       *
+       * Neither reads the other's answer, so both start at once. They used to
+       * run one after the other, and a screen with four tests paid four store
+       * round trips *before* the first curve was asked for (§16).
        */
       const [offered, curves] = await Promise.all([
-        Promise.all(
-          evaluation.modules.map(async (entry) => ({
-            moduleId: entry.moduleId,
-            keys: await listAnalysisStills(ctx.tenant, entry.moduleId),
-          })),
+        analysisStillsFor(
+          ctx.tenant,
+          evaluation.modules.map((entry) => entry.moduleId),
+          await withStills,
         ),
         /**
          * Every curve from one read.
@@ -166,12 +170,12 @@ export const reportsRouter = createTRPCRouter({
       );
 
       const byModule = new Map(
-        offered.map((entry) => {
-          const profile = movementProfile(profileOf.get(entry.moduleId) ?? undefined);
+        [...offered.entries()].map(([moduleId, keys]) => {
+          const profile = movementProfile(profileOf.get(moduleId) ?? undefined);
 
           return [
-            entry.moduleId,
-            entry.keys.map((key) => {
+            moduleId,
+            keys.map((key) => {
               const position = parseAnalysisStillKey(key)?.position ?? '';
 
               return {
