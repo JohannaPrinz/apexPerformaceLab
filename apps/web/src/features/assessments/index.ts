@@ -24,9 +24,11 @@ export { ModuleCard, type ModuleCardData } from './components/module-card';
  * rather than assembling a second one.
  */
 export {
+  chartsForTests,
   measurementChart,
   measurementCharts,
   type ChartGroup,
+  type ChartReading,
 } from './measurements/server/service';
 // The name every test an analysis opens for itself carries. The athlete's
 // profile needs it to tell "the coach named this" from "we named it".

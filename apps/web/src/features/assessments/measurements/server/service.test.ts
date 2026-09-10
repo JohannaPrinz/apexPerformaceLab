@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  chartsForTests,
   measurementChart,
   measurementCharts,
   moduleWorkspace,
@@ -336,6 +337,8 @@ interface HistoryRow {
     status: string;
     assessmentId: string;
     moduleKey: string;
+    payload: unknown;
+    moduleVersion: number;
     assessment: { question: string };
   };
   measurementType: { name: string; unit: string; valueType: string };
@@ -357,6 +360,8 @@ const point = (over: Partial<HistoryRow> & { id: string }): HistoryRow => ({
     status: 'COMPLETED',
     assessmentId: 'as_1',
     moduleKey: 'lactate',
+    payload: null,
+    moduleVersion: 2,
     assessment: { question: 'Wo liegt die Schwelle?' },
   },
   measurementType: { name: 'Laktat', unit: 'mmol/L', valueType: 'NUMERIC' },
@@ -370,6 +375,8 @@ const laterModule = (assessmentId: string, over: Partial<HistoryRow['assessmentM
   status: 'COMPLETED',
   assessmentId,
   moduleKey: 'lactate',
+  payload: null,
+  moduleVersion: 2,
   assessment: { question: 'Wo liegt die Schwelle?' },
   ...over,
 });
@@ -764,6 +771,8 @@ describe('drawing every test of one analysis', () => {
         status: 'COMPLETED',
         assessmentId: 'as_1',
         moduleKey,
+        payload: null,
+        moduleVersion: 2,
         assessment: { question: 'Wo liegt die Schwelle?' },
       },
       ...over,
@@ -929,6 +938,164 @@ describe('drawing every test of one analysis', () => {
       );
 
       expect(batched.get(entry.moduleId)).toEqual(alone);
+    }
+  });
+});
+
+/**
+ * The same curves, from rows somebody else already read.
+ *
+ * The analysis screen loads every standing reading of every test type its
+ * assessment covers before it can fill the comparison table, and the curves are
+ * drawn from that same set. Reading them again was six round trips for rows
+ * that were already in memory.
+ *
+ * The guarantee under test is equivalence: for each test, `chartsForTests` over
+ * the shared rows must produce exactly what `measurementCharts` produced from
+ * its own read. Everything else here is the split — a batch that mixed two
+ * tests' readings would still look like a saving.
+ */
+describe('drawing the curves from readings already in hand', () => {
+  const eight = Array.from({ length: 8 }, (_, index) => ({
+    id: `mod_${String(index + 1)}`,
+    moduleKey: `key_${String(index + 1)}`,
+  }));
+
+  const reading = (
+    moduleId: string,
+    moduleKey: string,
+    passIndex: number,
+    value: number,
+    over: Partial<HistoryRow> = {},
+  ): HistoryRow =>
+    point({
+      id: `${moduleId}_${moduleKey}_${String(passIndex)}`,
+      passIndex,
+      numericValue: value,
+      assessmentModule: {
+        id: moduleId,
+        name: `Test ${moduleKey}`,
+        status: 'COMPLETED',
+        assessmentId: 'as_1',
+        moduleKey,
+        payload: null,
+        moduleVersion: 2,
+        assessment: { question: 'Wo liegt die Schwelle?' },
+      },
+      ...over,
+    });
+
+  const testWith = (moduleId: string, moduleKey: string, over: Partial<HistoryRow> = {}) => [
+    reading(moduleId, moduleKey, 1, 2, over),
+    reading(moduleId, moduleKey, 2, 3, over),
+  ];
+
+  const NAMES = new Map([['ex_1', 'Bankdrücken']]);
+
+  it('draws the one test an analysis includes', () => {
+    const rows = testWith('mod_1', 'lactate');
+
+    const drawn = chartsForTests(rows, [{ id: 'mod_1', moduleKey: 'lactate' }], NAMES);
+
+    expect([...drawn.keys()]).toEqual(['mod_1']);
+    expect(drawn.get('mod_1')?.[0]?.series.map((line) => line.moduleId)).toEqual(['mod_1']);
+  });
+
+  it('gives each of eight tests exactly its own readings', () => {
+    const rows = eight.flatMap((entry) => testWith(entry.id, entry.moduleKey));
+
+    const drawn = chartsForTests(rows, eight, NAMES);
+
+    expect([...drawn.keys()]).toEqual(eight.map((entry) => entry.id));
+    for (const entry of eight) {
+      expect(
+        drawn.get(entry.id)?.flatMap((group) => group.series.map((line) => line.moduleId)),
+      ).toEqual([entry.id]);
+    }
+  });
+
+  it('never lets one test see another test type’s readings', () => {
+    // The split that used to be a `WHERE moduleKey = …` per test.
+    const rows = [...testWith('mod_1', 'lactate'), ...testWith('mod_2', 'sprint')];
+
+    const drawn = chartsForTests(
+      rows,
+      [
+        { id: 'mod_1', moduleKey: 'lactate' },
+        { id: 'mod_2', moduleKey: 'sprint' },
+      ],
+      NAMES,
+    );
+
+    expect(drawn.get('mod_1')?.flatMap((c) => c.series.map((s) => s.moduleId))).toEqual(['mod_1']);
+    expect(drawn.get('mod_2')?.flatMap((c) => c.series.map((s) => s.moduleId))).toEqual(['mod_2']);
+  });
+
+  it('keeps two tests of one athlete apart from a third athlete’s', () => {
+    // Readings of another athlete never reach these rows — the read is filtered
+    // by athlete — but a test type shared with them must not merge either.
+    const rows = [
+      ...testWith('mod_1', 'lactate'),
+      ...testWith('mod_alt', 'lactate'),
+      ...testWith('mod_2', 'sprint'),
+    ];
+
+    const drawn = chartsForTests(rows, [{ id: 'mod_1', moduleKey: 'lactate' }], NAMES);
+
+    // The same test type of an earlier examination *is* part of the comparison
+    // — that is the point of the curve — and a different type is not.
+    expect(
+      [...new Set(drawn.get('mod_1')?.flatMap((c) => c.series.map((s) => s.moduleId)))].sort(),
+    ).toEqual(['mod_1', 'mod_alt']);
+  });
+
+  it('keeps two quantities of one test on their own axes', () => {
+    const rows = [
+      ...testWith('mod_1', 'lactate'),
+      ...testWith('mod_1', 'lactate', {
+        measurementTypeId: 'mt_pace',
+        measurementType: { name: 'Pace', unit: 'km/h', valueType: 'NUMERIC' },
+      }),
+    ];
+
+    const drawn = chartsForTests(rows, [{ id: 'mod_1', moduleKey: 'lactate' }], NAMES);
+
+    expect(drawn.get('mod_1')?.map((group) => [group.typeName, group.unit])).toEqual([
+      ['Laktat', 'mmol/L'],
+      ['Pace', 'km/h'],
+    ]);
+  });
+
+  it('answers nothing at all where no test is included', () => {
+    expect(chartsForTests(testWith('mod_1', 'lactate'), [], NAMES)).toEqual(new Map());
+  });
+
+  it('answers an empty diagram list for a test with no readings', () => {
+    // A test the report includes whose readings are not in the set — archived
+    // out of the assessment, say. Named, and empty.
+    const drawn = chartsForTests(
+      testWith('mod_1', 'lactate'),
+      [{ id: 'mod_weg', moduleKey: 'gibtsnicht' }],
+      NAMES,
+    );
+
+    expect(drawn.get('mod_weg')).toEqual([]);
+  });
+
+  it('draws exactly what the separate read drew, test for test', async () => {
+    // The equivalence the phase rests on.
+    const rows = eight.flatMap((entry) => testWith(entry.id, entry.moduleKey));
+
+    const shared = chartsForTests(rows, eight, NAMES);
+
+    for (const entry of eight) {
+      const own = await measurementChart(
+        historyDb(rows, { modules: [testRecord(entry.id, entry.moduleKey)] }).db,
+        HISTORY_TENANT,
+        entry.id,
+      );
+
+      expect(shared.get(entry.id)).toEqual(own);
     }
   });
 });

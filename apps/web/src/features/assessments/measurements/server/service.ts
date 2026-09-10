@@ -1340,13 +1340,93 @@ export async function measurementCharts(
 ): Promise<ReadonlyMap<string, ChartGroup[]>> {
   const loaded = await comparableMeasurementsFor(db, tenant, moduleIds);
 
-  return new Map([...loaded.entries()].map(([id, entry]) => [id, chartsFrom(entry)]));
+  return new Map(
+    [...loaded.entries()].map(([id, entry]) => [
+      id,
+      chartsFrom(entry.rows, id, entry.exerciseNames),
+    ]),
+  );
+}
+
+/**
+ * Exactly the columns a diagram is drawn from, whoever read them.
+ *
+ * Stated as a shape rather than tied to one query, because two callers arrive
+ * with the same rows from different reads: `measurementCharts` fetches them,
+ * and the analysis screen's own read already holds them (§16).
+ */
+export interface ChartReading {
+  readonly measurementTypeId: string;
+  readonly side: string;
+  readonly exerciseId: string | null;
+  readonly passIndex: number | null;
+  readonly context: unknown;
+  readonly numericValue: unknown;
+  readonly capturedAt: Date;
+  readonly assessmentModule: {
+    readonly id: string;
+    readonly name: string | null;
+    readonly status: string;
+    readonly moduleKey: string;
+    readonly payload: unknown;
+    readonly moduleVersion: number;
+  };
+  readonly measurementType: {
+    readonly name: string;
+    readonly unit: string;
+    readonly valueType: string;
+  };
+}
+
+/**
+ * The diagrams of several tests, from readings somebody else already read.
+ *
+ * ## Why this exists beside `measurementCharts`
+ *
+ * The analysis screen reads **every standing reading of every test type this
+ * assessment covers, for this athlete** before it can say anything at all — it
+ * needs them for the comparison table. The curves are drawn from that same set:
+ * same tenant scope, same supersede and archive rules, same athlete, and the
+ * test types of the included tests are among the ones already asked for.
+ *
+ * So the curves were being read a second time — six more round trips, and they
+ * could not start until the first read had finished. This draws them from the
+ * rows that are already in hand instead. **Nothing about a curve changes**: each
+ * test is split out by its own test type, exactly the set its own `WHERE` would
+ * have returned, and drawn by the rules below unaltered.
+ *
+ * `exerciseNames` may name more movements than any one test uses — a lookup by
+ * id wants a superset, and building a narrower map per test would be work for
+ * the same answer.
+ */
+export function chartsForTests(
+  readings: readonly ChartReading[],
+  tests: readonly { readonly id: string; readonly moduleKey: string }[],
+  exerciseNames: ReadonlyMap<string, string>,
+): ReadonlyMap<string, ChartGroup[]> {
+  const byKey = new Map<string, ChartReading[]>();
+
+  for (const row of readings) {
+    const found = byKey.get(row.assessmentModule.moduleKey);
+
+    if (found) found.push(row);
+    else byKey.set(row.assessmentModule.moduleKey, [row]);
+  }
+
+  return new Map(
+    tests.map((test) => [
+      test.id,
+      chartsFrom(byKey.get(test.moduleKey) ?? [], test.id, exerciseNames),
+    ]),
+  );
 }
 
 /** One test's diagrams, from readings that are already in hand. */
-function chartsFrom(loaded: Comparable): ChartGroup[] {
-  const { current, rows, exerciseNames } = loaded;
-
+function chartsFrom(
+  rows: readonly ChartReading[],
+  currentModuleId: string,
+  exerciseNames: ReadonlyMap<string, string>,
+): ChartGroup[] {
   /** Every value of one test at one stage, so the other quantities are reachable. */
   const atStage = new Map<string, Map<string, number>>();
   for (const row of rows) {
@@ -1412,7 +1492,7 @@ function chartsFrom(loaded: Comparable): ChartGroup[] {
         moduleId: id,
         moduleName: first.assessmentModule.name,
         moduleStatus: first.assessmentModule.status,
-        isCurrentModule: id === current.id,
+        isCurrentModule: id === currentModuleId,
         points: built,
       });
     }

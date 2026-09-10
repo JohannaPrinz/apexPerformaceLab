@@ -10,6 +10,11 @@ import {
   setReportModuleInclusion,
 } from './service';
 
+// The curves are drawn by the assessments slice, whose barrel reaches the
+// Prisma client at import time. Nothing here talks to a database — every read
+// is a fake below — so the client is stubbed rather than configured.
+vi.mock('@apex/database', () => ({ db: {} }));
+
 /**
  * The analysis over an assessment.
  *
@@ -724,8 +729,16 @@ interface Reading {
   numericValue: { toString: () => string } | null;
   capturedAt: Date;
   source: string;
-  assessmentModule: { id: string; moduleKey: string; payload: unknown; moduleVersion: number };
-  measurementType: { name: string; unit: string };
+  assessmentModule: {
+    id: string;
+    moduleKey: string;
+    payload: unknown;
+    moduleVersion: number;
+    /** What a curve labels its series with — read from the same rows (§16). */
+    name: string | null;
+    status: string;
+  };
+  measurementType: { name: string; unit: string; valueType: string };
 }
 
 /** The configuration the evaluation fixture's readings belong to. */
@@ -751,8 +764,10 @@ const reading = (over: Partial<Reading> = {}): Reading => ({
     moduleKey: 'strength',
     payload: LOAD_CONFIGURATION,
     moduleVersion: 2,
+    name: 'Krafttest',
+    status: 'COMPLETED',
   },
-  measurementType: { name: 'Last', unit: 'kg' },
+  measurementType: { name: 'Last', unit: 'kg', valueType: 'NUMERIC' },
   ...over,
 });
 
@@ -951,6 +966,8 @@ describe('the analysis screen read', () => {
               moduleKey: 'strength',
               payload: LOAD_CONFIGURATION,
               moduleVersion: 2,
+              name: 'Krafttest',
+              status: 'COMPLETED',
             },
             capturedAt: DAY('2026-01-10'),
             numericValue: { toString: () => '92.5' },
@@ -1308,5 +1325,197 @@ describe('what the analysis read waits for', () => {
     // wave — but nothing beyond it was.
     expect(events.filter((entry) => entry.startsWith('readings'))).toEqual([]);
     expect(events.filter((entry) => entry.startsWith('cohort'))).toEqual([]);
+  });
+});
+
+/**
+ * The curves, drawn from the readings the screen already has.
+ *
+ * The analysis reads every standing reading of every test type this assessment
+ * covers, for this athlete, before it can fill the comparison table. The curves
+ * are drawn from that same set — same tenant scope, same supersede and archive
+ * rules, same athlete — so they were being read a second time: six more round
+ * trips that could not start until this read had finished.
+ *
+ * What is asserted here is that they now cost **no read at all**, and that the
+ * count does not move with the number of tests. The equivalence of the curves
+ * themselves is pinned in `assessments/measurements/server/service.test.ts`,
+ * where the two routes can be run against the same rows.
+ */
+describe('where the analysis screen gets its curves', () => {
+  const eight = Array.from({ length: 8 }, (_, index) => ({
+    id: `mod_${String(index + 1)}`,
+    name: `Test ${String(index + 1)}`,
+    moduleKey: `key_${String(index + 1)}`,
+    status: 'COMPLETED',
+    payload: LOAD_CONFIGURATION,
+    moduleVersion: 2,
+  }));
+
+  /** Two stages of one test, which is the least that makes a curve. */
+  const stages = (moduleId: string, moduleKey: string, from = 100) =>
+    [1, 2].map((passIndex) =>
+      reading({
+        passIndex,
+        numericValue: { toString: () => String(from + passIndex) },
+        assessmentModule: {
+          id: moduleId,
+          moduleKey,
+          payload: LOAD_CONFIGURATION,
+          moduleVersion: 2,
+          name: `Test ${moduleId}`,
+          status: 'COMPLETED',
+        },
+      }),
+    );
+
+  /** Every read the fake answered, whatever it was asked about. */
+  const reads = (db: Parameters<typeof assessmentEvaluation>[0]) => {
+    const fake = db as unknown as {
+      assessment: { findFirst: { mock: { calls: unknown[] } } };
+      report: { findFirst: { mock: { calls: unknown[] } } };
+      measurement: { findMany: { mock: { calls: unknown[] } } };
+      exercise: { findMany: { mock: { calls: unknown[] } } };
+    };
+
+    return (
+      fake.assessment.findFirst.mock.calls.length +
+      fake.report.findFirst.mock.calls.length +
+      fake.measurement.findMany.mock.calls.length +
+      fake.exercise.findMany.mock.calls.length
+    );
+  };
+
+  it('draws the one test an analysis includes', async () => {
+    const db = evaluationDb({ readings: stages('mod_1', 'strength') });
+
+    const found = await assessmentEvaluation(db, TENANT, 'ass_1', LABELS);
+
+    expect([...(found?.curves.keys() ?? [])]).toEqual(['mod_1']);
+    expect(found?.curves.get('mod_1')?.[0]?.series.map((line) => line.moduleId)).toEqual(['mod_1']);
+  });
+
+  it('costs the same reads for eight tests as for one', async () => {
+    const one = evaluationDb({
+      modules: eight.slice(0, 1),
+      readings: stages('mod_1', 'key_1'),
+    });
+    const all = evaluationDb({
+      modules: eight,
+      readings: eight.flatMap((entry) => stages(entry.id, entry.moduleKey)),
+    });
+
+    await assessmentEvaluation(one, TENANT, 'ass_1', LABELS);
+    await assessmentEvaluation(all, TENANT, 'ass_1', LABELS);
+
+    // The curve read used to be six queries per included test, behind this one.
+    expect(reads(all)).toBe(reads(one));
+  });
+
+  it('asks for no measurement beyond the two it already made', async () => {
+    // This athlete's readings and the cohort. A third would be the old curve
+    // read coming back.
+    const db = evaluationDb({
+      modules: eight,
+      readings: eight.flatMap((entry) => stages(entry.id, entry.moduleKey)),
+    });
+
+    await assessmentEvaluation(db, TENANT, 'ass_1', LABELS);
+
+    const fake = db as unknown as { measurement: { findMany: { mock: { calls: unknown[] } } } };
+
+    expect(fake.measurement.findMany.mock.calls).toHaveLength(2);
+  });
+
+  it('gives each test only its own readings', async () => {
+    const db = evaluationDb({
+      modules: eight,
+      readings: eight.flatMap((entry, index) => stages(entry.id, entry.moduleKey, index * 100)),
+    });
+
+    const found = await assessmentEvaluation(db, TENANT, 'ass_1', LABELS);
+
+    expect(
+      eight.map((entry) =>
+        found?.curves
+          .get(entry.id)
+          ?.flatMap((group) => group.series.flatMap((line) => line.points.map((point) => point.y))),
+      ),
+    ).toEqual(eight.map((_entry, index) => [index * 100 + 1, index * 100 + 2]));
+  });
+
+  it('keeps two quantities of one test on their own axes', async () => {
+    const db = evaluationDb({
+      readings: [
+        ...stages('mod_1', 'strength'),
+        ...stages('mod_1', 'strength').map((row) => ({
+          ...row,
+          measurementTypeId: 'mt_pace',
+          measurementType: { name: 'Pace', unit: 'km/h', valueType: 'NUMERIC' },
+        })),
+      ],
+    });
+
+    const found = await assessmentEvaluation(db, TENANT, 'ass_1', LABELS);
+
+    expect(found?.curves.get('mod_1')?.map((group) => [group.typeName, group.unit])).toEqual([
+      ['Last', 'kg'],
+      ['Pace', 'km/h'],
+    ]);
+  });
+
+  it('draws nothing for a test the analysis leaves out', async () => {
+    const db = evaluationDb({
+      modules: eight.slice(0, 2),
+      reportModules: [
+        { assessmentModuleId: 'mod_1', included: true },
+        { assessmentModuleId: 'mod_2', included: false },
+      ],
+      readings: [...stages('mod_1', 'key_1'), ...stages('mod_2', 'key_2')],
+    });
+
+    const found = await assessmentEvaluation(db, TENANT, 'ass_1', LABELS);
+
+    expect([...(found?.curves.keys() ?? [])]).toEqual(['mod_1']);
+    expect(found?.curves.get('mod_2')).toBeUndefined();
+  });
+
+  it('draws nothing where the analysis includes no test at all', async () => {
+    const db = evaluationDb({
+      reportModules: [],
+      readings: stages('mod_1', 'strength'),
+    });
+
+    const found = await assessmentEvaluation(db, TENANT, 'ass_1', LABELS);
+
+    expect(found?.curves.size).toBe(0);
+  });
+
+  it('ignores an inclusion naming a test this assessment does not have', async () => {
+    // The included ids come from the report, and the report may name a test
+    // that has since been archived out of the assessment.
+    const db = evaluationDb({
+      reportModules: [
+        { assessmentModuleId: 'mod_1', included: true },
+        { assessmentModuleId: 'mod_weg', included: true },
+      ],
+      readings: stages('mod_1', 'strength'),
+    });
+
+    const found = await assessmentEvaluation(db, TENANT, 'ass_1', LABELS);
+
+    expect([...(found?.curves.keys() ?? [])]).toEqual(['mod_1']);
+  });
+
+  it('keeps the curves off the tests themselves', async () => {
+    // `composeSnapshot` falls back to a test's own `charts`, and a draft PDF
+    // has never carried curves. Putting them there would change what a coach
+    // gets on paper without anybody asking for it.
+    const db = evaluationDb({ readings: stages('mod_1', 'strength') });
+
+    const found = await assessmentEvaluation(db, TENANT, 'ass_1', LABELS);
+
+    expect(found?.modules.every((entry) => entry.charts.length === 0)).toBe(true);
+    expect((found?.curves.get('mod_1') ?? []).length).toBeGreaterThan(0);
   });
 });

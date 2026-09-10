@@ -43,7 +43,7 @@ import {
 } from '@apex/domain';
 import type { TenantContext } from '@apex/types';
 
-import type { ChartGroup } from '@/features/assessments';
+import { chartsForTests, type ChartGroup } from '@/features/assessments';
 
 import type { CreateReportInput } from '../schemas';
 
@@ -777,6 +777,14 @@ export interface EvaluationModule {
 }
 
 export interface AssessmentEvaluation {
+  /**
+   * One diagram set per included test, drawn from the readings above.
+   *
+   * Beside the tests rather than on them: `composeSnapshot` falls back to a
+   * test's own `charts`, so a document would pick these up as well, and a draft
+   * PDF has never carried curves. The screen takes them from here.
+   */
+  readonly curves: ReadonlyMap<string, readonly ChartGroup[]>;
   readonly reportId: string;
   readonly version: number;
   readonly title: string;
@@ -942,9 +950,21 @@ export async function assessmentEvaluation(
             capturedAt: true,
             source: true,
             assessmentModule: {
-              select: { id: true, moduleKey: true, payload: true, moduleVersion: true },
+              select: {
+                id: true,
+                moduleKey: true,
+                payload: true,
+                moduleVersion: true,
+                // What a curve labels its series with. Scalars on a relation
+                // that is already selected, so they cost nothing — and they are
+                // the difference between these rows and a second read of them.
+                name: true,
+                status: true,
+              },
             },
-            measurementType: { select: { key: true, name: true, unit: true } },
+            measurementType: {
+              select: { key: true, name: true, unit: true, valueType: true },
+            },
           },
           orderBy: [{ capturedAt: 'asc' }, { id: 'asc' }],
         }),
@@ -1094,6 +1114,24 @@ export async function assessmentEvaluation(
   const measurementsOf = (moduleId: string) =>
     readings.filter((row) => row.assessmentModule.id === moduleId);
 
+  /**
+   * The curves, from the readings this function already holds.
+   *
+   * They used to be a second read of the same rows, issued by the router once
+   * this one had finished — six round trips that could not start until the
+   * table was ready. The set is the same by construction: same tenant scope,
+   * same supersede and archive rules, same athlete, and every included test's
+   * type is among the ones read above.
+   *
+   * Only the tests the analysis draws on. An excluded test's curve is not
+   * shown, and computing one would be work for a picture nobody sees.
+   */
+  const curves = chartsForTests(
+    readings,
+    assessment.modules.filter((entry) => inclusion.get(entry.id) === true),
+    exerciseNames,
+  );
+
   const modules = assessment.modules.map((entry): EvaluationModule => {
     const configuration = protocolOf(entry);
     const own = measurementsOf(entry.id);
@@ -1217,6 +1255,15 @@ export async function assessmentEvaluation(
   const usable = modules.filter((entry) => entry.blocked === null);
 
   return {
+    /**
+     * The curves, beside the tests rather than on them.
+     *
+     * They belong to the screen, not to the document: `composeSnapshot` falls
+     * back to a test's own `charts` when a caller passes none, and putting them
+     * there would quietly give a draft PDF curves it has never had. The screen
+     * reads them from here; publishing keeps passing its own.
+     */
+    curves,
     reportId: report.id,
     version: report.version,
     title: report.title,

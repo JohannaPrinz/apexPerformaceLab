@@ -126,37 +126,22 @@ export const reportsRouter = createTRPCRouter({
       if (evaluation === null) return null;
 
       /**
-       * The stills and the curves, in one wave.
+       * Which stills each test offers.
        *
-       * Listing stills is the object store's business rather than the
-       * service's, which is what keeps the service answerable in a workspace
-       * with no bucket — there this simply comes back empty and the analysis
-       * opens exactly as before.
+       * Listing them is the object store's business rather than the service's,
+       * which is what keeps the service answerable in a workspace with no
+       * bucket — there this simply comes back empty and the analysis opens
+       * exactly as before.
        *
-       * Neither reads the other's answer, so both start at once. They used to
-       * run one after the other, and a screen with four tests paid four store
-       * round trips *before* the first curve was asked for (§16).
+       * The curves are **not** read here any more. They are drawn from the
+       * readings the analysis itself already loaded, so what used to be six
+       * round trips behind this one is now no read at all (§16).
        */
-      const [offered, curves] = await Promise.all([
-        analysisStillsFor(
-          ctx.tenant,
-          evaluation.modules.map((entry) => entry.moduleId),
-          await withStills,
-        ),
-        /**
-         * Every curve from one read.
-         *
-         * Only the included tests: an analysis draws the tests it draws on, and
-         * fetching an excluded one would be work for a picture nobody sees.
-         * They used to be a fan-out of six queries per test over the same
-         * athlete — one read now answers all of them (§16).
-         */
-        measurementCharts(
-          ctx.db,
-          ctx.tenant,
-          evaluation.modules.filter((entry) => entry.included).map((entry) => entry.moduleId),
-        ),
-      ]);
+      const offered = await analysisStillsFor(
+        ctx.tenant,
+        evaluation.modules.map((entry) => entry.moduleId),
+        await withStills,
+      );
 
       /**
        * Each offered still with the word for the position it shows.
@@ -189,8 +174,12 @@ export const reportsRouter = createTRPCRouter({
         }),
       );
 
+      // The curves travel beside the tests inside the service; the screen wants
+      // them on each test, and nothing else may see them (see `curves` there).
+      const { curves, ...rest } = evaluation;
+
       return {
-        ...evaluation,
+        ...rest,
         modules: evaluation.modules.map((entry) => ({
           ...entry,
           offeredStills: byModule.get(entry.moduleId) ?? [],
