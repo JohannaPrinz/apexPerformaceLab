@@ -51,25 +51,45 @@ export default async function AthletesPage({
   const filters = { status, ...(search === '' ? {} : { search }) };
 
   /**
-   * The roster, its total, and the colleagues an athlete could be released to.
+   * The roster. Everything else on this page is timed against it.
    *
-   * The colleagues used to be read first and awaited on their own, which put a
-   * whole round trip in front of the list — measured at ~160 ms of a ~330 ms
-   * page. They answer a different question and take no input at all: the list
-   * says who is on the roster, this says who this account could hand one of
-   * them to. Nothing in either follows from the other, so all three start
-   * together.
+   * Named on its own because two of the reads below want it at different
+   * moments: one of them needs the names it comes back with, the others do not
+   * need it at all.
    */
-  const [coaches, page, total] = await Promise.all([
-    api.athletes.shareableCoaches(),
-    api.athletes.list({ ...filters, cursor: cursor === '' ? null : cursor, limit: PAGE_SIZE }),
-    api.athletes.count(filters),
-  ]);
-
-  // Who each of them is already released to — one read for the whole page.
-  const shares = await api.athletes.sharesForMany({
-    athleteIds: page.items.map((athlete) => athlete.id),
+  const roster = api.athletes.list({
+    ...filters,
+    cursor: cursor === '' ? null : cursor,
+    limit: PAGE_SIZE,
   });
+
+  /**
+   * The four reads this page is made of, each waiting only for what it needs.
+   *
+   * The colleagues an athlete could be released to and the total both take no
+   * input at all — they answer different questions and start immediately. The
+   * releases that already exist are the one genuine dependency: they are keyed
+   * by athlete, so they wait for the roster and for nothing else. They used to
+   * wait for all three, which on a measured page meant sitting idle for 50 ms
+   * after the ids were already in hand.
+   *
+   * All four are handed to one `Promise.all`, so the releases are awaited like
+   * everything else — a rejection of theirs is caught here rather than
+   * surfacing as an unhandled one.
+   *
+   * **The ids stay exactly the roster's.** `sharesForAthletes` narrows by
+   * workspace but not by what this account may see, so it is the roster —
+   * already filtered to the viewer — that keeps this answer honest. A wider set
+   * would report releases for athletes the viewer is not shown.
+   */
+  const [coaches, page, total, shares] = await Promise.all([
+    api.athletes.shareableCoaches(),
+    roster,
+    api.athletes.count(filters),
+    roster.then((found) =>
+      api.athletes.sharesForMany({ athleteIds: found.items.map((athlete) => athlete.id) }),
+    ),
+  ]);
 
   const { items, nextCursor } = page;
 
