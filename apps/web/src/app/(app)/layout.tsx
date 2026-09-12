@@ -1,3 +1,5 @@
+import { redirect } from 'next/navigation';
+
 import { AppShell } from '@/components/layout/app-shell';
 import { WORKSPACE_ROLE_LABELS } from '@/features/auth/labels';
 import { api } from '@/trpc/server';
@@ -20,6 +22,22 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     api.auth.coachProfile(),
     api.auth.myWorkspaces(),
   ]);
+
+  /**
+   * An athlete who lands on a workspace route goes home instead.
+   *
+   * `/start` has always done this; doing it here covers the whole group, so a
+   * stale link or a typed URL produces the portal rather than the generic
+   * "something went wrong" page an athlete used to get — the procedures below
+   * refused them correctly, and the screen made it look like a crash.
+   *
+   * **It is a convenience, not the boundary.** Every procedure on every page in
+   * this group still refuses an account with no coach profile, exactly as
+   * before; this only decides what the person sees instead (§21).
+   *
+   * The coach is already in hand from the read above, so it costs no query.
+   */
+  if (!coach) redirect('/portal');
 
   return (
     <AppShell
