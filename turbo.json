@@ -4,7 +4,17 @@
   "globalDependencies": [".env", "tsconfig.base.json"],
   // SKIP_ENV_VALIDATION is an escape hatch for Docker/CI image builds that have
   // no real secrets available; it must never be set for a deploy build.
-  "globalEnv": ["NODE_ENV", "VERCEL", "VERCEL_ENV", "VERCEL_URL", "CI", "SKIP_ENV_VALIDATION"],
+  "globalEnv": [
+    "NODE_ENV",
+    "VERCEL",
+    "VERCEL_ENV",
+    "VERCEL_URL",
+    "CI",
+    "SKIP_ENV_VALIDATION",
+    // Points the end-to-end suite at a deployed environment instead of
+    // starting a server of its own. Read only by `playwright.config.ts`.
+    "E2E_BASE_URL"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
