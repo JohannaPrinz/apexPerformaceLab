@@ -27,6 +27,15 @@ export default async function SignInPage({
       <SignInForm redirectTo={safeRedirect(redirectTo)} />
 
       <p className="text-sm text-muted-foreground">
+        <Link
+          href="/passwort-vergessen"
+          className={`${TOUCH_TARGET} inline-flex items-center text-accent underline-offset-4 hover:underline`}
+        >
+          Passwort vergessen?
+        </Link>
+      </p>
+
+      <p className="text-sm text-muted-foreground">
         Noch kein Konto?{' '}
         <Link
           href="/sign-up"

@@ -5,6 +5,7 @@ import { organization } from 'better-auth/plugins';
 
 import { db } from '@apex/database';
 
+import { deliverPasswordReset, RESET_TOKEN_SECONDS } from './password-reset';
 import { accessControl, roles } from './permissions';
 import { activeOrganizationForSession, provisionPersonalWorkspace } from './provisioning';
 
@@ -36,6 +37,39 @@ export const auth = betterAuth({
     minPasswordLength: 12,
     // Flipped on once the Resend transactional templates land — see docs/ROADMAP.md.
     requireEmailVerification: false,
+
+    resetPasswordTokenExpiresIn: RESET_TOKEN_SECONDS,
+
+    /**
+     * Every other session ends when a password is reset.
+     *
+     * Somebody resets because they lost control of the password, or of the
+     * device holding a session. Leaving those sessions signed in would make the
+     * reset a half-measure: the new password would be correct and the old
+     * access would still be open.
+     */
+    revokeSessionsOnPasswordReset: true,
+
+    /**
+     * The link, to the person who asked for it.
+     *
+     * The URL is built here rather than taken from Better Auth's own `url`,
+     * which points at its redirect endpoint. Ours goes straight to the page
+     * that takes the new password, so there is one hop and no callback to
+     * validate — the token is the same either way.
+     *
+     * What actually sends is registered by the app; see `password-reset.ts`.
+     */
+    sendResetPassword: async ({ user, token }) => {
+      const base = process.env['BETTER_AUTH_URL'] ?? process.env['NEXT_PUBLIC_APP_URL'] ?? '';
+
+      await deliverPasswordReset({
+        to: user.email,
+        name: user.name,
+        url: `${base}/passwort-neu/${token}`,
+        expiresAt: new Date(Date.now() + RESET_TOKEN_SECONDS * 1000),
+      });
+    },
   },
 
   socialProviders: {

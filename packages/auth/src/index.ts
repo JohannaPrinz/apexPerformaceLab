@@ -6,6 +6,13 @@
  * `'use client'` boundary into the server graph.
  */
 export { auth, type Auth, type Session } from './server';
+export {
+  deliverPasswordReset,
+  registerPasswordResetSender,
+  RESET_TOKEN_SECONDS,
+  type PasswordResetDelivery,
+  type PasswordResetSender,
+} from './password-reset';
 export * from './permissions';
 export {
   ensureActiveOrganizationId,
