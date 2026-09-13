@@ -104,6 +104,40 @@ export async function revokeActivationAction(athleteId: string): Promise<PortalA
   return { status: 'idle' };
 }
 
+export interface PortalAccessRevoked extends PortalActionState {
+  /**
+   * The address the closed account signed in with.
+   *
+   * Carried back so the confirmation can name it. `null` where the account had
+   * already lost its user row — the revocation stands either way, and a
+   * sentence with a gap in it would be worse than one without the address.
+   */
+  readonly revokedFrom?: string | null;
+}
+
+/**
+ * Ends the portal access of an athlete who already has an account.
+ *
+ * Not `revokeActivationAction` above: that withdraws a link nobody has used.
+ * Both revalidate the roster as well as the record, because the badge that says
+ * an athlete has access is on both screens.
+ */
+export async function revokePortalAccessAction(athleteId: string): Promise<PortalAccessRevoked> {
+  let revokedFrom: string | null = null;
+
+  try {
+    const result = await api.portal.revokeAccess({ athleteId });
+    revokedFrom = result.email;
+  } catch (error) {
+    return failed(error, 'Der Portalzugang konnte nicht entzogen werden.');
+  }
+
+  revalidatePath('/athletes');
+  revalidatePath(`/athletes/${athleteId}`);
+
+  return { status: 'idle', revokedFrom };
+}
+
 /**
  * Sets the first password and links the account.
  *

@@ -18,8 +18,10 @@ import {
   issueActivationSchema,
   redeemActivationSchema,
   revokeActivationSchema,
+  revokePortalAccessSchema,
 } from '../schemas';
 
+import { type RevokeAccessRefusal, revokePortalAccess } from './access';
 import {
   type IssueRefusal,
   type RedeemRefusal,
@@ -55,6 +57,12 @@ const ISSUE_MESSAGES: Readonly<Record<IssueRefusal, string>> = {
   ALREADY_ACTIVE: 'Dieser Athlet hat bereits einen Zugang.',
   ARCHIVED: 'Dieser Athlet ist deaktiviert. Bitte zuerst wieder aktivieren.',
   NO_EMAIL: 'Für diesen Athleten ist keine E-Mail-Adresse hinterlegt.',
+};
+
+/** What a coach is told when an access cannot be taken away. */
+const REVOKE_ACCESS_MESSAGES: Readonly<Record<RevokeAccessRefusal, string>> = {
+  NOT_FOUND: 'Dieser Athlet wurde nicht gefunden.',
+  NO_ACCESS: 'Dieser Athlet hat keinen Portalzugang.',
 };
 
 /**
@@ -185,6 +193,33 @@ export const portalRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => ({
       revoked: await revokeActivations(ctx.db, ctx.tenant, input.athleteId),
     })),
+
+  /**
+   * Ends the access of an athlete who already has an account (§21).
+   *
+   * The neighbour above and this one are easy to read as the same thing and
+   * never are: `revokeActivation` withdraws an offer nobody has taken up, this
+   * closes an account somebody signs in with. See `server/access.ts`.
+   *
+   * `withCoachPermission('athlete:write')` — the same door as editing or
+   * deactivating the athlete, because taking away somebody's access to a record
+   * is an act on that record. Nothing but the athlete is accepted, and the
+   * workspace comes from the session.
+   */
+  revokeAccess: withCoachPermission('athlete:write')
+    .input(revokePortalAccessSchema)
+    .mutation(async ({ ctx, input }) => {
+      const revoked = await revokePortalAccess(ctx.db, ctx.tenant, input.athleteId);
+
+      if (!revoked.ok) {
+        throw new TRPCError({
+          code: revoked.reason === 'NOT_FOUND' ? 'NOT_FOUND' : 'PRECONDITION_FAILED',
+          message: REVOKE_ACCESS_MESSAGES[revoked.reason],
+        });
+      }
+
+      return { email: revoked.email };
+    }),
 
   /**
    * What a link opens, for the page that renders it.

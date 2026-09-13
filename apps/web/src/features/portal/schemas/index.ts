@@ -34,6 +34,18 @@ export type IssueActivationInput = z.infer<typeof issueActivationSchema>;
 
 export const revokeActivationSchema = issueActivationSchema;
 
+/**
+ * Taking an activated athlete's access away.
+ *
+ * The same single field as `revokeActivationSchema`, and deliberately not an
+ * alias of it: withdrawing an unopened link and ending a live account are two
+ * different acts on two different rows, and a shared name is how they start
+ * being confused for one another.
+ */
+export const revokePortalAccessSchema = z.object({
+  athleteId: z.string().min(1),
+});
+
 /** Reading what a link opens, before anything is typed into it. */
 export const activationTokenSchema = z.object({
   token: z.string().min(1),
