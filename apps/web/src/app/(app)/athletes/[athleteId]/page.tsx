@@ -248,6 +248,7 @@ export default async function AthletePage({
               firstName={athlete.firstName}
               lastName={athlete.lastName}
               archived={athlete.archivedAt !== null}
+              hasPortalAccess={athlete.userId !== null}
               coaches={coaches}
               shares={shares}
             />

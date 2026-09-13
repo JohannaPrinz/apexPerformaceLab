@@ -15,6 +15,12 @@ vi.mock('../server/actions', () => ({
   revokeAthleteShareAction: () => Promise.resolve({}),
 }));
 
+// The settings menu can offer withdrawing a portal access, and that entry's
+// action reaches the tRPC server client at import time. The tile never shows it.
+vi.mock('@/features/portal/server/actions', () => ({
+  revokePortalAccessAction: () => Promise.resolve({}),
+}));
+
 /**
  * The tile is a shortcut into a record, so what matters is that it leads to the
  * right one and shows only figures that have a query behind them.

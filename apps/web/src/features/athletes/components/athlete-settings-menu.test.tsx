@@ -22,6 +22,10 @@ vi.mock('../server/actions', () => ({
   revokeAthleteShareAction: () => Promise.resolve({}),
 }));
 
+vi.mock('@/features/portal/server/actions', () => ({
+  revokePortalAccessAction: () => Promise.resolve({}),
+}));
+
 /** Two colleagues in the same workspace — what a release may be offered to. */
 const COACHES = [
   { id: 'coach_b', name: 'Bea Trainerin' },
@@ -86,6 +90,37 @@ describe('the athlete settings menu', () => {
     await open();
 
     expect(screen.getByRole('menuitem', { name: /Athlet teilen/ })).toBeVisible();
+  });
+
+  it('offers withdrawing the portal access where there is one', async () => {
+    const user = userEvent.setup();
+    render(
+      <AthleteSettingsMenu
+        athleteId="ath_1"
+        firstName="Lena"
+        lastName="Hofmann"
+        archived={false}
+        hasPortalAccess
+        coaches={COACHES}
+        shares={[]}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Einstellungen: Lena Hofmann' }));
+
+    expect(screen.getByRole('menuitem', { name: 'Portalzugang entziehen' })).toBeVisible();
+    // Beside "Deaktivieren", never instead of it: one ends an account, the
+    // other suspends the coaching, and §21 lets an athlete have either without
+    // the other.
+    expect(screen.getByRole('menuitem', { name: 'Deaktivieren' })).toBeVisible();
+  });
+
+  it('says nothing about a portal access the athlete does not have', async () => {
+    // An entry that refused itself would leave a coach guessing which of the
+    // two withdrawals they were looking at.
+    await open();
+
+    expect(screen.queryByRole('menuitem', { name: /Portalzugang/ })).toBeNull();
   });
 
   it('does not offer the video analysis', async () => {
