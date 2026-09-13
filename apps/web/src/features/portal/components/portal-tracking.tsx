@@ -38,21 +38,32 @@ import {
  * Both are absent rather than disabled: a control the athlete cannot use is
  * still a control they can be confused by. The server refuses either way — the
  * procedures for them do not exist on this rung at all.
+ *
+ * `readOnly` applies that same rule to a **deactivated** account (§21). Such an
+ * account keeps the portal and loses the writes, and the tables used to show
+ * live fields that `writable()` then refused — the athlete typed, and the
+ * refusal arrived afterwards. Now the values are shown and the fields are gone.
+ * The refusal stays where it was; this changes what is offered, never what is
+ * allowed.
  */
 export function PortalTracking({
   nutrition,
   biofeedback,
   cycle,
+  readOnly = false,
 }: {
   readonly nutrition: NutritionWeekView | null;
   readonly biofeedback: BiofeedbackWeekView | null;
   readonly cycle: CycleMonthView | null;
+  /** True where the account is deactivated: everything readable, nothing writable. */
+  readonly readOnly?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-6">
       {nutrition === null ? null : (
         <NutritionWeek
           week={nutrition}
+          readOnly={readOnly}
           writes={{
             setValue: setPortalNutritionAction,
             clearValue: clearPortalNutritionAction,
@@ -63,6 +74,7 @@ export function PortalTracking({
       {biofeedback === null ? null : (
         <BiofeedbackWeek
           week={biofeedback}
+          readOnly={readOnly}
           writes={{
             setValue: setPortalBiofeedbackAction,
             clearValue: clearPortalBiofeedbackAction,
@@ -81,6 +93,7 @@ export function PortalTracking({
           </h3>
           <CycleMonth
             month={cycle}
+            readOnly={readOnly}
             writes={{
               setDay: setPortalBleedingDayAction,
               removeRange: removePortalBleedingAction,

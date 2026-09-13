@@ -119,11 +119,21 @@ export function BiofeedbackWeek({
   week,
   writes,
   onRemove,
+  readOnly = false,
 }: {
   readonly week: BiofeedbackWeekView;
   readonly writes: BiofeedbackWrites;
   /** Absent where the card cannot be taken off the page — the portal. */
   readonly onRemove?: (() => void) | undefined;
+  /**
+   * A deactivated athlete's portal: the week stays readable, the fields go.
+   *
+   * Defaults to false, so the coach's page is exactly what it was. The writes
+   * behind it refuse on their own either way — `writable()` in the procedure —
+   * and this only stops somebody typing into a field that cannot keep it. The
+   * remark travels with the value, so it is shown rather than edited.
+   */
+  readonly readOnly?: boolean;
 }) {
   const router = useRouter();
   const search = useSearchParams();
@@ -285,17 +295,30 @@ export function BiofeedbackWeek({
 
                     return (
                       <td key={day.toISOString()} className="px-1.5 py-1">
-                        <Cell
-                          writes={writes}
-                          day={day}
-                          quantity={row.quantity}
-                          cell={cell}
-                          noteOpen={openNote === id}
-                          onToggleNote={() => {
-                            setOpenNote((previous) => (previous === id ? null : id));
-                          }}
-                          onError={setError}
-                        />
+                        {readOnly ? (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <p className="text-center text-sm" data-numeric>
+                              {cell === null ? '—' : decimal(cell.value, 2)}
+                            </p>
+                            {cell?.note === null || cell === null ? null : (
+                              <p className="max-w-32 text-center text-[11px] text-pretty text-muted-foreground">
+                                {cell.note}
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <Cell
+                            writes={writes}
+                            day={day}
+                            quantity={row.quantity}
+                            cell={cell}
+                            noteOpen={openNote === id}
+                            onToggleNote={() => {
+                              setOpenNote((previous) => (previous === id ? null : id));
+                            }}
+                            onError={setError}
+                          />
+                        )}
                       </td>
                     );
                   })}

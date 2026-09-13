@@ -115,11 +115,20 @@ export function NutritionWeek({
   week,
   writes,
   onRemove,
+  readOnly = false,
 }: {
   readonly week: NutritionWeekView;
   readonly writes: NutritionWrites;
   /** Absent where the card cannot be taken off the page — the portal. */
   readonly onRemove?: (() => void) | undefined;
+  /**
+   * A deactivated athlete's portal: the week stays readable, the fields go.
+   *
+   * Defaults to false, so the coach's page is exactly what it was. The writes
+   * behind it refuse on their own either way — `writable()` in the procedure —
+   * and this only stops somebody typing into a field that cannot keep it.
+   */
+  readonly readOnly?: boolean;
 }) {
   const router = useRouter();
   const search = useSearchParams();
@@ -235,13 +244,21 @@ export function NutritionWeek({
 
                   {week.quantities.map((quantity) => (
                     <td key={quantity.key} className="px-1.5 py-1">
-                      <Cell
-                        writes={writes}
-                        day={day.date}
-                        quantity={quantity}
-                        cell={day.values[quantity.key]}
-                        onError={setError}
-                      />
+                      {readOnly ? (
+                        <p className="px-2 text-right text-sm" data-numeric>
+                          {forInput(day.values[quantity.key]) === ''
+                            ? '—'
+                            : forInput(day.values[quantity.key])}
+                        </p>
+                      ) : (
+                        <Cell
+                          writes={writes}
+                          day={day.date}
+                          quantity={quantity}
+                          cell={day.values[quantity.key]}
+                          onError={setError}
+                        />
+                      )}
                     </td>
                   ))}
 

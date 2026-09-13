@@ -195,7 +195,12 @@ export default async function PortalPage({
             Sie hier Ihre Werte ein.
           </p>
         ) : (
-          <PortalTracking nutrition={nutrition} biofeedback={biofeedback} cycle={cycle} />
+          <PortalTracking
+            nutrition={nutrition}
+            biofeedback={biofeedback}
+            cycle={cycle}
+            readOnly={me.archivedAt !== null}
+          />
         )}
       </section>
     </>

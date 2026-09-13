@@ -141,9 +141,19 @@ export interface CycleWrites {
 export function CycleMonth({
   month,
   writes,
+  readOnly = false,
 }: {
   readonly month: CycleMonthView;
   readonly writes: CycleWrites;
+  /**
+   * A deactivated athlete's portal: the month stays readable, the editing goes.
+   *
+   * The marks remain — what was documented is exactly what such an account is
+   * still entitled to see. What goes is the day becoming a button that opens an
+   * editor nothing can save. Defaults to false, so the coach's page is
+   * unchanged, and `writable()` still refuses in the procedure regardless.
+   */
+  readonly readOnly?: boolean;
 }) {
   const router = useRouter();
   const search = useSearchParams();
@@ -243,14 +253,27 @@ export function CycleMonth({
                 : BLEEDING_INTENSITY_LABELS_DE[day.intensity]
               : 'nichts dokumentiert';
 
-            return (
+            return readOnly ? (
+              <div
+                key={iso}
+                // Still the whole statement: a mark is a shape, and a screen
+                // reader cannot see how full it is.
+                aria-label={`${longDate(day.date)} — ${label}`}
+                className={`${TOUCH_TARGET} flex flex-col items-center justify-center gap-0.5 rounded-md py-1`}
+              >
+                <span className="text-[11px] text-muted-foreground" data-numeric>
+                  {day.date.getUTCDate()}
+                </span>
+                <Mark intensity={day.intensity} marked={day.marked} />
+              </div>
+            ) : (
               <button
                 key={iso}
                 type="button"
                 disabled={pending}
                 aria-expanded={openDay === iso}
-                // The whole statement, because the mark is a shape and a screen
-                // reader cannot see how full it is.
+                // The whole statement, because the mark is a shape and a
+                // screen reader cannot see how full it is.
                 aria-label={`${longDate(day.date)} — ${label}`}
                 onClick={() => {
                   setOpenDay((previous) => (previous === iso ? null : iso));
