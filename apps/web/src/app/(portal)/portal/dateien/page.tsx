@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react';
 
 import { TOUCH_TARGET } from '@/components/common/touch';
 import { PortalFiles } from '@/features/portal/components/portal-files';
+import { ReadOnlyNotice } from '@/features/portal/components/read-only-notice';
 import { api } from '@/trpc/server';
 
 import type { Metadata } from 'next';
@@ -39,6 +40,12 @@ export default async function PortalFilesPage() {
           Coach sieht dieselbe Ablage.
         </p>
       </div>
+
+      {me.archivedAt === null ? null : (
+        <ReadOnlyNotice>
+          neue Dateien lassen sich nicht mehr ablegen, umbenennen oder löschen.
+        </ReadOnlyNotice>
+      )}
 
       <PortalFiles folders={files.folders} files={files.assets} readOnly={me.archivedAt !== null} />
     </>

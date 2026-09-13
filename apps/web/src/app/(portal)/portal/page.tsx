@@ -9,6 +9,7 @@ import { ATHLETE_SEX_LABELS_DE } from '@/features/athletes/labels';
 import { MONTH_PARAM, parseMonth, startOfMonth } from '@/features/athletes/month';
 import { parseWeek, startOfWeek, WEEK_PARAM } from '@/features/athletes/week';
 import { PortalTracking } from '@/features/portal/components/portal-tracking';
+import { ReadOnlyNotice } from '@/features/portal/components/read-only-notice';
 import { api } from '@/trpc/server';
 
 import type { Metadata } from 'next';
@@ -84,10 +85,7 @@ export default async function PortalPage({
           refuse in the procedure. Saying so here means nobody types into a
           field and wonders why it did not stick. */}
       {me.archivedAt === null ? null : (
-        <p className="rounded-md border border-border bg-muted px-4 py-3 text-sm text-pretty text-muted-foreground">
-          Ihr Zugang ist auf Lesen gestellt. Sie sehen weiterhin alles, was zu Ihnen gehört, und
-          können es herunterladen — neue Einträge sind nicht mehr möglich.
-        </p>
+        <ReadOnlyNotice>neue Einträge sind nicht mehr möglich.</ReadOnlyNotice>
       )}
 
       <section aria-labelledby="my-data" className="flex flex-col gap-4">
