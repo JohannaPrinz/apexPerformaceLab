@@ -17,7 +17,6 @@ import {
   type AthleteSex,
   scaleDirectionOf,
   selfComparisons,
-  seriesIdentity,
   targetForReading,
   meetsAngleTarget,
   hasTempo,
@@ -44,6 +43,8 @@ import {
 import type { TenantContext } from '@apex/types';
 
 import { chartsForTests, type ChartGroup } from '@/features/assessments';
+
+import { cohortOf } from './cohort';
 
 import type { CreateReportInput } from '../schemas';
 
@@ -928,7 +929,7 @@ export async function assessmentEvaluation(
    * athlete — the assessment's own and everything earlier it may be compared
    * with. One query rather than one per test.
    */
-  const [readings, peers] = await Promise.all([
+  const [readings, cohortTests, cohortGroups] = await Promise.all([
     moduleKeys.length === 0
       ? []
       : db.measurement.findMany({
@@ -969,42 +970,63 @@ export async function assessmentEvaluation(
           orderBy: [{ capturedAt: 'asc' }, { id: 'asc' }],
         }),
     /**
-     * The cohort, read in the same wave.
+     * The cohort, read in the same wave — as two reads, and without a cap.
      *
      * It is the same question asked of everybody else, and it never depended on
      * this athlete's own values — only on the test types and on who is *not*
      * this athlete, both known already. It used to run last, behind the
      * exercises, which put two round trips in front of it for nothing.
+     *
+     * It also used to be every reading, cut off at 5000. Past that, whole
+     * athletes went missing and others were cut in half, and a percentile
+     * published from it stays wrong in the document forever. Now the database
+     * hands over each test's extremes per coordinate, which is all a percentile
+     * uses, and `cohortOf` merges them into athletes and series — see there for
+     * why that is exact.
+     *
+     * The tests are read on their own because the grouping cannot reach two
+     * things it needs: whose test it is, a relation, and which protocol it was
+     * run under, which lives in the stored configuration.
      */
     moduleKeys.length === 0
       ? []
-      : db.measurement.findMany({
+      : db.assessmentModule.findMany({
+          where: scoped(tenant, {
+            moduleKey: { in: moduleKeys },
+            archivedAt: null,
+            assessment: { case: { athleteId: { not: athleteId } } },
+          }),
+          select: {
+            id: true,
+            payload: true,
+            moduleVersion: true,
+            assessment: { select: { case: { select: { athleteId: true } } } },
+          },
+        }),
+    moduleKeys.length === 0
+      ? []
+      : db.measurement.groupBy({
+          by: [
+            'assessmentModuleId',
+            'measurementTypeId',
+            'side',
+            'exerciseId',
+            'passIndex',
+            'context',
+          ],
           where: scoped(tenant, {
             supersededById: null,
+            // What the row read skipped one by one: a reading with no number
+            // has no place in a percentile.
+            numericValue: { not: null },
             assessmentModule: {
               moduleKey: { in: moduleKeys },
               archivedAt: null,
               assessment: { case: { athleteId: { not: athleteId } } },
             },
           }),
-          select: {
-            measurementTypeId: true,
-            side: true,
-            exerciseId: true,
-            passIndex: true,
-            context: true,
-            numericValue: true,
-            capturedAt: true,
-            assessmentModule: {
-              select: {
-                id: true,
-                payload: true,
-                moduleVersion: true,
-                assessment: { select: { case: { select: { athleteId: true } } } },
-              },
-            },
-          },
-          take: 5000,
+          _min: { numericValue: true },
+          _max: { numericValue: true },
         }),
   ]);
 
@@ -1065,40 +1087,18 @@ export async function assessmentEvaluation(
    * not one — and each other athlete contributes their best value, so whoever
    * was tested most often does not weigh more than whoever was tested once.
    */
-  const cohort = new Map<string, Map<string, { lowest: number; highest: number }>>();
-
-  for (const row of peers) {
-    const value = row.numericValue === null ? null : Number(row.numericValue.toString());
-    if (value === null || !Number.isFinite(value)) continue;
-
-    const identity = seriesIdentity({
-      measurementTypeId: row.measurementTypeId,
-      side: row.side,
-      exerciseId: row.exerciseId,
-      passIndex: row.passIndex,
-      context: row.context,
-      value,
-      capturedAt: row.capturedAt,
-      moduleId: row.assessmentModule.id,
-      protocolKey: protocolKey(protocolOf(row.assessmentModule)?.protocol ?? null),
-    });
-
-    const who = row.assessmentModule.assessment.case.athleteId;
-    const byAthlete =
-      cohort.get(identity) ?? new Map<string, { lowest: number; highest: number }>();
-    const held = byAthlete.get(who);
-
-    // Both extremes per athlete: which one is their *best* depends on the
-    // direction, and that is a property of the series being compared, not of
-    // this loop.
-    byAthlete.set(
-      who,
-      held === undefined
-        ? { lowest: value, highest: value }
-        : { lowest: Math.min(held.lowest, value), highest: Math.max(held.highest, value) },
-    );
-    cohort.set(identity, byAthlete);
-  }
+  const cohort = cohortOf(
+    cohortGroups,
+    new Map(
+      cohortTests.map((test) => [
+        test.id,
+        {
+          athleteId: test.assessment.case.athleteId,
+          protocolKey: protocolKey(protocolOf(test)?.protocol ?? null),
+        },
+      ]),
+    ),
+  );
 
   const named = new Map(
     readings.map((row) => [

@@ -842,24 +842,16 @@ function evaluationDb(options: {
       ),
       updateMany: vi.fn(() => Promise.resolve({ count: 1 })),
     },
+    /**
+     * Three reads, started together: this athlete's readings, and the cohort as
+     * its tests and its grouped extremes. The cohort is answered empty — it is
+     * its own question, with its own tests below, and these are about the first.
+     */
     measurement: {
-      /**
-       * Two reads, started together: this athlete's readings and the
-       * workspace's other athletes for the percentile. The cohort is answered
-       * empty — it is its own question, and these tests are about the first.
-       */
-      findMany: vi.fn(
-        ((): (() => Promise<unknown[]>) => {
-          let call = 0;
-
-          return () => {
-            call += 1;
-
-            return Promise.resolve(call === 1 ? (options.readings ?? []) : []);
-          };
-        })(),
-      ),
+      findMany: vi.fn(() => Promise.resolve(options.readings ?? [])),
+      groupBy: vi.fn(() => Promise.resolve([])),
     },
+    assessmentModule: { findMany: vi.fn(() => Promise.resolve([])) },
     exercise: { findMany: vi.fn(() => Promise.resolve(options.exercises ?? [])) },
   } as unknown as Parameters<typeof assessmentEvaluation>[0];
 
@@ -1105,6 +1097,10 @@ describe('the analysis screen read', () => {
         .findFirst,
       (db as unknown as { measurement: { findMany: { mock: { calls: unknown[][] } } } }).measurement
         .findMany,
+      (db as unknown as { measurement: { groupBy: { mock: { calls: unknown[][] } } } }).measurement
+        .groupBy,
+      (db as unknown as { assessmentModule: { findMany: { mock: { calls: unknown[][] } } } })
+        .assessmentModule.findMany,
     ]) {
       const where = (spy.mock.calls[0]?.[0] as { where?: Record<string, unknown> } | undefined)
         ?.where;
@@ -1205,8 +1201,6 @@ function recordingDb(events: string[]) {
     },
   ];
 
-  let measurementCall = 0;
-
   return {
     assessment: {
       findFirst: vi.fn(
@@ -1242,13 +1236,13 @@ function recordingDb(events: string[]) {
         }),
       ),
     },
+    assessmentModule: { findMany: vi.fn(read('cohortTests', [])) },
     measurement: {
+      groupBy: vi.fn(read('cohort', [])),
       findMany: vi.fn(() => {
-        measurementCall += 1;
-
         // One reading with an exercise on it, so the exercise read — the one
         // that genuinely depends on this answer — actually happens.
-        return read(measurementCall === 1 ? 'readings' : 'cohort', [
+        return read('readings', [
           {
             measurementTypeId: 'mt_1',
             side: 'BILATERAL',
@@ -1263,7 +1257,6 @@ function recordingDb(events: string[]) {
               moduleKey: 'lactate',
               payload: null,
               moduleVersion: 1,
-              assessment: { case: { athleteId: 'ath_other' } },
             },
             measurementType: { key: 'lactate', name: 'Laktat', unit: 'mmol/l' },
           },
@@ -1290,8 +1283,15 @@ describe('what the analysis read waits for', () => {
 
     await assessmentEvaluation(recordingDb(events), TENANT, 'ass_1', LABELS);
 
-    expect(events.indexOf('cohort:start')).toBeLessThan(events.indexOf('readings:end'));
-    expect(events.indexOf('readings:start')).toBeLessThan(events.indexOf('cohort:end'));
+    // All three: this athlete's readings, the cohort's tests and its extremes.
+    for (const [a, b] of [
+      ['readings', 'cohort'],
+      ['readings', 'cohortTests'],
+      ['cohort', 'cohortTests'],
+    ] as const) {
+      expect(events.indexOf(`${a}:start`)).toBeLessThan(events.indexOf(`${b}:end`));
+      expect(events.indexOf(`${b}:start`)).toBeLessThan(events.indexOf(`${a}:end`));
+    }
   });
 
   it('still waits where a read genuinely depends on another', async () => {
@@ -1324,6 +1324,7 @@ describe('what the analysis read waits for', () => {
     // The draft may have been asked for alongside it — that is the point of the
     // wave — but nothing beyond it was.
     expect(events.filter((entry) => entry.startsWith('readings'))).toEqual([]);
+    // `cohort` and `cohortTests` alike.
     expect(events.filter((entry) => entry.startsWith('cohort'))).toEqual([]);
   });
 });
@@ -1374,7 +1375,11 @@ describe('where the analysis screen gets its curves', () => {
     const fake = db as unknown as {
       assessment: { findFirst: { mock: { calls: unknown[] } } };
       report: { findFirst: { mock: { calls: unknown[] } } };
-      measurement: { findMany: { mock: { calls: unknown[] } } };
+      measurement: {
+        findMany: { mock: { calls: unknown[] } };
+        groupBy: { mock: { calls: unknown[] } };
+      };
+      assessmentModule: { findMany: { mock: { calls: unknown[] } } };
       exercise: { findMany: { mock: { calls: unknown[] } } };
     };
 
@@ -1382,6 +1387,8 @@ describe('where the analysis screen gets its curves', () => {
       fake.assessment.findFirst.mock.calls.length +
       fake.report.findFirst.mock.calls.length +
       fake.measurement.findMany.mock.calls.length +
+      fake.measurement.groupBy.mock.calls.length +
+      fake.assessmentModule.findMany.mock.calls.length +
       fake.exercise.findMany.mock.calls.length
     );
   };
@@ -1412,9 +1419,9 @@ describe('where the analysis screen gets its curves', () => {
     expect(reads(all)).toBe(reads(one));
   });
 
-  it('asks for no measurement beyond the two it already made', async () => {
-    // This athlete's readings and the cohort. A third would be the old curve
-    // read coming back.
+  it('asks for no measurement beyond the ones it already made', async () => {
+    // This athlete's readings and the cohort's extremes. A second row read
+    // would be the old curve read coming back.
     const db = evaluationDb({
       modules: eight,
       readings: eight.flatMap((entry) => stages(entry.id, entry.moduleKey)),
@@ -1422,9 +1429,15 @@ describe('where the analysis screen gets its curves', () => {
 
     await assessmentEvaluation(db, TENANT, 'ass_1', LABELS);
 
-    const fake = db as unknown as { measurement: { findMany: { mock: { calls: unknown[] } } } };
+    const fake = db as unknown as {
+      measurement: {
+        findMany: { mock: { calls: unknown[] } };
+        groupBy: { mock: { calls: unknown[] } };
+      };
+    };
 
-    expect(fake.measurement.findMany.mock.calls).toHaveLength(2);
+    expect(fake.measurement.findMany.mock.calls).toHaveLength(1);
+    expect(fake.measurement.groupBy.mock.calls).toHaveLength(1);
   });
 
   it('gives each test only its own readings', async () => {
