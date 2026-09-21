@@ -58,7 +58,10 @@ only module in the slice that touches `@apex/database`) → `actions.ts` (thin
 Server Action wrappers that call the service, so there is one implementation and
 one authorization path).
 
-Neither `router.ts` nor `service.ts` is re-exported from the slice's `index.ts`.
+`router.ts` is never re-exported from a slice's `index.ts`; `service.ts` and
+`actions.ts` stay private by default. The few exports that do cross that line
+carry their reason at the export and are governed by
+[feature-surface.md](feature-surface.md).
 
 ## Services vs. integrations
 
