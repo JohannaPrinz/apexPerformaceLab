@@ -44,9 +44,9 @@ hash, so a green run in milliseconds may be a replayed log, not a fresh check.
 
 ## Where the rest lives
 
-`.claude/rules/` holds four path-scoped rules — server/data, UI, testing,
-Prisma schema. They load by themselves when you open a file they match; you do
-not need to fetch them.
+`.claude/rules/` holds five path-scoped rules — server/data, UI, testing,
+Prisma schema, feature surface. They load by themselves when you open a file
+they match; you do not need to fetch them.
 
 Für dieses Repository `default`/`acceptEdits` verwenden, nicht Auto Mode, weil
 path-scoped Rules nur über den vorgesehenen Dateizugriff zuverlässig aktiviert
