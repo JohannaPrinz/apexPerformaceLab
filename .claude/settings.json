@@ -1,5 +1,6 @@
 {
   "permissions": {
+    "defaultMode": "acceptEdits",
     "allow": [
       "Bash(pnpm lint)",
       "Bash(pnpm typecheck)",

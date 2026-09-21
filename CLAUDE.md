@@ -48,6 +48,10 @@ hash, so a green run in milliseconds may be a replayed log, not a fresh check.
 Prisma schema. They load by themselves when you open a file they match; you do
 not need to fetch them.
 
+Für dieses Repository `default`/`acceptEdits` verwenden, nicht Auto Mode, weil
+path-scoped Rules nur über den vorgesehenen Dateizugriff zuverlässig aktiviert
+werden.
+
 Workflows are skills: **`/feature-slice`** for a new or extended vertical slice,
 and **`/db-migration`**, which is explicit-only because it changes database
 state.
