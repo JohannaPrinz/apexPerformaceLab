@@ -79,6 +79,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="en"
       suppressHydrationWarning
+      // `globals.css` scrolls smoothly for in-page anchors. This tells Next to
+      // switch that off while it changes routes, so a new page starts at the
+      // top instead of gliding there.
+      data-scroll-behavior="smooth"
       className={`${manrope.variable} ${inter.variable} ${plexMono.variable}`}
     >
       <body className="min-h-dvh antialiased">
