@@ -49,6 +49,18 @@ const DATE = new Intl.DateTimeFormat('de-DE', {
   year: '2-digit',
 });
 
+/** What "Athlet zuordnen und speichern" keeps, and what it leaves where it is. */
+export function keptSentence(stillsKept: boolean, videoStored: boolean): string {
+  const kept = stillsKept
+    ? 'Gespeichert werden die berechneten Werte, Ihre Auswertung und die Standbilder.'
+    : 'Gespeichert werden die berechneten Werte und Ihre Auswertung; die Standbilder bleiben auf diesem Gerät.';
+  const video = videoStored
+    ? 'Das Video bleibt in der Ablage des Athleten, bis Sie es löschen.'
+    : 'Das Video bleibt auf diesem Gerät.';
+
+  return `${kept} ${video}`;
+}
+
 export interface AthleteChoice {
   readonly id: string;
   readonly name: string;
@@ -80,6 +92,9 @@ export function AssignAnalysis({
   keyframes,
   movement,
   onRestart,
+  onSaved,
+  stillsKept = false,
+  videoStored = false,
 }: {
   readonly profile: MovementProfile;
   readonly tracks: readonly string[];
@@ -101,6 +116,12 @@ export function AssignAnalysis({
   readonly exerciseId: string;
   readonly recordedAt: string;
   readonly onRestart: () => void;
+  /** Told once the values are filed and the stills uploaded. */
+  readonly onSaved?: (() => void) | undefined;
+  /** Whether saving also keeps the stills — only where a store is configured. */
+  readonly stillsKept?: boolean;
+  /** Whether the video came from the athlete's files rather than this device. */
+  readonly videoStored?: boolean;
 }) {
   const [pending, startTransition] = useTransition();
 
@@ -190,6 +211,7 @@ export function AssignAnalysis({
         moduleId: state.moduleId ?? '',
         createdTest: state.createdTest ?? false,
       });
+      onSaved?.();
     });
   };
 
@@ -342,10 +364,13 @@ export function AssignAnalysis({
           </Button>
         </div>
 
+        {/* What saving keeps, said for the path this analysis took. It used to
+            say the stills stay on this device on every path — while the stored
+            path uploads them — which is the kind of sentence a coach decides
+            what to delete by. */}
         <p className="flex max-w-prose items-start gap-1.5 text-xs text-muted-foreground">
           <Info aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-          Gespeichert werden nur die berechneten Werte und Ihre Auswertung. Das Video und die
-          Standbilder bleiben auf diesem Gerät.
+          {keptSentence(stillsKept, videoStored)}
         </p>
       </div>
     </div>

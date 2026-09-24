@@ -90,6 +90,7 @@ export function AnalysisResults({
   keyframes,
   movement,
   onRestart,
+  onSaved,
 }: {
   readonly profile: MovementProfile;
   readonly tracks: readonly string[];
@@ -123,6 +124,8 @@ export function AnalysisResults({
   readonly exerciseId: string;
   readonly recordedAt: string;
   readonly onRestart: () => void;
+  /** Told once the values are filed and the stills uploaded. */
+  readonly onSaved?: (() => void) | undefined;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -204,6 +207,7 @@ export function AnalysisResults({
       }
 
       setSaved(state.savedCount ?? 0);
+      onSaved?.();
       router.refresh();
     });
   };

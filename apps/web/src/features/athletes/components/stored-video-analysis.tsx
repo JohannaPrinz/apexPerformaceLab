@@ -5,7 +5,7 @@ import { useMemo, useRef } from 'react';
 import { VideoAnalysis, type AnalysisTarget } from '@/features/movement';
 
 import {
-  deleteAthleteFileAction,
+  deleteAnalysedVideoAction,
   heartbeatAnalysisAction,
   releaseAnalysisSourceAction,
   startAnalysisAction,
@@ -104,7 +104,9 @@ export function StoredVideoAnalysis({
 
         await heartbeatAnalysisAction(assetId);
       },
-      remove: () => deleteAthleteFileAction(athleteId, assetId),
+      // Not the shelf's delete: that one refreshes the page, and a refreshed
+      // analysis page without its video discards the analysis on screen.
+      remove: () => deleteAnalysedVideoAction(athleteId, assetId),
     }),
     [athleteId, assetId, fileName, mimeType],
   );

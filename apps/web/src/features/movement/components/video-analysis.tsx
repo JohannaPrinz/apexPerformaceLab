@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { useRouter } from 'next/navigation';
+
 import { Download, FileVideo, Pause, Play, RotateCcw, ShieldCheck, Square } from 'lucide-react';
 
 import {
@@ -47,6 +49,7 @@ import { AnalysisResults } from './analysis-results';
 import { AnalysisSetup } from './analysis-setup';
 import { AssignAnalysis, type AssessmentChoice, type AthleteChoice } from './assign-analysis';
 import { KeyframeStrip } from './keyframe-strip';
+import { StoredVideoRemoval } from './stored-video-removal';
 
 import type { PoseLandmarker } from '@mediapipe/tasks-vision';
 
@@ -115,9 +118,10 @@ export type AnalysisTarget =
  * While an analysis holds a stored video, that video must not be deleted.
  * `load` is where the hold is taken — it is the moment the analysis really
  * begins — and `release` is how it comes off, on every way out. `remove` is the
- * offer made afterwards: a
- * form-check recording usually has no reason to survive its own analysis, and
- * the plan this product runs on is 1 GB.
+ * offer made once the analysis has been **saved**, and not before: a form-check
+ * recording usually has no reason to survive its own analysis, and the plan
+ * this product runs on is 1 GB — but until it is saved, the analysis exists on
+ * this screen only. See `StoredVideoRemoval`.
  *
  * Both arrive bound, from the slice that owns the athlete — this component
  * knows about a video, not about whose it is.
@@ -239,17 +243,14 @@ export function VideoAnalysis({
   useEffect(() => release, [release]);
 
   /**
-   * Whether the coach has waved the deletion offer away.
+   * Whether this analysis has been filed — values on a test, stills uploaded.
    *
-   * The offer itself is **derived** from the phase rather than stored: it is on
-   * screen exactly while there is a finished analysis of a stored video that
-   * nobody has answered about yet. A second piece of state saying the same
-   * thing would be a second thing that can disagree with the first.
+   * Reported up by the results panel that did the saving. It is what decides
+   * whether the stored video may be offered for deletion: before it, the
+   * analysis lives on this screen and nowhere else. See `StoredVideoRemoval`.
    */
-  const [offerDismissed, setOfferDismissed] = useState(false);
-  const [removing, setRemoving] = useState(false);
-  const [removed, setRemoved] = useState(false);
-  const [removalError, setRemovalError] = useState<string | null>(null);
+  const [analysisSaved, setAnalysisSaved] = useState(false);
+  const router = useRouter();
   /** Guards against a second release when React runs an effect twice. */
   const releasedRef = useRef(false);
 
@@ -313,25 +314,6 @@ export function VideoAnalysis({
       clearInterval(timer);
     };
   }, [source]);
-
-  const removeStoredVideo = () => {
-    if (source === undefined) return;
-
-    setRemoving(true);
-    setRemovalError(null);
-
-    void source.remove().then(
-      (result) => {
-        setRemoving(false);
-        if (result.message) setRemovalError(result.message);
-        else setRemoved(true);
-      },
-      () => {
-        setRemoving(false);
-        setRemovalError('Das Video konnte nicht gelöscht werden.');
-      },
-    );
-  };
 
   /**
    * `choose`, reachable from an effect without being one of its dependencies.
@@ -530,7 +512,22 @@ export function VideoAnalysis({
     release();
     setDrafts({});
     setExcluded([]);
+    setAnalysisSaved(false);
     setPhase({ kind: 'empty' });
+  };
+
+  /**
+   * Starting over.
+   *
+   * For a picked file, this screen simply empties. A stored video was chosen
+   * before the screen opened and is loaded once, on arrival — emptying the
+   * screen would leave "Aus der Ablage" with nothing to analyse, and after a
+   * deletion nothing that could ever be loaded again. So a stored video's
+   * restart is a fresh analysis page instead.
+   */
+  const restart = () => {
+    if (source === undefined) reset();
+    else router.push('/videoanalyse');
   };
 
   const values = useMemo(
@@ -556,60 +553,6 @@ export function VideoAnalysis({
 
   const configuring = phase.kind === 'empty' || phase.kind === 'chosen';
 
-  /**
-   * What to do with the recording now that its numbers are safe.
-   *
-   * Offered rather than done: the analysis is stored independently of the video
-   * it came from, so deleting costs nothing — but it is still the coach's file
-   * and their decision. **Only the video.** The stills the analysis produced
-   * have their own lifecycle and are not touched (§18).
-   */
-  const removalOffer =
-    source === undefined || phase.kind !== 'done' || offerDismissed || removed ? null : (
-      <div
-        role="dialog"
-        aria-label="Video löschen?"
-        className="flex flex-col gap-3 rounded-md border border-accent bg-accent-soft p-4 text-accent-soft-foreground"
-      >
-        <div className="flex flex-col gap-1">
-          <h3 className="text-sm font-medium">Video jetzt löschen?</h3>
-          <p className="max-w-prose text-xs text-pretty">
-            Die Auswertung ist gespeichert und bleibt erhalten, auch ohne das Video. Die Standbilder
-            werden nicht gelöscht. Wenn Sie die Aufnahme nicht mehr brauchen, hält das Löschen den
-            Speicher klein.
-          </p>
-        </div>
-
-        {removalError === null ? null : (
-          <p role="alert" className="text-xs text-destructive">
-            {removalError}
-          </p>
-        )}
-
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className={TOUCH_BUTTON}
-            disabled={removing}
-            onClick={removeStoredVideo}
-          >
-            {removing ? 'Wird gelöscht …' : 'Video löschen'}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            className={TOUCH_BUTTON}
-            onClick={() => {
-              setOfferDismissed(true);
-            }}
-          >
-            Video behalten
-          </Button>
-        </div>
-      </div>
-    );
-
   return (
     <div className="flex flex-col gap-8">
       {/* The promise this banner makes has to stay true. A picked file really
@@ -623,14 +566,6 @@ export function VideoAnalysis({
             : 'Das Video liegt bereits in der Ablage dieses Athleten und wird hier nur gelesen. Die Auswertung läuft auf diesem Gerät; gespeichert werden die berechneten Werte, wenn Sie sie übernehmen.'}
         </span>
       </p>
-
-      {removed ? (
-        <p className="rounded-md border border-border bg-muted px-4 py-3 text-sm text-muted-foreground">
-          Das Video wurde gelöscht. Die Auswertung bleibt erhalten.
-        </p>
-      ) : (
-        removalOffer
-      )}
 
       {configuring ? (
         <>
@@ -764,7 +699,12 @@ export function VideoAnalysis({
               suggestedAthleteId={target.suggestedAthleteId}
               exerciseId={exerciseId}
               recordedAt={phase.recordedAt}
-              onRestart={reset}
+              onRestart={restart}
+              onSaved={() => {
+                setAnalysisSaved(true);
+              }}
+              stillsKept={stillsKept}
+              videoStored={source !== undefined}
             />
           ) : target.configuration === null ? null : (
             <AnalysisResults
@@ -785,8 +725,18 @@ export function VideoAnalysis({
               recordedAt={phase.recordedAt}
               keyframes={phase.keyframes}
               movement={measuredMovement(profile, tracks, targets, phase.result)}
-              onRestart={reset}
+              onRestart={restart}
+              onSaved={() => {
+                setAnalysisSaved(true);
+              }}
             />
+          )}
+
+          {/* Below the results, where the save button is and where the
+              confirmation appears — the place a coach is looking at the moment
+              deleting the video becomes safe. */}
+          {source === undefined ? null : (
+            <StoredVideoRemoval saved={analysisSaved} remove={source.remove} />
           )}
         </>
       ) : null}

@@ -141,6 +141,35 @@ export async function deleteAthleteFileAction(
   return {};
 }
 
+/**
+ * Deletes the video an analysis screen was working on — and only that.
+ *
+ * ## Why not `deleteAthleteFileAction`
+ *
+ * The same procedure, the same checks, the same deletion; what this leaves out
+ * is the `revalidatePath`. A Server Action that revalidates makes Next re-render
+ * the page it was called from, and the analysis page, asked again, no longer
+ * finds the video: it renders the plain picker instead, and the analysis the
+ * coach was still reading is thrown away with the component that held it. A
+ * browser run lost a finished analysis exactly that way.
+ *
+ * Nothing on the analysis page depends on the video being listed, so there is
+ * nothing to refresh there. The file shelf is a dynamic route and is read fresh
+ * the next time somebody opens it.
+ */
+export async function deleteAnalysedVideoAction(
+  athleteId: string,
+  assetId: string,
+): Promise<CoachFileState> {
+  try {
+    await api.athletes.deleteAssetFile({ athleteId, assetId });
+  } catch (error) {
+    return failed(error, 'Das Video konnte nicht gelöscht werden.');
+  }
+
+  return {};
+}
+
 /** What a resumable upload needs before it starts, and after it finishes. */
 export interface UploadTicketState {
   readonly ticket?: string;

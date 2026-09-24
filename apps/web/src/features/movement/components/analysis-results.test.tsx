@@ -146,6 +146,7 @@ function show(
     tracks?: readonly string[];
     targets?: readonly AngleTargetConfig[];
     configuration?: typeof CONFIGURATION;
+    onSaved?: () => void;
   } = {},
 ) {
   mocks.saves.length = 0;
@@ -176,6 +177,7 @@ function show(
       exerciseId="ex_1"
       recordedAt="2026-08-27T10:00:00.000Z"
       onRestart={vi.fn()}
+      onSaved={options.onSaved}
     />,
   );
 }
@@ -317,6 +319,26 @@ describe('the coach decides what is kept', () => {
     await user.click(screen.getByRole('button', { name: /Ergebnisse speichern/ }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('nicht mehr erreichbar');
+  });
+
+  it('tells the screen once the values are saved, and not for a refusal', async () => {
+    // The video screen waits for this before it offers to delete a stored
+    // video — before it, the analysis exists nowhere but on the screen.
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    const { unmount } = show({ onSaved });
+
+    await user.click(screen.getByRole('button', { name: /Ergebnisse speichern/ }));
+    await screen.findByText(/zum Test gespeichert/);
+    expect(onSaved).toHaveBeenCalledTimes(1);
+    unmount();
+
+    const refused = vi.fn();
+    show({ onSaved: refused });
+    mocks.failure = 'Dieser Test ist nicht mehr erreichbar.';
+    await user.click(screen.getByRole('button', { name: /Ergebnisse speichern/ }));
+    await screen.findByRole('alert');
+    expect(refused).not.toHaveBeenCalled();
   });
 
   it('confirms what was saved', async () => {
