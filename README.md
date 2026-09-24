@@ -19,10 +19,15 @@ A multi-tenant SaaS platform for coaches, athletes and teams.
 ---
 
 > [!IMPORTANT]
-> **This is a foundation release (v0.1.0).** It contains the architecture,
-> tooling and design system — **no product features yet**, deliberately. The
-> goal is a repository that a new engineer can clone, run and deploy on day
-> one, and that a growing product can be built into without restructuring.
+> **Status: product build-out on the v0.1.0 foundation.** The architecture,
+> tooling and design system described below are in place, and nine feature
+> slices are built on them — `auth`, `athletes`, `cases`, `assessments`,
+> `reports`, `portal`, `exercises`, `movement` and `cycle` — alongside one
+> deliberate technical spike, `pose-poc`. Ten further slices exist as a
+> directory with a `README.md` stating their intended scope and no code yet.
+> The original goal still holds: a repository a new engineer can clone, run and
+> deploy on day one, and that a growing product can be built into without
+> restructuring.
 
 ## Contents
 
@@ -66,12 +71,11 @@ Three decisions shape everything in this repository:
 | **Database**   | [PostgreSQL](https://www.postgresql.org) + [Prisma](https://www.prisma.io)                                   |
 | **Auth**       | [Better Auth](https://better-auth.com) — self-hosted, organization-aware                                     |
 | **Validation** | [Zod](https://zod.dev)                                                                                       |
-| **Storage**    | [Cloudflare R2](https://developers.cloudflare.com/r2/)                                                       |
-| **Email**      | [Resend](https://resend.com)                                                                                 |
-| **Jobs**       | [Trigger.dev](https://trigger.dev)                                                                           |
-| **Analytics**  | [PostHog](https://posthog.com)                                                                               |
+| **Storage**    | [Supabase Storage](https://supabase.com/docs/guides/storage) — private bucket, reads go through the app      |
+| **Email**      | SMTP via [Nodemailer](https://nodemailer.com) — the coach's own mailbox                                      |
+| **Pose**       | [MediaPipe Tasks Vision](https://ai.google.dev/edge/mediapipe) — movement analysis, on the device            |
 | **Monorepo**   | [pnpm workspaces](https://pnpm.io/workspaces) + [Turborepo](https://turbo.build)                             |
-| **Testing**    | [Vitest](https://vitest.dev) + Testing Library                                                               |
+| **Testing**    | [Vitest](https://vitest.dev) + Testing Library, [Playwright](https://playwright.dev) for E2E                 |
 | **Hosting**    | [Vercel](https://vercel.com)                                                                                 |
 
 ## Architecture
@@ -131,12 +135,15 @@ features/<slice>/
 Slice names follow the domain model in
 [docs/domain/DOMAIN_DECISIONS.md](docs/domain/DOMAIN_DECISIONS.md):
 
-| Group                  | Slices                                                                            |
-| ---------------------- | --------------------------------------------------------------------------------- |
-| Domain core            | `athletes` · `cases` · `assessments` · `insights` · `recommendations` · `reports` |
-| Supporting objects     | `documents` · `videos` · `programs` · `notes` · `appointments`                    |
-| Cross-cutting surfaces | `timeline` · `portal`                                                             |
-| Frame                  | `auth` · `dashboard` · `settings`                                                 |
+| Group                  | Built                                            | Planned — README only                                          |
+| ---------------------- | ------------------------------------------------ | -------------------------------------------------------------- |
+| Domain core            | `athletes` · `cases` · `assessments` · `reports` | `insights` · `recommendations`                                 |
+| Supporting objects     | —                                                | `documents` · `videos` · `programs` · `notes` · `appointments` |
+| Catalogues             | `exercises`                                      | —                                                              |
+| Cross-cutting surfaces | `portal`                                         | `timeline`                                                     |
+| Frame                  | `auth`                                           | `dashboard` · `settings`                                       |
+| Independent tracking   | `cycle`                                          | —                                                              |
+| Analysis               | `movement`                                       | —                                                              |
 
 Two sub-areas sit inside the slice that owns their lifecycle:
 `assessments/measurements` and `reports/sharing`.
@@ -144,6 +151,10 @@ Two sub-areas sit inside the slice that owns their lifecycle:
 Assessment modules (`running`, `lactate`, `nutrition`, …) are **not** slices —
 they are data plus a registry in `packages/domain`, so adding a module never
 touches `features/`.
+
+`features/pose-poc/` is not a slice either: it is a self-contained technical
+spike behind the `/poc/pose` route, answering whether browser pose detection is
+smooth enough on a tablet. It stores nothing and knows nothing of the domain.
 
 Features do not import from each other's internals — permitted dependencies go
 exclusively through a slice's public `index.ts`, and shared code is promoted
@@ -219,7 +230,8 @@ pnpm dev                      # http://localhost:3000
 | `pnpm typecheck`                    | TypeScript across the monorepo                |
 | `pnpm lint` · `pnpm lint:fix`       | ESLint                                        |
 | `pnpm format` · `pnpm format:check` | Prettier                                      |
-| `pnpm test`                         | Vitest                                        |
+| `pnpm test`                         | Vitest across the monorepo                    |
+| `pnpm --filter @apex/web test:e2e`  | Playwright, against a production build        |
 | `pnpm clean`                        | Remove build output and `node_modules`        |
 | `pnpm db:generate`                  | Regenerate the Prisma client                  |
 | `pnpm db:migrate`                   | Create & apply a migration                    |
@@ -240,11 +252,12 @@ Turborepo caches by content hash — unchanged packages are not rebuilt.
 
 Enforced automatically, not by convention:
 
-| Gate           | When       | What                                        |
-| -------------- | ---------- | ------------------------------------------- |
-| lint-staged    | pre-commit | ESLint `--fix` + Prettier on staged files   |
-| commitlint     | commit-msg | Conventional Commits with a scope allowlist |
-| `tsc --noEmit` | pre-push   | Typecheck across the workspace              |
+| Gate           | When                     | What                                                                                                                                                                   |
+| -------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| lint-staged    | pre-commit               | Prettier on staged files, `prisma format` on the schema — **deliberately no ESLint**, which is configured per workspace and would mean up to five start-ups per commit |
+| commitlint     | commit-msg               | Conventional Commits with a scope allowlist                                                                                                                            |
+| Husky          | pre-push                 | `pnpm lint`, `pnpm typecheck`, `pnpm test` — cached per package                                                                                                        |
+| GitHub Actions | push to `main`, every PR | The same checks plus `format:check` and `build`, on a machine with no Turborepo cache to replay                                                                        |
 
 TypeScript runs in strict mode with `noUncheckedIndexedAccess` and
 `exactOptionalPropertyTypes`. Imports are absolute — `@/*` inside the app,
@@ -285,19 +298,20 @@ Every variable is documented in [`.env.example`](.env.example) and validated by
 [`apps/web/src/env.ts`](apps/web/src/env.ts) — a missing or malformed required
 variable fails the **build**, rather than surfacing as `undefined` at runtime.
 
-| Variable                                    | Required | Description                              |
-| ------------------------------------------- | -------- | ---------------------------------------- |
-| `DATABASE_URL`                              | ✅       | Pooled Postgres connection (runtime)     |
-| `DIRECT_URL`                                | ✅       | Unpooled connection (migrations)         |
-| `BETTER_AUTH_SECRET`                        | ✅       | ≥32 random bytes, unique per environment |
-| `BETTER_AUTH_URL`                           | ✅       | Full deployment URL                      |
-| `NEXT_PUBLIC_APP_URL`                       | ✅       | Full deployment URL                      |
-| `GITHUB_CLIENT_ID` / `_SECRET`              | ➖       | OAuth — omit to disable                  |
-| `GOOGLE_CLIENT_ID` / `_SECRET`              | ➖       | OAuth — omit to disable                  |
-| `R2_*`                                      | ➖       | Cloudflare R2 storage                    |
-| `RESEND_API_KEY` · `EMAIL_FROM`             | ➖       | Transactional email                      |
-| `TRIGGER_SECRET_KEY` · `TRIGGER_PROJECT_ID` | ➖       | Background jobs                          |
-| `NEXT_PUBLIC_POSTHOG_KEY` / `_HOST`         | ➖       | Analytics                                |
+| Variable                                                                 | Required | Description                                                              |
+| ------------------------------------------------------------------------ | -------- | ------------------------------------------------------------------------ |
+| `DATABASE_URL`                                                           | ✅       | Pooled Postgres connection (runtime)                                     |
+| `DIRECT_URL`                                                             | ✅       | Unpooled connection (migrations)                                         |
+| `BETTER_AUTH_SECRET`                                                     | ✅       | ≥32 random bytes, unique per environment                                 |
+| `BETTER_AUTH_URL`                                                        | ✅       | Full deployment URL                                                      |
+| `NEXT_PUBLIC_APP_URL`                                                    | ✅       | Full deployment URL                                                      |
+| `GITHUB_CLIENT_ID` / `_SECRET`                                           | ➖       | OAuth — omit to disable                                                  |
+| `GOOGLE_CLIENT_ID` / `_SECRET`                                           | ➖       | OAuth — omit to disable                                                  |
+| `SUPABASE_URL` · `SUPABASE_SERVICE_ROLE_KEY` · `SUPABASE_STORAGE_BUCKET` | ➖       | Object store — omit and file features stay out                           |
+| `SMTP_HOST` · `SMTP_PORT` · `SMTP_USER` · `SMTP_PASSWORD` · `EMAIL_FROM` | ➖       | Transactional email — omit and sending is refused, not guessed           |
+| `CRON_SECRET`                                                            | ➖       | Shared secret for scheduled route calls                                  |
+| `TRIGGER_SECRET_KEY` · `TRIGGER_PROJECT_ID`                              | ➖       | Reserved for background jobs — **no SDK or job code exists yet**         |
+| `NEXT_PUBLIC_POSTHOG_KEY` / `_HOST` · `NEXT_PUBLIC_ENABLE_ANALYTICS`     | ➖       | Reserved for analytics — **validated in `env.ts`, not yet instrumented** |
 
 > [!WARNING]
 > `NEXT_PUBLIC_*` variables are **inlined into the client bundle**. Only
@@ -351,21 +365,27 @@ Full guide, including rollback: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Roadmap
 
-| Phase                      | Focus                                                  | Status          |
-| -------------------------- | ------------------------------------------------------ | --------------- |
-| **0 — Foundation**         | Monorepo, architecture, design system, tooling         | ✅ this release |
-| **1 — Core platform**      | Auth flows, organizations, athletes, settings, uploads | Next            |
-| **2 — Coaching workflows** | Training plans, sessions, metrics, calendar, chat      | Planned         |
-| **3 — Intelligence**       | Analysis, AI-assisted planning, automated reporting    | Planned         |
-| **4 — Scale**              | Billing, limits, public API, mobile, observability     | Planned         |
+| Phase                      | Focus                                                  | Status                              |
+| -------------------------- | ------------------------------------------------------ | ----------------------------------- |
+| **0 — Foundation**         | Monorepo, architecture, design system, tooling         | ✅ done                             |
+| **1 — Core platform**      | Auth flows, organizations, athletes, settings, uploads | In progress — `settings` still open |
+| **2 — Coaching workflows** | Training plans, sessions, metrics, calendar, chat      | Planned                             |
+| **3 — Intelligence**       | Analysis, AI-assisted planning, automated reporting    | Planned                             |
+| **4 — Scale**              | Billing, limits, public API, mobile, observability     | Planned                             |
 
-Detail: [docs/ROADMAP.md](docs/ROADMAP.md).
+> [!NOTE]
+> These phases predate the domain model in [docs/domain/](docs/domain/) and do
+> not describe what was actually built next: assessments, reports, sharing, the
+> athlete portal and video-based movement analysis appear in no phase above.
+> Reconciling the two is an open product question — see
+> [docs/ROADMAP.md](docs/ROADMAP.md), which is still marked a placeholder.
 
 ### Known gaps
 
-Deliberate omissions at foundation stage, tracked so they are not mistaken for
-oversights: no CI pipeline, no rate limiting, no audit logging, no CSP, and no
-meaningful test suite. See
+Tracked so they are not mistaken for oversights: no rate limiting, no audit
+logging, and no Content-Security-Policy — the other security headers are set in
+[`apps/web/next.config.ts`](apps/web/next.config.ts). Integration tests against
+a real Postgres are still absent; see [TESTING.md §5](docs/TESTING.md). See also
 [ARCHITECTURE.md §9](docs/ARCHITECTURE.md#9-known-gaps) and
 [SECURITY.md §9](docs/SECURITY.md#9-open-items).
 

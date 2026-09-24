@@ -42,50 +42,94 @@ features/<slice>/
 4. **Authorization lives in `server/`.** Never in a component — a hidden button
    is not an access control.
 
-## Planned slices
+## Slices
+
+Every directory under `features/` appears below. **README only** means the
+directory holds a `README.md` describing its intended scope and no code yet —
+it is a placeholder, not a missing implementation.
 
 ### Domain core
 
 The chain from [DOMAIN_DECISIONS §3](../../../../docs/domain/DOMAIN_DECISIONS.md):
 `Workspace → Athlete → Performance Case → Assessment → Module → Measurement`
 
-| Slice             | Scope                                                            |
-| ----------------- | ---------------------------------------------------------------- |
-| `athletes`        | Roster, profiles, portal activation                              |
-| `cases`           | Performance Cases and Goals — the structural container           |
-| `assessments`     | Assessments, module composition, presets, the mandatory question |
-| `insights`        | Interpretation of measurements and their evidence                |
-| `recommendations` | Measures derived from insights, with their lifecycle             |
-| `reports`         | Reports across `MODULE`, `ASSESSMENT` and `CASE` scope           |
+| Slice             | Scope                                                            | Status      |
+| ----------------- | ---------------------------------------------------------------- | ----------- |
+| `athletes`        | Roster, profiles, portal activation, file shelf, tracking tables | built       |
+| `cases`           | Performance Cases and Goals — the structural container           | built       |
+| `assessments`     | Assessments, module composition, presets, the mandatory question | built       |
+| `reports`         | Reports across `MODULE`, `ASSESSMENT` and `CASE` scope           | built       |
+| `insights`        | Interpretation of measurements and their evidence                | README only |
+| `recommendations` | Measures derived from insights, with their lifecycle             | README only |
 
 ### Supporting objects
 
 Attached through the context ladder (Athlete → Case → Assessment → Module):
 
-| Slice          | Scope                                       |
-| -------------- | ------------------------------------------- |
-| `documents`    | Medical findings, files, uploaded plans     |
-| `videos`       | Video with annotations and AI analysis      |
-| `programs`     | Structured coaching plans built in Apex OS  |
-| `notes`        | Free-form text, written by Coach or Athlete |
-| `appointments` | Scheduled events, including competitions    |
+| Slice          | Scope                                       | Status      |
+| -------------- | ------------------------------------------- | ----------- |
+| `documents`    | Medical findings, files, uploaded plans     | README only |
+| `videos`       | Video with annotations and AI analysis      | README only |
+| `programs`     | Structured coaching plans built in Apex OS  | README only |
+| `notes`        | Free-form text, written by Coach or Athlete | README only |
+| `appointments` | Scheduled events, including competitions    | README only |
+
+> [!NOTE]
+> Files and video are already in the product, but not through these two slices.
+> Storage and deletion live in `src/services/assets`, the coach's shelf in
+> `athletes`, the athlete's in `portal`, and video analysis in `movement`.
+> Whether `documents` and `videos` still become slices, or whether these
+> directories should go, is an open question — it has not been decided here.
+
+### Catalogues
+
+Workspace- and system-owned reference data, not attached to an athlete:
+
+| Slice       | Scope                                                         | Status |
+| ----------- | ------------------------------------------------------------- | ------ |
+| `exercises` | The exercise catalogue, its variants and relationships (§12a) | built  |
+
+Measurement Types have no slice: the model is in `packages/domain`, the admin
+surface belongs to `settings`.
+
+### Analysis
+
+| Slice      | Scope                                                                  | Status |
+| ---------- | ---------------------------------------------------------------------- | ------ |
+| `movement` | Movement analysis from video, evaluated on the device — see its README | built  |
+
+### Independent tracking
+
+| Slice   | Scope                                                           | Status |
+| ------- | --------------------------------------------------------------- | ------ |
+| `cycle` | Documented bleeding, deliberately independent of any assessment | built  |
+
+`cycle` is schemas and a router only; the rules live in
+`src/services/tracking/cycle.ts`, because the coach's screens and the athlete's
+portal both write them.
 
 ### Cross-cutting surfaces
 
-| Slice      | Scope                                            |
-| ---------- | ------------------------------------------------ |
-| `timeline` | The athlete's complete history, as a projection  |
-| `portal`   | The athlete-facing surface and its access models |
+| Slice      | Scope                                            | Status      |
+| ---------- | ------------------------------------------------ | ----------- |
+| `portal`   | The athlete-facing surface and its access models | built       |
+| `timeline` | The athlete's complete history, as a projection  | README only |
 
 ### Frame
 
 No domain object of their own, but each is its own work area:
 
-| Slice       | Scope                                            |
-| ----------- | ------------------------------------------------ |
-| `auth`      | Sign-in/up, workspace switching, invitations     |
-| `dashboard` | Coach overview and KPI surfaces                  |
-| `settings`  | Workspace, coach profile, catalogue, preferences |
+| Slice       | Scope                                            | Status      |
+| ----------- | ------------------------------------------------ | ----------- |
+| `auth`      | Sign-in/up, workspace switching, invitations     | built       |
+| `dashboard` | Coach overview and KPI surfaces                  | README only |
+| `settings`  | Workspace, coach profile, catalogue, preferences | README only |
+
+### Not a slice
+
+| Directory  | What it is                                                                                                                                                                                         |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pose-poc` | A technical spike behind `app/(poc)/poc/pose/`: can browser pose detection run smoothly on a tablet? Stores nothing, knows neither Assessment nor Athlete nor Measurement. Removed with the trial. |
 
 ## Sub-areas
 
@@ -99,9 +143,9 @@ rather than as top-level slices:
 
 ## Deliberately not slices
 
-| Term                                | Where it belongs instead                                                                       |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `training`, `nutrition`, `sleep`, … | **Modules.** Module behaviour lives in the registry in `packages/domain`.                      |
-| Measurement Type catalogue          | `packages/domain` — the model; `features/settings` — the admin surface                         |
-| `analysis`, `performance`           | No equivalent in the domain. Use `insights`, `assessments/measurements` or `timeline`.         |
-| Evidence, Task, Follow-Up           | Not objects. Evidence is a relation, Task is a Recommendation status, Follow-Up is a workflow. |
+| Term                                | Where it belongs instead                                                                                                                                                                                                     |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `training`, `nutrition`, `sleep`, … | **Modules.** Module behaviour lives in the registry in `packages/domain`.                                                                                                                                                    |
+| Measurement Type catalogue          | `packages/domain` — the model; `features/settings` — the admin surface                                                                                                                                                       |
+| `analysis`, `performance`           | No equivalent in the domain as generic terms. Use `insights`, `assessments/measurements` or `timeline`. `movement` is not a counter-example: it is one named analysis method over video, not a home for analysis in general. |
+| Evidence, Task, Follow-Up           | Not objects. Evidence is a relation, Task is a Recommendation status, Follow-Up is a workflow.                                                                                                                               |
