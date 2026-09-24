@@ -20,7 +20,6 @@ import {
   listReportsSchema,
   reportIdSchema,
   createShareSchema,
-  publishReportSchema,
   setStillSchema,
   revokeShareSchema,
   setReportModuleSchema,
@@ -35,12 +34,20 @@ import {
   sweepAnalysisStills,
 } from './media';
 import {
+  analysesForAssessment,
+  analysisOfAssessment,
+  archiveReport,
   assessmentAnalysisOverview,
   assessmentEvaluation,
+  deleteDraftReport,
   publishReport,
   createReport,
   listReportsForAssessment,
+  otherOpenDrafts,
+  reopenUnsharedReport,
   reportReadiness,
+  reportSnapshot,
+  reportStatus,
   setReportModuleInclusion,
   updateDraftText,
   evaluationForReport,
@@ -121,6 +128,7 @@ export const reportsRouter = createTRPCRouter({
         ctx.tenant,
         input.assessmentId,
         moduleLabels,
+        input.reportId,
       );
 
       if (evaluation === null) return null;
@@ -207,7 +215,9 @@ export const reportsRouter = createTRPCRouter({
    */
   draftSnapshot: withPermission('report:read')
     .input(assessmentAnalysisSchema)
-    .query(({ ctx, input }) => draftSnapshot(ctx.db, ctx.tenant, input.assessmentId, moduleLabels)),
+    .query(({ ctx, input }) =>
+      draftSnapshot(ctx.db, ctx.tenant, input.assessmentId, moduleLabels, input.reportId),
+    ),
 
   /**
    * Removes the working files of analyses nobody came back to.
@@ -263,75 +273,26 @@ export const reportsRouter = createTRPCRouter({
     }),
 
   /**
-   * Freezes the analysis (§16). The point of no return: a published analysis is
-   * immutable, and a later change is a new version.
-   */
-  publish: withPermission('report:write')
-    .input(publishReportSchema)
-    .mutation(async ({ ctx, input }) => {
-      /**
-       * Copy the chosen stills, freeze the document, then clear the temporary
-       * ones — in that order.
-       *
-       * Freezing first would name pictures that were never written; clearing
-       * first would lose them if the copy failed. A failure in between leaves a
-       * temporary object for the bucket's lifecycle rule, which is the harmless
-       * direction.
-       */
-      const evaluation = await evaluationForReport(
-        ctx.db,
-        ctx.tenant,
-        input.reportId,
-        moduleLabels,
-      );
-
-      const included = (evaluation?.modules ?? []).filter((entry) => entry.included);
-      const frozen = await freezeReportMedia(input.reportId, included);
-
-      // The same curves the coach was looking at, frozen with the document: a
-      // staged test read without them is a column of numbers. Through the same
-      // batched read the screen uses, so the frozen curves cannot differ from
-      // the ones that were on screen.
-      const drawn = await measurementCharts(
-        ctx.db,
-        ctx.tenant,
-        included.map((entry) => entry.moduleId),
-      );
-
-      const withCurves = included.map((entry) => ({
-        moduleId: entry.moduleId,
-        charts: drawn.get(entry.moduleId) ?? [],
-      }));
-
-      const result = await publishReport(
-        ctx.db,
-        ctx.tenant,
-        input.reportId,
-        moduleLabels,
-        frozen,
-        withCurves,
-      );
-
-      if (result.ok) {
-        await discardAnalysisStills(
-          ctx.tenant,
-          included.map((entry) => entry.moduleId),
-        );
-      }
-
-      if (!result.ok && result.reason === 'NOT_FOUND') throw notFound('Analysis');
-      if (!result.ok) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: 'Diese Auswertung zieht keinen Test heran.',
-        });
-      }
-
-      return { ok: true };
-    }),
-
-  /**
-   * Grants access to a published analysis.
+   * Shares an analysis with the athlete — and, where it is still a draft,
+   * finishes it in the same act.
+   *
+   * ## Why sharing is what finishes an analysis
+   *
+   * An analysis used to be finished by a button of its own and shared by
+   * another. The coach put it more simply: an analysis is done when the athlete
+   * has it. Until then tests go in and out and the text changes; from then on
+   * it is the document the athlete holds (§16). So the freeze happens here, at
+   * the moment of handing over, and nowhere else.
+   *
+   * ## The order, and what happens when the second step fails
+   *
+   * The pictures are copied and the document frozen first, the link created
+   * second — a link must never open onto a document still being written. Should
+   * the link fail, the freeze is taken back: an analysis that is finished but
+   * was never shared is exactly the state this removes.
+   *
+   * The working stills are cleared only once no other draft of the assessment
+   * is open, because a second draft may be using the same pictures.
    *
    * The password comes back **once**, in this response, and is never readable
    * again — only its hash is stored.
@@ -339,19 +300,107 @@ export const reportsRouter = createTRPCRouter({
   createShare: withCoachPermission('report:write')
     .input(createShareSchema)
     .mutation(async ({ ctx, input }) => {
-      const share = await createReportShare(
-        ctx.db,
-        ctx.tenant,
-        ctx.coach.id,
-        input.reportId,
-        input.days,
-        input.password,
-        input.email,
-      );
+      const current = await reportStatus(ctx.db, ctx.tenant, input.reportId);
+      if (!current) throw notFound('Analysis');
+
+      if (current.status === 'ARCHIVED') {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Diese Auswertung ist archiviert und lässt sich nicht mehr teilen.',
+        });
+      }
+
+      const finishing = current.status === 'DRAFT';
+      const frozenTests = finishing ? await freezeForSharing(ctx, input.reportId) : [];
+
+      let share: Awaited<ReturnType<typeof createReportShare>> = null;
+
+      try {
+        share = await createReportShare(
+          ctx.db,
+          ctx.tenant,
+          ctx.coach.id,
+          input.reportId,
+          input.days,
+          input.password,
+          input.email,
+        );
+      } finally {
+        // A freeze no link followed is taken back — see above.
+        if (finishing && share === null) {
+          await reopenUnsharedReport(ctx.db, ctx.tenant, input.reportId);
+        }
+      }
 
       if (!share) throw notFound('Analysis');
 
+      if (
+        finishing &&
+        current.assessmentId !== null &&
+        (await otherOpenDrafts(ctx.db, ctx.tenant, current.assessmentId, input.reportId)) === 0
+      ) {
+        await discardAnalysisStills(ctx.tenant, frozenTests);
+      }
+
       return share;
+    }),
+
+  /**
+   * Every analysis of an assessment, with the counts its list shows.
+   *
+   * Drafts, shared ones and archived ones alike: the screen groups them, and
+   * reading them together keeps the groups from disagreeing with each other.
+   */
+  analyses: withPermission('report:read')
+    .input(listReportsSchema)
+    .query(({ ctx, input }) => analysesForAssessment(ctx.db, ctx.tenant, input.assessmentId)),
+
+  /** One analysis of an assessment, refused where the two do not belong together. */
+  analysis: withPermission('report:read')
+    .input(reportIdSchema.extend({ assessmentId: z.string().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      const found = await analysisOfAssessment(
+        ctx.db,
+        ctx.tenant,
+        input.assessmentId,
+        input.reportId,
+      );
+      if (!found) throw notFound('Analysis');
+
+      return found;
+    }),
+
+  /** The frozen document of one shared or archived analysis. */
+  snapshot: withPermission('report:read')
+    .input(reportIdSchema)
+    .query(({ ctx, input }) => reportSnapshot(ctx.db, ctx.tenant, input.reportId)),
+
+  /** Deletes an analysis nobody has been given. A shared one can only be archived. */
+  deleteDraft: withPermission('report:write')
+    .input(reportIdSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!(await deleteDraftReport(ctx.db, ctx.tenant, input.reportId))) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Nur eine noch nicht geteilte Auswertung lässt sich löschen.',
+        });
+      }
+
+      return { ok: true };
+    }),
+
+  /** Puts a shared analysis away and ends every link to it. */
+  archive: withPermission('report:write')
+    .input(reportIdSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!(await archiveReport(ctx.db, ctx.tenant, input.reportId))) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Nur eine geteilte Auswertung lässt sich archivieren.',
+        });
+      }
+
+      return { ok: true };
     }),
 
   /** Withdraws access. The row stays as part of the audit trail (§17). */
@@ -418,3 +467,56 @@ export const reportsRouter = createTRPCRouter({
       return readiness;
     }),
 });
+
+/** What a procedure behind a coach's write permission is handed. */
+type CoachWriteContext = Parameters<
+  Parameters<ReturnType<typeof withCoachPermission>['mutation']>[0]
+>[0]['ctx'];
+
+/**
+ * Copies the chosen stills and freezes the draft — the first half of sharing.
+ *
+ * Returns the tests the frozen document draws on, so the caller can clear
+ * their working stills once the link exists.
+ */
+async function freezeForSharing(ctx: CoachWriteContext, reportId: string): Promise<string[]> {
+  const evaluation = await evaluationForReport(ctx.db, ctx.tenant, reportId, moduleLabels);
+  const included = (evaluation?.modules ?? []).filter((entry) => entry.included);
+
+  /**
+   * Copy the chosen stills, then freeze — in that order. Freezing first would
+   * name pictures that were never written; a failure in between leaves a copy
+   * the bucket's lifecycle rule removes, which is the harmless direction.
+   */
+  const frozen = await freezeReportMedia(reportId, included);
+
+  // The same curves the coach was looking at, through the same batched read the
+  // screen uses, so the frozen curves cannot differ from the ones on screen.
+  const drawn = await measurementCharts(
+    ctx.db,
+    ctx.tenant,
+    included.map((entry) => entry.moduleId),
+  );
+
+  const result = await publishReport(
+    ctx.db,
+    ctx.tenant,
+    reportId,
+    moduleLabels,
+    frozen,
+    included.map((entry) => ({
+      moduleId: entry.moduleId,
+      charts: drawn.get(entry.moduleId) ?? [],
+    })),
+  );
+
+  if (!result.ok && result.reason === 'NOT_FOUND') throw notFound('Analysis');
+  if (!result.ok) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'Diese Auswertung zieht keinen Test heran und lässt sich deshalb nicht teilen.',
+    });
+  }
+
+  return included.map((entry) => entry.moduleId);
+}

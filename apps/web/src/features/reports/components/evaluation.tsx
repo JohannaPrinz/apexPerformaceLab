@@ -8,19 +8,14 @@ import { useRouter } from 'next/navigation';
 import { ExternalLink, EyeOff } from 'lucide-react';
 
 import type { AthleteSex, Tendency } from '@apex/domain';
-import { Button } from '@apex/ui';
 
 import { ActionMenu, ActionMenuItem } from '@/components/common/action-menu';
 import type { ChartGroupView } from '@/components/common/measurement-chart';
-import { FOCUS_RING, TOUCH_BUTTON, TOUCH_TARGET } from '@/components/common/touch';
+import { FOCUS_RING, TOUCH_TARGET } from '@/components/common/touch';
 
-import {
-  createAnalysisAction,
-  setAnalysisModuleAction,
-  setStillAction,
-  updateDraftTextAction,
-} from '../server/actions';
+import { setAnalysisModuleAction, setStillAction, updateDraftTextAction } from '../server/actions';
 
+import { NewAnalysisButton } from './analysis-lifecycle';
 import {
   documentFromEvaluation,
   mediaUrl,
@@ -385,47 +380,20 @@ function Basis({
 /**
  * Offered where an assessment has no analysis yet.
  *
- * Creating one is a single press and nothing else: the analysis draws on the
- * tests that recorded something, and everything a coach might disagree with is
+ * Creating one is a single press and nothing else: the analysis draws on every
+ * test that recorded something, and everything a coach might disagree with is
  * editable afterwards. Asking for a title first would be a decision before there
- * is anything to decide about.
+ * is anything to decide about. The new draft opens straight away.
  */
 export function StartEvaluation({ assessmentId }: { readonly assessmentId: string }) {
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-
-  const create = () => {
-    setError(null);
-    startTransition(async () => {
-      const result = await createAnalysisAction(assessmentId, 'Auswertung');
-      if (result.message) setError(result.message);
-      else router.refresh();
-    });
-  };
-
   return (
     <div className="flex flex-col items-start gap-3 rounded-md border border-dashed border-border p-6">
       <p className="max-w-prose text-sm text-pretty text-muted-foreground">
         Für dieses Assessment besteht noch keine Auswertung. Sie entsteht aus den erfassten Werten;
-        was Sie hineinschreiben, bleibt Ihres.
+        alle auswertbaren Tests sind zunächst ausgewählt, und was Sie hineinschreiben, bleibt Ihres.
       </p>
 
-      <Button
-        type="button"
-        variant="accent"
-        className={TOUCH_BUTTON}
-        disabled={pending}
-        onClick={create}
-      >
-        {pending ? 'Wird angelegt …' : 'Auswertung anlegen'}
-      </Button>
-
-      {error === null ? null : (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
-      )}
+      <NewAnalysisButton assessmentId={assessmentId} label="Auswertung anlegen" />
     </div>
   );
 }

@@ -216,7 +216,11 @@ export async function createReport(
   db: ReportDb,
   tenant: Pick<TenantContext, 'organizationId'>,
   authorCoachId: string,
-  { assessmentId, title }: CreateReportInput,
+  {
+    assessmentId,
+    title,
+    reuseOpenDraft = false,
+  }: Omit<CreateReportInput, 'reuseOpenDraft'> & { readonly reuseOpenDraft?: boolean },
 ): Promise<ReportRecord | null> {
   const assessment = await db.assessment.findFirst({
     where: scoped(tenant, { id: assessmentId }),
@@ -233,20 +237,23 @@ export async function createReport(
   if (!assessment) return null;
 
   /**
-   * An open analysis is the answer to "create one".
+   * An open analysis is the answer to "create one" — where the caller says so.
    *
-   * Idempotent on purpose: completing an assessment asks for an analysis every
-   * time, and a coach who presses the button twice must not end up with two
-   * drafts of the same examination. A *published* analysis does not stop a new
-   * version — that is what versions are for.
+   * Completing an assessment asks for an analysis every time, and completing it
+   * twice must not leave two drafts behind; that caller passes
+   * `reuseOpenDraft`. A coach pressing "Neue Auswertung" gets a new draft even
+   * where one is open: several analyses of one examination, drawing on
+   * different tests, are what that button is for.
    */
-  const open = await db.report.findFirst({
-    where: scoped(tenant, { assessmentId, status: 'DRAFT' as const }),
-    orderBy: [{ version: 'desc' }],
-    select: reportSelect,
-  });
+  if (reuseOpenDraft) {
+    const open = await db.report.findFirst({
+      where: scoped(tenant, { assessmentId, status: 'DRAFT' as const }),
+      orderBy: [{ version: 'desc' }],
+      select: reportSelect,
+    });
 
-  if (open) return open;
+    if (open) return open;
+  }
 
   const latest = await db.report.findFirst({
     where: scoped(tenant, { assessmentId }),
@@ -318,6 +325,9 @@ export async function listReportsForAssessment(
  * Upserted, because the row may not exist for a test added after the analysis
  * was created. Nothing about the module is written — its status, its
  * measurements and every other analysis are untouched.
+ *
+ * Only while the analysis is a draft. A shared one is finished (§16), and its
+ * tests are what the athlete was given.
  */
 export async function setReportModuleInclusion(
   db: ReportDb,
@@ -327,7 +337,12 @@ export async function setReportModuleInclusion(
   included: boolean,
 ): Promise<boolean> {
   const [report, assessmentModule] = await Promise.all([
-    db.report.findFirst({ where: scoped(tenant, { id: reportId }), select: { id: true } }),
+    // Only a draft: once an analysis is shared its tests are part of the
+    // document the athlete holds, and changing them would change what they read.
+    db.report.findFirst({
+      where: scoped(tenant, { id: reportId, status: 'DRAFT' as const }),
+      select: { id: true },
+    }),
     db.assessmentModule.findFirst({
       where: scoped(tenant, { id: moduleId }),
       select: { id: true },
@@ -588,10 +603,10 @@ export async function assessmentAnalysisOverview(
       expected: readiness.expected,
       level: readiness.level,
       selectable: hasResults && !archived,
-      // A test the draft says nothing about is not included — neither an
-      // archived one, which `createReport` deliberately writes no row for, nor
-      // one added after the draft was made.
-      included: (inclusion.get(entry.id) ?? false) && hasResults && !archived,
+      // A test the draft says nothing about is included where it can be: every
+      // test with results counts unless the coach took it out. An archived one
+      // never does, whatever a row says — and without a draft nothing is.
+      included: draft !== null && (inclusion.get(entry.id) ?? true) && hasResults && !archived,
     };
   });
 
@@ -853,6 +868,15 @@ export async function assessmentEvaluation(
   tenant: Pick<TenantContext, 'organizationId'>,
   assessmentId: string,
   labels: ModuleLabels,
+  /**
+   * Which draft, where the assessment has several.
+   *
+   * Left out, the newest draft — the only reading there was before a coach
+   * could keep more than one open. Everything that acts on one analysis passes
+   * it: freezing the newest draft when the coach shared an older one would hand
+   * the athlete a document they were never meant to get.
+   */
+  reportId?: string,
 ): Promise<AssessmentEvaluation | null> {
   /**
    * The examination and its draft, together.
@@ -900,7 +924,11 @@ export async function assessmentEvaluation(
       },
     }),
     db.report.findFirst({
-      where: scoped(tenant, { assessmentId, status: 'DRAFT' as const }),
+      where: scoped(tenant, {
+        assessmentId,
+        status: 'DRAFT' as const,
+        ...(reportId === undefined ? {} : { id: reportId }),
+      }),
       orderBy: [{ version: 'desc' }],
       select: {
         id: true,
@@ -1128,7 +1156,8 @@ export async function assessmentEvaluation(
    */
   const curves = chartsForTests(
     readings,
-    assessment.modules.filter((entry) => inclusion.get(entry.id) === true),
+    // The same default as the tests themselves: included unless taken out.
+    assessment.modules.filter((entry) => inclusion.get(entry.id) ?? true),
     exerciseNames,
   );
 
@@ -1158,7 +1187,9 @@ export async function assessmentEvaluation(
       status: entry.status,
       statusLabel: labels.moduleStatus(entry.status),
       blocked,
-      included: blocked === null && (inclusion.get(entry.id) ?? false),
+      // Every test with values counts unless the coach took it out — including
+      // one that recorded its first value after the draft was made.
+      included: blocked === null && (inclusion.get(entry.id) ?? true),
       recorded: readiness.recorded,
       expected: readiness.expected,
       derivations: (configuration?.derivations ?? []).map(
@@ -1373,6 +1404,235 @@ export async function publishedSnapshot(
   return report === null ? null : readReportSnapshot(report.content);
 }
 
+/** One analysis of an assessment, as the list of them shows it. */
+export interface AnalysisSummary extends ReportRecord {
+  readonly archivedAt: Date | null;
+  /** How many tests it draws on — as things stand for a draft, as frozen otherwise. */
+  readonly testCount: number;
+  /** Links the athlete can open right now. */
+  readonly activeShares: number;
+}
+
+/**
+ * Every analysis of one assessment, newest first, with what the list needs.
+ *
+ * ## Why the count is worked out two ways
+ *
+ * A draft includes every test with values unless the coach took it out, so its
+ * count follows the record: a test that records its first value today is in it.
+ * A shared analysis is a document, and its tests are the rows `publishReport`
+ * wrote when it was frozen — nothing recorded afterwards joins it.
+ */
+export async function analysesForAssessment(
+  db: Pick<PrismaClientInstance, 'report' | 'measurement'>,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  assessmentId: string,
+  now: Date = new Date(),
+): Promise<AnalysisSummary[]> {
+  const [reports, withValues] = await Promise.all([
+    db.report.findMany({
+      where: scoped(tenant, { assessmentId }),
+      orderBy: [{ version: 'desc' }],
+      select: {
+        ...reportSelect,
+        archivedAt: true,
+        modules: { select: { assessmentModuleId: true, included: true } },
+        shares: { select: { revokedAt: true, expiresAt: true } },
+      },
+    }),
+    // The tests a draft may draw on: standing values, and not archived.
+    db.measurement.groupBy({
+      by: ['assessmentModuleId'],
+      where: scoped(tenant, {
+        supersededById: null,
+        assessmentModule: { assessmentId, archivedAt: null },
+      }),
+    }),
+  ]);
+
+  const evaluable = withValues.map((entry) => entry.assessmentModuleId);
+
+  return reports.map(({ modules, shares, ...report }) => {
+    const rows = new Map(modules.map((entry) => [entry.assessmentModuleId, entry.included]));
+
+    return {
+      ...report,
+      testCount:
+        report.status === 'DRAFT'
+          ? evaluable.filter((moduleId) => rows.get(moduleId) ?? true).length
+          : modules.filter((entry) => entry.included).length,
+      activeShares: shares.filter(
+        (share) =>
+          share.revokedAt === null &&
+          (share.expiresAt === null || share.expiresAt.getTime() > now.getTime()),
+      ).length,
+    };
+  });
+}
+
+/**
+ * One analysis, found by its own id and checked against the assessment in the
+ * address.
+ *
+ * The pair has to match: an id from another assessment of the same workspace
+ * would otherwise open under the wrong examination's heading.
+ */
+export async function analysisOfAssessment(
+  db: Pick<PrismaClientInstance, 'report'>,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  assessmentId: string,
+  reportId: string,
+): Promise<(ReportRecord & { readonly archivedAt: Date | null }) | null> {
+  return db.report.findFirst({
+    where: scoped(tenant, { id: reportId, assessmentId }),
+    select: { ...reportSelect, archivedAt: true },
+  });
+}
+
+/**
+ * The frozen document of one shared or archived analysis.
+ *
+ * `null` for a draft — a draft has no document yet, only a working state.
+ */
+export async function reportSnapshot(
+  db: Pick<PrismaClientInstance, 'report'>,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  reportId: string,
+): Promise<ReportSnapshot | null> {
+  const report = await db.report.findFirst({
+    where: scoped(tenant, {
+      id: reportId,
+      status: { in: ['PUBLISHED' as const, 'ARCHIVED' as const] },
+    }),
+    select: { content: true },
+  });
+
+  return report === null ? null : readReportSnapshot(report.content);
+}
+
+/**
+ * Deletes an analysis that was never shared.
+ *
+ * ## Why only a draft
+ *
+ * A draft is working notes: the tests it picked and what the coach wrote. Once
+ * shared it is a document an athlete holds (§16, §17), and a document somebody
+ * was given is archived, never deleted — see `archiveReport`.
+ *
+ * The status and the absence of any link sit in the `where` of the delete, so a
+ * share created a moment earlier makes this match nothing rather than removing
+ * a document that just went out. Its inclusion rows go with it by cascade.
+ *
+ * The working stills of the video analyses are left alone: they belong to the
+ * tests, other drafts may be using them, and the sweep clears what nobody
+ * comes back to.
+ */
+export async function deleteDraftReport(
+  db: Pick<PrismaClientInstance, 'report'>,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  reportId: string,
+): Promise<boolean> {
+  const { count } = await db.report.deleteMany({
+    where: scoped(tenant, { id: reportId, status: 'DRAFT' as const, shares: { none: {} } }),
+  });
+
+  return count > 0;
+}
+
+/**
+ * Puts a shared analysis away — and takes it away from the athlete.
+ *
+ * ## Why archiving ends the access
+ *
+ * Archiving is the coach saying the document is no longer current. A link that
+ * kept opening it, or a portal that kept listing it, would go on presenting it
+ * as current to the one reader who cannot tell otherwise. So every link still
+ * standing is revoked in the same transaction, and the portal and the link page
+ * already read only published analyses.
+ *
+ * The document itself stays, readable by the coach: it was given to somebody,
+ * and what was given is part of the record. The links stay too, revoked — who
+ * had access and until when is the audit trail (§17).
+ */
+export async function archiveReport(
+  db: Pick<PrismaClientInstance, '$transaction'>,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  reportId: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  return db.$transaction(async (tx) => {
+    const { count } = await tx.report.updateMany({
+      where: scoped(tenant, { id: reportId, status: 'PUBLISHED' as const }),
+      data: { status: 'ARCHIVED', archivedAt: now },
+    });
+
+    if (count === 0) return false;
+
+    await tx.share.updateMany({
+      where: scoped(tenant, { reportId, revokedAt: null }),
+      data: { revokedAt: now },
+    });
+
+    return true;
+  });
+}
+
+/** Where one analysis stands, or `null` where the workspace has no such analysis. */
+export async function reportStatus(
+  db: Pick<PrismaClientInstance, 'report'>,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  reportId: string,
+): Promise<{
+  readonly status: ReportRecord['status'];
+  readonly assessmentId: string | null;
+} | null> {
+  return db.report.findFirst({
+    where: scoped(tenant, { id: reportId }),
+    select: { status: true, assessmentId: true },
+  });
+}
+
+/**
+ * Takes a freeze back that no link followed.
+ *
+ * Sharing freezes the analysis first and creates the link second. Should the
+ * second step fail, the analysis would be finished without ever having been
+ * shared — the one state the product no longer has. The condition that no link
+ * exists sits in the `where`, so this can never reopen a document somebody
+ * holds.
+ */
+export async function reopenUnsharedReport(
+  db: Pick<PrismaClientInstance, 'report'>,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  reportId: string,
+): Promise<boolean> {
+  const { count } = await db.report.updateMany({
+    where: scoped(tenant, { id: reportId, status: 'PUBLISHED' as const, shares: { none: {} } }),
+    data: { status: 'DRAFT', publishedAt: null },
+  });
+
+  return count > 0;
+}
+
+/**
+ * Whether another draft of this assessment is still open.
+ *
+ * Freezing an analysis used to clear the working stills of its tests at once.
+ * With several drafts over one examination that would take pictures out of a
+ * draft the coach has not shared yet, so the clearing waits until no draft is
+ * left — and the sweep takes whatever is abandoned.
+ */
+export async function otherOpenDrafts(
+  db: Pick<PrismaClientInstance, 'report'>,
+  tenant: Pick<TenantContext, 'organizationId'>,
+  assessmentId: string,
+  reportId: string,
+): Promise<number> {
+  return db.report.count({
+    where: scoped(tenant, { assessmentId, status: 'DRAFT' as const, id: { not: reportId } }),
+  });
+}
+
 /**
  * The evaluation behind one analysis, found by the analysis rather than by the
  * assessment.
@@ -1394,7 +1654,7 @@ export async function evaluationForReport(
 
   if (!report?.assessmentId) return null;
 
-  return assessmentEvaluation(db, tenant, report.assessmentId, labels);
+  return assessmentEvaluation(db, tenant, report.assessmentId, labels, reportId);
 }
 
 /**
@@ -1526,8 +1786,10 @@ export async function draftSnapshot(
   tenant: Pick<TenantContext, 'organizationId'>,
   assessmentId: string,
   labels: ModuleLabels,
+  /** Which draft; the newest where left out. */
+  reportId?: string,
 ): Promise<ReportSnapshot | null> {
-  const evaluation = await assessmentEvaluation(db, tenant, assessmentId, labels);
+  const evaluation = await assessmentEvaluation(db, tenant, assessmentId, labels, reportId);
   if (!evaluation) return null;
 
   const included = evaluation.modules.filter((entry) => entry.included);
@@ -1604,7 +1866,7 @@ export async function publishReport(
 
   if (!report?.assessmentId) return { ok: false, reason: 'NOT_FOUND' };
 
-  const evaluation = await assessmentEvaluation(db, tenant, report.assessmentId, labels);
+  const evaluation = await assessmentEvaluation(db, tenant, report.assessmentId, labels, report.id);
   if (!evaluation) return { ok: false, reason: 'NOT_FOUND' };
 
   const included = evaluation.modules.filter((entry) => entry.included);
@@ -1612,6 +1874,26 @@ export async function publishReport(
 
   const publishedAt = new Date();
   const content = composeSnapshot(evaluation, included, { publishedAt, media, curves });
+
+  /**
+   * The tests it drew on, written down.
+   *
+   * A draft counts a test with values as included unless the coach took it
+   * out, so a test can be in the document with no row saying so. Frozen, the
+   * rows have to say it: they are what the list of analyses counts, and a test
+   * recording its first value next week must not appear to join a document the
+   * athlete already holds.
+   */
+  await db.reportModule.createMany({
+    data: included.map((entry) =>
+      withTenant(tenant, {
+        reportId: report.id,
+        assessmentModuleId: entry.moduleId,
+        included: true,
+      }),
+    ),
+    skipDuplicates: true,
+  });
 
   const { count } = await db.report.updateMany({
     where: scoped(tenant, { id: reportId, status: 'DRAFT' as const }),

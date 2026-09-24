@@ -281,18 +281,30 @@ describe('creating an analysis', () => {
     expect(select.modules.where).toEqual({ archivedAt: null });
   });
 
-  it('answers with the open analysis rather than making a second one', async () => {
-    // Completing an assessment asks for an analysis every time. A coach who
-    // presses it twice must not end up with two drafts of one examination.
+  it('answers with the open analysis where the caller asks for that', async () => {
+    // Completing an assessment asks for an analysis every time. Completing it
+    // twice must not leave two drafts of one examination behind.
     const { db, created } = reportDb({ openDraft: { id: 'rep_open', version: 3 } });
 
     const report = await createReport(db, TENANT, 'coach_1', {
       assessmentId: 'ass_1',
       title: 'Auswertung',
+      reuseOpenDraft: true,
     });
 
     expect(report?.id).toBe('rep_open');
     expect(created).toHaveLength(0);
+  });
+
+  it('starts another draft beside an open one when the coach asks for a new analysis', async () => {
+    // Several analyses of one examination, over different tests, are what
+    // "Neue Auswertung" is for — an open draft does not stand in its way.
+    const { db, created } = reportDb({ openDraft: { id: 'rep_open', version: 3 } });
+
+    await createReport(db, TENANT, 'coach_1', { assessmentId: 'ass_1', title: 'Auswertung' });
+
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({ version: 3 });
   });
 
   it('refuses an assessment of another workspace', async () => {
@@ -1495,13 +1507,27 @@ describe('where the analysis screen gets its curves', () => {
 
   it('draws nothing where the analysis includes no test at all', async () => {
     const db = evaluationDb({
-      reportModules: [],
+      reportModules: [{ assessmentModuleId: 'mod_1', included: false }],
       readings: stages('mod_1', 'strength'),
     });
 
     const found = await assessmentEvaluation(db, TENANT, 'ass_1', LABELS);
 
     expect(found?.curves.size).toBe(0);
+  });
+
+  it('draws a test the draft says nothing about, because it is included by default', async () => {
+    // A test that recorded its first value after the draft was made has no row.
+    // It is in the analysis all the same, and its curve must be too.
+    const db = evaluationDb({
+      reportModules: [],
+      readings: stages('mod_1', 'strength'),
+    });
+
+    const found = await assessmentEvaluation(db, TENANT, 'ass_1', LABELS);
+
+    expect(found?.modules[0]?.included).toBe(true);
+    expect([...(found?.curves.keys() ?? [])]).toEqual(['mod_1']);
   });
 
   it('ignores an inclusion naming a test this assessment does not have', async () => {

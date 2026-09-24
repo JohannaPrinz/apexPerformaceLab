@@ -12,7 +12,8 @@ export {
 
 /**
  * Creating an analysis, for the one caller outside this slice: completing an
- * assessment. It is idempotent, so the caller never has to ask first.
+ * assessment. That caller passes `reuseOpenDraft`, so completing twice does not
+ * leave two drafts behind.
  */
 export { createAnalysisAction } from './server/actions';
 
@@ -22,7 +23,13 @@ export { SharedReport } from './components/shared-report';
 // they are looking at. See `SaveAsPdf`.
 export { SaveAsPdf } from './components/save-as-pdf';
 export { SharePasswordForm } from './components/share-password-form';
-export { PublishAndShare, type ShareRow } from './components/publish-and-share';
+export { ShareAnalysis, type AnalysisStatus, type ShareRow } from './components/share-analysis';
+export {
+  ArchiveAnalysisButton,
+  DeleteAnalysisButton,
+  NewAnalysisButton,
+} from './components/analysis-lifecycle';
+export { AnalysisList, type AnalysisListItem } from './components/analysis-list';
 
 /**
  * One analysed movement, drawn the way the report draws it.

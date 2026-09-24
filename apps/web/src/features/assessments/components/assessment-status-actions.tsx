@@ -84,11 +84,13 @@ export function AssessmentStatusActions({
        *
        * The same shape as §8's open case: mandatory in the model, never a manual
        * step. A coach who finishes an assessment has not asked for an empty
-       * screen with a button on it — and the call is idempotent, so pressing
+       * screen with a button on it — and it reuses an open draft, so pressing
        * "complete" twice cannot produce two drafts.
        */
       if (next === 'COMPLETED') {
-        const created = await createAnalysisAction(assessmentId, 'Auswertung');
+        const created = await createAnalysisAction(assessmentId, 'Auswertung', {
+          reuseOpenDraft: true,
+        });
 
         if (created.message) {
           setError(created.message);

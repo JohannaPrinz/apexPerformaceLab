@@ -22,9 +22,9 @@ export const metadata: Metadata = {
  *
  * It used to refuse anything unpublished, on the reasoning that a document
  * nobody published has no frozen version to print. That is true of the *record*
- * and wrong about the *coach*: publishing is irreversible, and the last chance
- * to read the thing properly — on paper, away from the screen it was written on
- * — falls before it, not after. So a draft prints, and says on every page that
+ * and wrong about the *coach*: sharing freezes the analysis for good, and the
+ * last chance to read the thing properly — on paper, away from the screen it
+ * was written on — falls before it, not after. So a draft prints, and says on every page that
  * it is a draft.
  *
  * The two are never confused. A published document carries the frozen snapshot,
@@ -43,15 +43,30 @@ export const metadata: Metadata = {
  */
 export default async function EvaluationPrintPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ assessmentId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { assessmentId } = await params;
+  const { auswertung } = await searchParams;
 
-  const published = await api.reports.publishedSnapshot({ assessmentId });
-  const snapshot = published ?? (await api.reports.draftSnapshot({ assessmentId }));
+  /**
+   * Which analysis, where the assessment has several.
+   *
+   * The screen always says; a link without it is from before an assessment
+   * could hold more than one, and still prints the newest shared analysis or,
+   * failing that, the newest draft.
+   */
+  const reportId = typeof auswertung === 'string' ? auswertung : undefined;
 
-  // Neither published nor drawing on a single test: there is no document.
+  const published =
+    reportId === undefined
+      ? await api.reports.publishedSnapshot({ assessmentId })
+      : await api.reports.snapshot({ reportId });
+  const snapshot = published ?? (await api.reports.draftSnapshot({ assessmentId, reportId }));
+
+  // Neither shared nor drawing on a single test: there is no document.
   if (snapshot === null) notFound();
 
   return (
@@ -79,8 +94,8 @@ function DraftMark() {
   return (
     <p className="rounded-md border border-dashed border-border bg-muted px-4 py-3 text-sm text-pretty print:hidden">
       <span className="font-medium">Entwurf.</span> Diese Auswertung ist noch nicht abgeschlossen —
-      sie lässt sich weiter ändern, und der Athlet hat sie nicht. Erst das Abschließen macht daraus
-      die Fassung, die geteilt wird.
+      sie lässt sich weiter ändern, und der Athlet hat sie nicht. Abgeschlossen ist sie erst, wenn
+      Sie sie mit dem Athleten teilen.
     </p>
   );
 }

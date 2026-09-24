@@ -61,8 +61,7 @@ export default async function AssessmentPage({
     // Only the counts the link needs. The analysis itself has its own screen
     // now, and reading it here would load a page nobody is looking at.
     api.reports.assessmentOverview({ assessmentId }),
-    // Whether one was already published: a finished analysis must not read as
-    // an invitation to start a second one.
+    // Which analyses exist, and where each stands — the link counts them.
     api.reports.listForAssessment({ assessmentId }),
   ]).catch((error: unknown) => {
     if (error instanceof TRPCError && error.code === 'NOT_FOUND') notFound();
@@ -128,8 +127,23 @@ export default async function AssessmentPage({
   /** Adding and configuring tests belongs to a live examination, not a closed one. */
   const live = assessment.status === 'PLANNED' || assessment.status === 'IN_PROGRESS';
 
-  // §16: a published analysis is the finished document, not a draft in progress.
-  const published = reports.find((entry) => entry.status === 'PUBLISHED');
+  /**
+   * What the link to the analyses says.
+   *
+   * An assessment may hold several analyses now, and one is finished once it
+   * has been shared. The link names how many are still being written and how
+   * many went out, so a coach sees at a glance whether something is open.
+   */
+  const drafts = reports.filter((entry) => entry.status === 'DRAFT').length;
+  const shared = reports.filter((entry) => entry.status === 'PUBLISHED').length;
+  const archived = reports.filter((entry) => entry.status === 'ARCHIVED').length;
+  const analysisSummary = [
+    drafts === 0 ? null : drafts === 1 ? '1 Entwurf' : `${String(drafts)} Entwürfe`,
+    shared === 0 ? null : `${String(shared)} geteilt`,
+    archived === 0 ? null : `${String(archived)} archiviert`,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(' · ');
 
   return (
     <main className="mx-auto flex w-full max-w-content flex-col gap-8 px-6 py-12">
@@ -343,16 +357,12 @@ export default async function AssessmentPage({
         >
           <span className="flex min-w-0 flex-col gap-0.5">
             <span className="text-sm font-medium">
-              {published === undefined && analysis.draft === null
-                ? 'Auswertung anlegen'
-                : 'Auswertung öffnen'}
+              {reports.length === 0 ? 'Auswertung anlegen' : 'Auswertungen öffnen'}
             </span>
             <span className="text-xs text-muted-foreground" data-numeric>
-              {published === undefined
-                ? analysis.draft === null
-                  ? `${String(analysis.modules.filter((entry) => entry.selectable).length)} auswertbare Tests`
-                  : `Entwurf · Version ${String(analysis.draft.version)} · ${String(analysis.includedCount)} Tests einbezogen`
-                : `Abgeschlossen · Version ${String(published.version)}`}
+              {reports.length === 0
+                ? `${String(analysis.modules.filter((entry) => entry.selectable).length)} auswertbare Tests`
+                : analysisSummary}
             </span>
           </span>
 

@@ -159,6 +159,19 @@ for the Report, `ACTIVE → EXPIRED` for the Share. The Share state is **derived
 (`revokedAt` set, or `expiresAt` passed), never stored — two causes and one
 terminal state would otherwise need a job to stay true.
 
+What moves a Report along:
+
+- **`DRAFT`** — being written. An assessment may hold several drafts at once.
+  Every test with standing values is included unless a `ReportModule` row says
+  `included = false`. A draft may be **deleted**.
+- **`PUBLISHED`** — reached only by **sharing**: the first Share freezes the
+  snapshot and writes a `ReportModule` row for every test it drew on. There is
+  no publishing without a Share; should the Share fail, the freeze is taken back.
+  A published Report cannot be changed or deleted.
+- **`ARCHIVED`** — set by archiving a published Report, which revokes every
+  Share still standing in the same transaction. The snapshot stays readable to
+  the workspace.
+
 ### Supporting objects
 
 | Model             | Table               | Purpose                                                           |

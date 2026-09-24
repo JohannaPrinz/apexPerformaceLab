@@ -24,6 +24,14 @@ export type ReportScopeInput = z.infer<typeof reportScopeSchema>;
 export const createReportSchema = z.object({
   assessmentId: z.string().min(1),
   title: z.string().trim().min(1, 'Give the analysis a title.').max(200),
+  /**
+   * Hand back a draft that is already open instead of starting another.
+   *
+   * Only for the one caller that asks without a person deciding to: completing
+   * an assessment, which must not pile up a draft per click. "Neue Auswertung"
+   * leaves it off, because several drafts over different tests are the point.
+   */
+  reuseOpenDraft: z.boolean().default(false),
 });
 
 export type CreateReportInput = z.infer<typeof createReportSchema>;
@@ -54,6 +62,13 @@ export const listReportsSchema = z.object({
 /** What an analysis of this assessment could draw on. One id, nothing else. */
 export const assessmentAnalysisSchema = z.object({
   assessmentId: z.string().min(1),
+  /**
+   * Which analysis of the assessment, where there are several.
+   *
+   * Left out, the newest one is meant — the answer from before an assessment
+   * could hold more than one draft.
+   */
+  reportId: z.string().min(1).max(64).optional(),
 });
 
 export type AssessmentAnalysisInput = z.infer<typeof assessmentAnalysisSchema>;
@@ -91,7 +106,6 @@ export const updateDraftTextSchema = reportIdSchema.extend({
 export type UpdateDraftTextInput = z.infer<typeof updateDraftTextSchema>;
 
 /** Publishing takes nothing but the analysis it freezes. */
-export const publishReportSchema = reportIdSchema;
 
 /**
  * Granting access.

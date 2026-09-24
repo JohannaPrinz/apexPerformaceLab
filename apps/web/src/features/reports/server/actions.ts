@@ -28,6 +28,12 @@ const failed = (error: unknown, fallback: string): AnalysisActionState => ({
   message: error instanceof Error ? error.message : fallback,
 });
 
+/** Where an assessment's analyses are shown: the list, each one, and the assessment. */
+const refreshAnalyses = (assessmentId: string) => {
+  revalidatePath(`/assessments/${assessmentId}/auswertung`, 'layout');
+  revalidatePath(`/assessments/${assessmentId}`);
+};
+
 /**
  * Includes or excludes one test **for this analysis**.
  *
@@ -47,31 +53,48 @@ export async function setAnalysisModuleAction(
     return failed(error, 'Die Auswahl konnte nicht gespeichert werden.');
   }
 
-  revalidatePath(`/assessments/${assessmentId}`);
+  refreshAnalyses(assessmentId);
 
   return { status: 'idle' };
 }
 
+export interface AnalysisCreated extends AnalysisActionState {
+  /** The draft that now exists, so the screen can open it. */
+  readonly reportId?: string;
+}
+
 /**
- * Creates the draft analysis.
+ * Creates a draft analysis.
  *
  * A deliberate click, never a side effect of opening the section: an analysis
  * is a document with a version number, and one that appeared because somebody
  * looked at a page would be a document nobody decided to write.
+ *
+ * `reuseOpenDraft` is for completing an assessment, which asks every time and
+ * must not pile up drafts. "Neue Auswertung" leaves it off and always gets a
+ * new one — several analyses over different tests are what it is for.
  */
 export async function createAnalysisAction(
   assessmentId: string,
   title: string,
-): Promise<AnalysisActionState> {
+  options: { readonly reuseOpenDraft?: boolean } = {},
+): Promise<AnalysisCreated> {
+  let reportId: string;
+
   try {
-    await api.reports.create({ assessmentId, title });
+    const created = await api.reports.create({
+      assessmentId,
+      title,
+      reuseOpenDraft: options.reuseOpenDraft ?? false,
+    });
+    reportId = created.id;
   } catch (error) {
     return failed(error, 'Die Auswertung konnte nicht angelegt werden.');
   }
 
-  revalidatePath(`/assessments/${assessmentId}`);
+  refreshAnalyses(assessmentId);
 
-  return { status: 'idle' };
+  return { status: 'idle', reportId };
 }
 
 /** Which text of a draft an action addresses. */
@@ -101,23 +124,38 @@ export async function updateDraftTextAction(
 }
 
 /**
- * Freezes the analysis.
+ * Deletes an analysis that was never shared.
  *
- * The point of no return (§16), so it revalidates: every screen that showed a
- * draft now shows a document.
+ * A shared one is refused by the procedure — it can only be archived, because
+ * the athlete holds it.
  */
-export async function publishReportAction(
+export async function deleteAnalysisAction(
   assessmentId: string,
   reportId: string,
 ): Promise<AnalysisActionState> {
   try {
-    await api.reports.publish({ reportId });
+    await api.reports.deleteDraft({ reportId });
   } catch (error) {
-    return failed(error, 'Die Auswertung konnte nicht abgeschlossen werden.');
+    return failed(error, 'Die Auswertung konnte nicht gelöscht werden.');
   }
 
-  revalidatePath(`/assessments/${assessmentId}/auswertung`);
-  revalidatePath(`/assessments/${assessmentId}`);
+  refreshAnalyses(assessmentId);
+
+  return { status: 'idle' };
+}
+
+/** Archives a shared analysis, which ends every link the athlete holds to it. */
+export async function archiveAnalysisAction(
+  assessmentId: string,
+  reportId: string,
+): Promise<AnalysisActionState> {
+  try {
+    await api.reports.archive({ reportId });
+  } catch (error) {
+    return failed(error, 'Die Auswertung konnte nicht archiviert werden.');
+  }
+
+  refreshAnalyses(assessmentId);
 
   return { status: 'idle' };
 }
@@ -172,23 +210,22 @@ export async function createShareAction(
   email?: string,
 ): Promise<ShareCreated> {
   try {
+    const share = await api.reports.createShare({
+      reportId,
+      days,
+      password,
+      ...(email === undefined || email.trim() === '' ? {} : { email: email.trim() }),
+    });
+
     /**
-     * Read the published document, not the draft.
+     * Read the document this link opens, not the draft and not "the newest".
      *
-     * Sharing happens *after* publication, and by then there is no draft: asking
-     * for one returned nothing, and the message went out addressed to nobody,
-     * signed by nobody and dated today. The snapshot carries all three, frozen
-     * with the document the link opens.
+     * Sharing is what froze it, so it has to be read afterwards — and by its own
+     * id: an assessment can hold several analyses, and the message must be
+     * signed and dated by the one that went out. The snapshot carries the name,
+     * the author and the date, frozen with the document.
      */
-    const [share, snapshot] = await Promise.all([
-      api.reports.createShare({
-        reportId,
-        days,
-        password,
-        ...(email === undefined || email.trim() === '' ? {} : { email: email.trim() }),
-      }),
-      api.reports.publishedSnapshot({ assessmentId }),
-    ]);
+    const snapshot = await api.reports.snapshot({ reportId });
 
     const origin = (await headers()).get('origin') ?? env.NEXT_PUBLIC_APP_URL;
     const url = `${origin}/geteilt/${share.token}`;
@@ -205,7 +242,7 @@ export async function createShareAction(
       withOffer: true,
     });
 
-    revalidatePath(`/assessments/${assessmentId}/auswertung`);
+    refreshAnalyses(assessmentId);
 
     /**
      * The password travels separately, on purpose.
@@ -272,7 +309,7 @@ export async function revokeShareAction(
     return failed(error, 'Der Zugang konnte nicht zurückgezogen werden.');
   }
 
-  revalidatePath(`/assessments/${assessmentId}/auswertung`);
+  refreshAnalyses(assessmentId);
 
   return { status: 'idle' };
 }
