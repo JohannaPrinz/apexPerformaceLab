@@ -7,6 +7,7 @@ import {
   listAthleteAssets,
   listFolders,
   MAX_ASSET_BYTES,
+  MAX_FOLDER_DESCRIPTION,
   MAX_UPLOAD_BYTES,
   prepareResumableUpload,
   registerUploadedAsset,
@@ -43,8 +44,11 @@ interface FolderRow {
   organizationId: string;
   athleteId: string;
   name: string;
+  description?: string | null;
   createdAt: Date;
   createdByCoachId: string | null;
+  /** What the list selects alongside, for the name on the tile. */
+  createdByCoach?: { displayName: string | null; user: { name: string } | null } | null;
 }
 
 interface AssetRow {
@@ -248,6 +252,89 @@ describe('shelves', () => {
 
     expect(list.map((row) => row.id)).toEqual(['fol_1']);
     expect(filters[0]).toMatchObject({ organizationId: 'org_a', athleteId: 'ath_1' });
+  });
+});
+
+/**
+ * What a folder tile says about itself: what the folder is for, and who made it.
+ *
+ * The description is optional and must stay optional in the data — an empty
+ * box on a form is not something to store. And a tile names the coach who made
+ * a folder, so the list carries the name rather than every tile asking for it.
+ */
+describe('what a shelf says about itself', () => {
+  it('keeps a description, trimmed', async () => {
+    const { db, created } = dbFor();
+
+    await createFolder(
+      db as never,
+      TENANT,
+      'ath_1',
+      'Formcheck',
+      'coach_1',
+      '  Kniebeuge, seitlich  ',
+    );
+
+    expect(created[0]?.['description']).toBe('Kniebeuge, seitlich');
+  });
+
+  it('stores no description rather than an empty one', async () => {
+    const { db, created } = dbFor();
+
+    await createFolder(db as never, TENANT, 'ath_1', 'Formcheck', 'coach_1', '   ');
+    await createFolder(db as never, TENANT, 'ath_1', 'Befunde', null);
+
+    expect(created.map((row) => row['description'])).toEqual([null, null]);
+  });
+
+  it('caps a description at what a tile can hold', async () => {
+    const { db, created } = dbFor();
+
+    await createFolder(db as never, TENANT, 'ath_1', 'Formcheck', null, 'x'.repeat(400));
+
+    expect(String(created[0]?.['description'])).toHaveLength(MAX_FOLDER_DESCRIPTION);
+  });
+
+  it('leaves a description alone when only the name changes', async () => {
+    const { db } = dbFor({ folders: [folder()] });
+
+    await renameFolder(db as never, TENANT, 'ath_1', 'fol_1', 'Formcheck Herbst');
+
+    const data = (db.assetFolder.updateMany.mock.calls[0]?.[0] as { data: Record<string, unknown> })
+      .data;
+    expect(data).toEqual({ name: 'Formcheck Herbst' });
+  });
+
+  it('rewrites or clears a description when one is given', async () => {
+    const { db } = dbFor({ folders: [folder()] });
+
+    await renameFolder(db as never, TENANT, 'ath_1', 'fol_1', 'Formcheck', 'Neu beschrieben');
+    await renameFolder(db as never, TENANT, 'ath_1', 'fol_1', 'Formcheck', '');
+
+    const written = db.assetFolder.updateMany.mock.calls.map(
+      (call) => (call[0] as { data: Record<string, unknown> }).data['description'],
+    );
+    expect(written).toEqual(['Neu beschrieben', null]);
+  });
+
+  it('names the coach who made a folder, and nobody for the athlete', async () => {
+    const { db } = dbFor({
+      folders: [
+        folder({ createdByCoach: { displayName: 'Johanna Prinz', user: { name: 'Jojo' } } }),
+        folder({
+          id: 'fol_2',
+          name: 'Ohne Anzeigename',
+          createdByCoach: { displayName: null, user: { name: 'Jojo' } },
+        }),
+        folder({ id: 'fol_3', name: 'Eigene', createdByCoachId: null, createdByCoach: null }),
+      ],
+    });
+
+    const list = await listFolders(db as never, TENANT, 'ath_1');
+
+    expect(list.map((row) => row.createdByName)).toEqual(['Johanna Prinz', 'Jojo', null]);
+    // The joined coach row does not travel further than the name.
+    expect(list[0]).not.toHaveProperty('createdByCoach');
   });
 });
 

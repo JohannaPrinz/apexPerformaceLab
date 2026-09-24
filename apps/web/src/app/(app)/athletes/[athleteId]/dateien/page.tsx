@@ -27,10 +27,13 @@ export const metadata: Metadata = {
  */
 export default async function AthleteFilesPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ athleteId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { athleteId } = await params;
+  const { ordner } = await searchParams;
 
   const [athlete, files] = await Promise.all([
     api.athletes.byId({ athleteId }).catch((error: unknown) => {
@@ -60,7 +63,14 @@ export default async function AthleteFilesPage({
         </p>
       </div>
 
-      <CoachFiles athleteId={athleteId} folders={files.folders} files={files.assets} />
+      {/* The open folder is only a view: the shelf finds it among the folders
+          this athlete has, and a stale or foreign id simply shows the overview. */}
+      <CoachFiles
+        athleteId={athleteId}
+        folders={files.folders}
+        files={files.assets}
+        openFolderId={typeof ordner === 'string' ? ordner : null}
+      />
     </main>
   );
 }

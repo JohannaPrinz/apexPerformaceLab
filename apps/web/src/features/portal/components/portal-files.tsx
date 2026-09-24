@@ -30,16 +30,19 @@ import {
 export function PortalFiles({
   folders,
   files,
+  openFolderId,
   readOnly,
 }: {
   readonly folders: readonly ShelfFolder[];
   readonly files: readonly ShelfFile[];
+  readonly openFolderId: string | null;
   readonly readOnly: boolean;
 }) {
   return (
     <FileShelf
       folders={folders}
       files={files}
+      openFolderId={openFolderId}
       readOnly={readOnly}
       writes={{
         upload: uploadPortalFileAction,

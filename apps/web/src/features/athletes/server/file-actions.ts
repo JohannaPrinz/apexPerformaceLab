@@ -81,9 +81,10 @@ export async function uploadAthleteFileAction(
 export async function createAthleteFolderAction(
   athleteId: string,
   name: string,
+  description = '',
 ): Promise<CoachFileState> {
   try {
-    await api.athletes.createAssetFolder({ athleteId, name });
+    await api.athletes.createAssetFolder({ athleteId, name, description });
   } catch (error) {
     return failed(error, 'Der Ordner konnte nicht angelegt werden.');
   }
@@ -97,9 +98,10 @@ export async function renameAthleteFolderAction(
   athleteId: string,
   folderId: string,
   name: string,
+  description?: string,
 ): Promise<CoachFileState> {
   try {
-    await api.athletes.renameAssetFolder({ athleteId, folderId, name });
+    await api.athletes.renameAssetFolder({ athleteId, folderId, name, description });
   } catch (error) {
     return failed(error, 'Der Ordner konnte nicht umbenannt werden.');
   }

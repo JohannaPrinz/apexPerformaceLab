@@ -23,15 +23,18 @@ export function CoachFiles({
   athleteId,
   folders,
   files,
+  openFolderId,
 }: {
   readonly athleteId: string;
   readonly folders: readonly ShelfFolder[];
   readonly files: readonly ShelfFile[];
+  readonly openFolderId: string | null;
 }) {
   return (
     <FileShelf
       folders={folders}
       files={files}
+      openFolderId={openFolderId}
       writes={{
         upload: (form) => uploadAthleteFileAction(athleteId, form),
         // The existing analysis screen, pointed at a stored video. Only here:
@@ -41,8 +44,10 @@ export function CoachFiles({
           `/videoanalyse?athlete=${encodeURIComponent(athleteId)}&asset=${encodeURIComponent(assetId)}`,
         createTicket: (input) => createAthleteUploadTicketAction(athleteId, input),
         registerUpload: (ticket) => registerAthleteUploadAction(athleteId, ticket),
-        createFolder: (name) => createAthleteFolderAction(athleteId, name),
-        renameFolder: (folderId, name) => renameAthleteFolderAction(athleteId, folderId, name),
+        createFolder: (name, description) =>
+          createAthleteFolderAction(athleteId, name, description),
+        renameFolder: (folderId, name, description) =>
+          renameAthleteFolderAction(athleteId, folderId, name, description),
         deleteFolder: (folderId) => deleteAthleteFolderAction(athleteId, folderId),
         deleteFile: (assetId) => deleteAthleteFileAction(athleteId, assetId),
       }}

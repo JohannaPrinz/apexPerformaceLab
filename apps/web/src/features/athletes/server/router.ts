@@ -96,6 +96,8 @@ const notFound = () =>
 /** A folder or file id from a request. Never a path, never a storage key. */
 const assetIdSchema = z.string().min(1).max(64);
 const folderNameSchema = z.string().trim().min(1).max(80);
+/** Optional; an empty one clears it. The service caps it at the same length. */
+const folderDescriptionSchema = z.string().max(280).optional();
 
 /** Why a shelf could not be made or renamed, in the coach's language. */
 function folderRefusal(refusal: 'EMPTY_NAME' | 'NAME_TAKEN' | 'NOT_FOUND'): TRPCError {
@@ -811,7 +813,7 @@ export const athletesRouter = createTRPCRouter({
 
   /** `withCoachPermission`, because the shelf records who put it there (§18). */
   createAssetFolder: withCoachPermission('athlete:write')
-    .input(athleteIdSchema.extend({ name: folderNameSchema }))
+    .input(athleteIdSchema.extend({ name: folderNameSchema, description: folderDescriptionSchema }))
     .mutation(async ({ ctx, input }) => {
       const result = await createFolder(
         ctx.db,
@@ -819,6 +821,7 @@ export const athletesRouter = createTRPCRouter({
         input.athleteId,
         input.name,
         ctx.coach.id,
+        input.description ?? null,
       );
 
       if (!result.ok) throw folderRefusal(result.refusal);
@@ -827,7 +830,13 @@ export const athletesRouter = createTRPCRouter({
     }),
 
   renameAssetFolder: withPermission('athlete:write')
-    .input(athleteIdSchema.extend({ folderId: assetIdSchema, name: folderNameSchema }))
+    .input(
+      athleteIdSchema.extend({
+        folderId: assetIdSchema,
+        name: folderNameSchema,
+        description: folderDescriptionSchema,
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       const result = await renameFolder(
         ctx.db,
@@ -835,6 +844,7 @@ export const athletesRouter = createTRPCRouter({
         input.athleteId,
         input.folderId,
         input.name,
+        input.description,
       );
 
       if (!result.ok) throw folderRefusal(result.refusal);

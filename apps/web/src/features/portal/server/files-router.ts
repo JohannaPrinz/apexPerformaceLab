@@ -40,6 +40,8 @@ import { writable } from './writable';
 const folderId = z.string().min(1).max(64);
 const assetId = z.string().min(1).max(64);
 const folderName = z.string().trim().min(1).max(80);
+/** Optional; an empty one clears it. The service caps it at the same length. */
+const folderDescription = z.string().max(280).optional();
 
 const notFound = () => new TRPCError({ code: 'NOT_FOUND', message: 'Nicht gefunden.' });
 
@@ -85,19 +87,26 @@ export const portalFilesProcedures = {
   }),
 
   createFileFolder: athleteProcedure
-    .input(z.object({ name: folderName }))
+    .input(z.object({ name: folderName, description: folderDescription }))
     .mutation(async ({ ctx, input }) => {
       writable(ctx.athlete);
 
       // `null`: the athlete created it, the same convention the upload uses.
-      const result = await createFolder(ctx.db, ctx.tenant, ctx.athlete.id, input.name, null);
+      const result = await createFolder(
+        ctx.db,
+        ctx.tenant,
+        ctx.athlete.id,
+        input.name,
+        null,
+        input.description ?? null,
+      );
       if (!result.ok) throw folderMessage(result.refusal);
 
       return result.value;
     }),
 
   renameFileFolder: athleteProcedure
-    .input(z.object({ folderId, name: folderName }))
+    .input(z.object({ folderId, name: folderName, description: folderDescription }))
     .mutation(async ({ ctx, input }) => {
       writable(ctx.athlete);
 
@@ -107,6 +116,7 @@ export const portalFilesProcedures = {
         ctx.athlete.id,
         input.folderId,
         input.name,
+        input.description,
       );
 
       if (!result.ok) throw folderMessage(result.refusal);

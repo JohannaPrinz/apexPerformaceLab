@@ -85,9 +85,12 @@ const refresh = () => {
   revalidatePath('/portal/dateien');
 };
 
-export async function createPortalFolderAction(name: string): Promise<PortalFileState> {
+export async function createPortalFolderAction(
+  name: string,
+  description = '',
+): Promise<PortalFileState> {
   try {
-    await api.portal.createFileFolder({ name });
+    await api.portal.createFileFolder({ name, description });
   } catch (error) {
     return failed(error, 'Der Ordner konnte nicht angelegt werden.');
   }
@@ -100,9 +103,10 @@ export async function createPortalFolderAction(name: string): Promise<PortalFile
 export async function renamePortalFolderAction(
   folderId: string,
   name: string,
+  description?: string,
 ): Promise<PortalFileState> {
   try {
-    await api.portal.renameFileFolder({ folderId, name });
+    await api.portal.renameFileFolder({ folderId, name, description });
   } catch (error) {
     return failed(error, 'Der Ordner konnte nicht umbenannt werden.');
   }

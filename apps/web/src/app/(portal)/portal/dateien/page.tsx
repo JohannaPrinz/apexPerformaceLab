@@ -20,7 +20,12 @@ export const metadata: Metadata = {
  * resolve the record from the session, so there is no parameter to change and
  * no other athlete to reach.
  */
-export default async function PortalFilesPage() {
+export default async function PortalFilesPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const { ordner } = await searchParams;
   const [me, files] = await Promise.all([api.portal.me(), api.portal.files()]);
 
   return (
@@ -47,7 +52,12 @@ export default async function PortalFilesPage() {
         </ReadOnlyNotice>
       )}
 
-      <PortalFiles folders={files.folders} files={files.assets} readOnly={me.archivedAt !== null} />
+      <PortalFiles
+        folders={files.folders}
+        files={files.assets}
+        openFolderId={typeof ordner === 'string' ? ordner : null}
+        readOnly={me.archivedAt !== null}
+      />
     </>
   );
 }

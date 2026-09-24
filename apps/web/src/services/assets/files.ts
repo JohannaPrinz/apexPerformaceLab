@@ -41,6 +41,16 @@ export { MAX_ASSET_BYTES, MAX_UPLOAD_BYTES };
 /** What a folder is called, at most. Long enough for a date and a topic. */
 const MAX_FOLDER_NAME = 80;
 
+/** What a folder is for, at most: a sentence or two on a tile, not a document. */
+export const MAX_FOLDER_DESCRIPTION = 280;
+
+/** An optional description as stored: trimmed, capped, and `null` rather than empty. */
+function storedDescription(description: string | null): string | null {
+  const trimmed = (description ?? '').trim().slice(0, MAX_FOLDER_DESCRIPTION);
+
+  return trimmed === '' ? null : trimmed;
+}
+
 /**
  * The file types this area accepts.
  *
@@ -104,9 +114,17 @@ type FilesDb = Pick<PrismaClientInstance, 'asset' | 'assetFolder'>;
 export interface AssetFolderSummary {
   readonly id: string;
   readonly name: string;
+  readonly description: string | null;
   readonly createdAt: Date;
   /** Null where the athlete created it, as everywhere else (§18). */
   readonly createdByCoachId: string | null;
+  /**
+   * The coach who created it, by name — `null` where the athlete did.
+   *
+   * Read with the folder rather than looked up by the tile: the shelf names who
+   * filed what, and a second read per tile would be a query per folder.
+   */
+  readonly createdByName: string | null;
 }
 
 /** Alphabetical: a shelf list is read by looking for a name. */
@@ -115,11 +133,27 @@ export async function listFolders(
   tenant: Pick<TenantContext, 'organizationId'>,
   athleteId: string,
 ): Promise<AssetFolderSummary[]> {
-  return db.assetFolder.findMany({
+  const rows = await db.assetFolder.findMany({
     where: scoped(tenant, { athleteId }),
-    select: { id: true, name: true, createdAt: true, createdByCoachId: true },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      createdAt: true,
+      createdByCoachId: true,
+      createdByCoach: { select: { displayName: true, user: { select: { name: true } } } },
+    },
     orderBy: [{ name: 'asc' }],
   });
+
+  return rows.map(({ createdByCoach, ...folder }) => ({
+    ...folder,
+    description: folder.description ?? null,
+    createdByName:
+      folder.createdByCoachId === null
+        ? null
+        : (createdByCoach?.displayName ?? createdByCoach?.user?.name ?? 'Coach'),
+  }));
 }
 
 export type FolderRefusal = 'EMPTY_NAME' | 'NAME_TAKEN' | 'NOT_FOUND';
@@ -146,13 +180,19 @@ export async function createFolder(
   athleteId: string,
   name: string,
   createdByCoachId: string | null,
+  description: string | null = null,
 ): Promise<FolderResult<{ id: string }>> {
   const trimmed = name.trim().slice(0, MAX_FOLDER_NAME);
   if (trimmed === '') return { ok: false, refusal: 'EMPTY_NAME' };
 
   try {
     const folder = await db.assetFolder.create({
-      data: withTenant(tenant, { athleteId, name: trimmed, createdByCoachId }),
+      data: withTenant(tenant, {
+        athleteId,
+        name: trimmed,
+        description: storedDescription(description),
+        createdByCoachId,
+      }),
       select: { id: true },
     });
 
@@ -163,13 +203,20 @@ export async function createFolder(
   }
 }
 
-/** Renames one shelf. The athlete is in the filter, so a foreign id finds none. */
+/**
+ * Renames one shelf, and rewrites its description where one is given.
+ *
+ * `description` left out means "unchanged", so a caller that only renames
+ * cannot wipe what somebody wrote; an empty one clears it. The athlete is in the
+ * filter, so a foreign id finds none.
+ */
 export async function renameFolder(
   db: FilesDb,
   tenant: Pick<TenantContext, 'organizationId'>,
   athleteId: string,
   folderId: string,
   name: string,
+  description?: string | null,
 ): Promise<FolderResult<null>> {
   const trimmed = name.trim().slice(0, MAX_FOLDER_NAME);
   if (trimmed === '') return { ok: false, refusal: 'EMPTY_NAME' };
@@ -177,7 +224,10 @@ export async function renameFolder(
   try {
     const { count } = await db.assetFolder.updateMany({
       where: scoped(tenant, { id: folderId, athleteId }),
-      data: { name: trimmed },
+      data: {
+        name: trimmed,
+        ...(description === undefined ? {} : { description: storedDescription(description) }),
+      },
     });
 
     return count > 0 ? { ok: true, value: null } : { ok: false, refusal: 'NOT_FOUND' };
