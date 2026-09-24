@@ -67,6 +67,13 @@ export default {
         // maintained in `packages/domain` and belong to `domain`.
         'exercises',
 
+        // Feature slices — analysis
+        // One named analysis method over video, not a home for analysis in
+        // general — `analysis` stays off this list for the same reason it is no
+        // slice. The `pose-poc` spike gets no scope either; it is removed with
+        // the trial.
+        'movement',
+
         // Feature slices — cross-cutting surfaces
         'timeline',
         'portal',
