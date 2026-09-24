@@ -1764,10 +1764,14 @@ model Asset {
 /// `Asset.uploadedByCoachId` does. Both sides may file (§21), so the column is
 /// nullable and the null carries the meaning rather than a second flag.
 model AssetFolder {
-  id        String   @id @default(cuid(2))
-  name      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(cuid(2))
+  name        String
+  /// What the shelf is for, in a sentence, where somebody wrote one. Optional:
+  /// a name like "Formcheck 05.09." usually says enough, and an empty
+  /// description must not be something the folder tile has to apologise for.
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
